@@ -1,0 +1,312 @@
+{{- /*
+SPDX-FileCopyrightText: 2026 Damián Búho <damian.buho@proton.me>
+SPDX-License-Identifier: MIT
+
+Step partials selected by the `stepbody` / `stepfrag` dispatchers (render.go).
+Decision 2 — node = job, tool = step: every reachable DAG node renders as ONE job
+whose member tools are sequential steps; a pure-join node (no tools) is an `echo`
+GATE. Each define emits its lines with a LEADING newline and 6-space indent and NO
+trailing newline; the call site is `    steps:{{ stepbody … }}`.
+
+  steps/gate                 a pure-join node (no tools): `echo <node>`. It links the
+                             graph and nothing more — no checkout, no work.
+  steps/node                 a node WITH tools: ONE `actions/checkout` (WITH submodules —
+                             a project pins its m6e library there, and the projectfile
+                             `includes:` reach INTO it, so a submodule-less checkout
+                             silently truncates the merged document and every derived
+                             file drifts against it; plus an optional robot-account
+                             `token:` when the project declares checkout-token, for a
+                             submodule the run-scoped token cannot read), then the SHARED
+                             downloads (the cell-keyed build OCI tar pulled ONCE for
+                             every scanner in the node, plus any generic build-artifact
+                             a step consumes), an optional `docker load` (the fused
+                             `live` stack needs the image in the daemon), then each
+                             member tool as a step fragment (stepfrag), in DAG order,
+                             then — when any member emits `reports:` — ONE always()-
+                             guarded upload of the whole `reports/` dir, so a job's
+                             diagnostics download as a single artifact, not one zip per
+                             tool, and finally — when the job loaded an image — ONE
+                             always()-guarded `docker-cleanup` action reap of the run-
+                             scoped image tag + the live stack's network.
+  frag/run                   a plain tool: a bare host `run:` (no image). A generic
+                             build-artifact PRODUCER uploads its path right after.
+   frag/run-tool              an image tool: the `run-tool` ci-action (image/version + run
+                             + forwarded env NAME=VALUE) — the tool runs in its image on
+                             the HOST, NEVER as a job `container:` (a job container needs
+                             Node + a keep-alive shell minimal/distroless tool images lack;
+                             the recipe stays in the versioned action, not inline — Law 2).
+  providers/container-build  an ACTION step: dispatch to the EXTERNAL ci-actions library
+                             (the recipe + the OCI-tar build→scan hand-off live in the
+                             pinned, backend-keyed `container-build/<Builder>` action).
+                             `with:` inputs: the build-args NAME=VALUE block (the value
+                             rides the input — a composite action can't read the job env:
+                             as process env), the file-args NAME=path list (the action
+                             reads the file at build time from the checkout), the
+                             mounts name=mountpoint list, and the image ref to stamp.
+  providers/oci-push         an ACTION step that CONSUMES the build tar (pulled once by
+                             the node-job) and pushes it: `docker load`s the cell tar,
+                             logs in with the REGISTRY_* env the credentials overlay
+                             binds on the job, re-tags to the push ref (the tool's
+                             `registry:` var, ABSENT => Docker Hub), and pushes.
+  providers/container-exec   an ACTION step that execs the tool's `run` command INSIDE
+                             the live compose container (the fused live job's test): a
+                             `uses:` with the container instance (the build→live env
+                             contract) + the run tokens — the imperative `docker exec`
+                             and the on-failure post-mortem live in the versioned action.
+  providers/secrets-provision  a SYNTHETIC ACTION step (NOT a DAG tool — secrets-provision
+                             is gha:false/forgejo:false; Build injects it before dc-up-d in
+                             the live job when org.projectfile.ci.secrets is declared).
+                             Dispatches to the external ci-actions library like the other
+                             providers; `with:` inputs: the RAW secrets JSON (declarations),
+                             .secrets dir, the misc-tools default-image, and the project's
+                             own image (the `image: self` target). provision.sh dispatches.
+*/ -}}
+{{- define "steps/gate" }}
+      - run: echo {{ .Job.Name }}
+{{- end }}
+
+{{- define "steps/node" }}
+      - uses: {{ .Target.Checkout }}
+        with:
+          submodules: true
+{{- if .Target.CheckoutToken }}
+          token: {{ .Target.CheckoutToken }}
+{{- end }}
+{{- range .Job.Downloads }}
+      - uses: {{ $.Target.Download }}
+        with:
+          name: {{ .Name }}
+{{- if .Path }}
+          path: {{ .Path }}
+{{- end }}
+{{- end }}
+{{- if .Job.Load }}
+      - run: docker load --input {{ .Job.Stem }}.tar
+{{- end }}
+{{- range .Job.Steps }}{{ stepfrag $.Target . }}
+{{- end }}
+{{- if .Job.ReportsUpload }}
+      - uses: {{ .Target.Upload }}
+        if: {{ alwaysExpr }}
+        with:
+          name: {{ .Job.ReportsUpload }}
+          path: {{ .Job.ReportsPath }}
+          if-no-files-found: warn
+{{- if .Target.UploadOverwrite }}
+          overwrite: true
+{{- end }}
+{{- end }}
+{{- if .Job.RmiImage }}
+      # Reap the run-scoped image tag AND the live stack's network. Both are unique per
+      # run (the tag carries M6E_RUN_SCOPE, the network the run-scoped project name), so
+      # without this the runner's docker store gains one image per run forever AND a
+      # failed/timed-out `up` can orphan the network (compose reports the removal error
+      # WITHOUT failing). RmiImage and RmNetwork are always PAIRED (single assignment
+      # site), so one docker-cleanup step reaps both — the imperative reaps + their
+      # `inspect` guard live in the pinned action, not inline (Law 2).
+      - if: {{ alwaysExpr }}
+        uses: {{ actionRef $.Target "docker-cleanup" }}
+        with:
+          image: {{ .Job.RmiImage }}
+          network: {{ .Job.RmNetwork }}
+{{- end }}
+{{- end }}
+
+{{- define "frag/run" }}
+      - name: {{ .Step.Name }}
+{{- if .Step.If }}
+        if: {{ .Step.If }}
+{{- end }}
+        run: {{ .Step.Command }}
+{{- if .Step.Upload }}
+      - uses: {{ .Target.Upload }}
+        with:
+          name: {{ .Step.Upload }}
+          path: {{ .Step.UploadPath }}
+{{- if .Target.UploadOverwrite }}
+          overwrite: true
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "frag/run-tool" }}
+{{- if .Target.CacheRestore }}
+{{- range .Step.Caches }}
+      - name: restore {{ .Name }}
+        uses: {{ $.Target.CacheRestore }}
+        with:
+          path: {{ cacheHostPath $.Target .Name }}
+          key: {{ cacheKey .Name }}
+          restore-keys: |
+            {{ cacheKey .Name }}
+{{- end }}
+{{- end }}
+      - name: {{ .Step.Name }}
+        uses: {{ actionRef .Target "run-tool" }}
+        with:
+          image: {{ .Step.RunToolImage }}
+          version: {{ .Step.RunToolVersion }}
+{{- with .Step.RunToolPull }}
+          pull: {{ . }}
+{{- end }}
+{{- with .Step.RunToolNetwork }}
+          network: {{ . }}
+{{- end }}
+          run: {{ .Step.Command }}
+{{- if .Step.EnvForward }}
+          env: |-
+{{- range .Step.EnvForward }}
+            {{ .Key }}{{ if .Value }}={{ .Value }}{{ end }}
+{{- end }}
+{{- end }}
+{{- if .Step.Caches }}
+          mounts: {{ cacheMounts .Target .Step }}
+{{- end }}
+{{- if .Target.CacheSave }}
+{{- range writerCaches .Step }}
+      - name: save {{ .Name }}
+        uses: {{ $.Target.CacheSave }}
+        with:
+          path: {{ cacheHostPath $.Target .Name }}
+          key: {{ cacheSaveKey .Name }}
+{{- end }}
+{{- end }}
+{{- if .Step.Upload }}
+      - uses: {{ .Target.Upload }}
+        with:
+          name: {{ .Step.Upload }}
+          path: {{ .Step.UploadPath }}
+{{- if .Target.UploadOverwrite }}
+          overwrite: true
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "providers/container-build" }}
+      - name: {{ .Step.Name }}
+        uses: {{ actionRef .Target (printf "%s/%s" .Step.Action .Target.Builder) }}
+        with:
+          artifact-name: {{ .Step.Stem }}
+{{- if .Step.ImageBasename }}
+          image: {{ composeImage "" .Step.ImageBasename }}
+{{- end }}
+{{- if .Step.BuildArgs }}
+          build-args: |-
+{{- range .Step.BuildArgs }}
+            {{ .Key }}{{ if .Value }}={{ .Value }}{{ end }}
+{{- end }}
+{{- end }}
+{{- if .Step.FileArgs }}
+          file-args: {{ .Step.FileArgs }}
+{{- end }}
+{{- if .Step.MountsArg }}
+          mounts: {{ .Step.MountsArg }}
+{{- end }}
+{{- if .Step.PfCliImage }}
+          pf-cli-image: {{ .Step.PfCliImage }}
+{{- end }}
+{{- if .Step.BuildTarget }}
+{{- with (index .Step.BuildTarget .Target.Key) }}
+          target: {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "providers/oci-push" }}
+      - name: {{ .Step.Name }}
+        uses: {{ actionRef .Target .Step.Action }}
+        with:
+          artifact-name: {{ .Step.Stem }}
+          image: {{ composeImage "" .Step.ImageBasename }}
+{{- if .Step.PublishVersion }}
+          version: {{ .Step.PublishVersion }}
+{{- end }}
+          # OUTPUT_REGISTRY: the forge-dependent PUSH target (kiota.ch / ghcr.io / …),
+          # always threaded — empty => Docker Hub. NOT the per-namespace INPUT registries
+          # (B19_DOCKER_REGISTRY & friends answer "where base images come FROM"); this
+          # answers "where THIS project publishes TO". Set per forge (org var = default,
+          # repo var = project-wise override).
+          registry: {{ outputRegistryExpr }}
+{{- end }}
+
+{{- define "providers/forgejo-release" }}
+      - name: {{ .Step.Name }}
+        uses: {{ actionRef .Target .Step.Action }}
+        with:
+{{- if .Step.PublishVersion }}
+          version: {{ .Step.PublishVersion }}
+{{- end }}
+          # The unsuffixed binary path resolved from org.projectfile.artifacts (the single
+          # kind=binary entry). The action suffixes it per cell (→ <path>-${GOOS}-${GOARCH})
+          # to find the binary the build→consumer download edge restored to the workspace.
+          release-asset-path: {{ .Step.ReleaseAssetPath }}
+{{- end }}
+
+{{- /*
+steps/emit — the synthetic notify job (events model, forge half). One shell step, NO
+checkout: it computes success/failure from needs.*.result, builds the neutral envelope
+(field-identical to m6e's emit script), and POSTs it with timeout+retry+backoff. The
+job-level `if:` (always()+webhook-var gate) and `needs:` (every real job) are rendered
+by the workflow template; here we only place the run body under a block scalar. The run
+text is built in Go (EmitView.Run) because every `${{ }}` would collide with `{{ }}`.
+*/ -}}
+{{- define "steps/emit" }}
+      - name: emit lifecycle event
+        run: |
+{{ indent 10 .Job.Emit.Run }}
+{{- end }}
+
+{{- /*
+frag/emit — the TOOL-level fact emission (events model, phase 2). One shell step appended
+to the step of a tool that declares `emit:`, reporting WHAT that tool published: the
+image, its tag cascade, the digest and the matrix cell. It is the per-image companion of
+steps/emit (which reports only whether the goal passed), and it runs in the SAME job as
+the publish, so the files that action wrote are still in the workspace. The cell rides
+step env because toJSON renders multi-line JSON; the run text is built in Go
+(StepEmitView.Run) because every `${{ }}` would collide with `{{ }}`.
+*/ -}}
+{{- define "frag/emit" }}
+      - name: emit {{ .Step.Emit.Event }}
+        if: {{ .Step.Emit.If }}
+        env:
+          {{ cellEnv }}: {{ .Step.Emit.Cell }}
+        run: |
+{{ indent 10 .Step.Emit.Run }}
+{{- end }}
+
+{{- define "providers/container-exec" }}
+      - name: {{ .Step.Name }}
+        uses: {{ actionRef .Target .Step.Action }}
+        with:
+          container: {{ .Step.ExecContainer }}
+          run: {{ .Step.Command }}
+{{- end }}
+
+{{- /*
+providers/secrets-provision — the SYNTHETIC pre-dc-up-d step (cloud half of
+org.projectfile.ci.secrets). NOT a DAG tool: secrets-provision is gha:false/forgejo:
+false (m6e-only), so the resolver lowers its EFFECT — a leading step in the live
+(fused) job — rather than a tool leaf. Dispatches to the EXTERNAL ci-actions library
+exactly like container-build/oci-push/container-exec (the recipe + the value/docker
+dispatch live in the pinned action's provision.sh, NOT here — Law 2). `with:` inputs:
+  declarations   the RAW org.projectfile.ci.secrets JSON (provision.sh parses the exact
+                 pf-cli output). Emitted as a YAML double-quoted scalar so any char
+                 (colons, braces, embedded quotes) survives the YAML->env round-trip
+                 intact and provision.sh's jq parses it verbatim.
+  dir            .secrets (the path a compose `secrets:` block mounts).
+  default-image  the misc-tools ref (where m6e-secret-* / openssl / htpasswd live).
+  image          the project's OWN built image (the `image: self` target).
+*/ -}}
+{{- define "providers/secrets-provision" }}
+      - name: {{ .Step.Name }}
+        uses: {{ actionRef .Target .Step.Action }}
+        with:
+          declarations: {{ printf "%q" .Step.SecretsJSON }}
+          dir: .secrets
+{{- if .Step.SecretsDefaultImage }}
+          default-image: {{ .Step.SecretsDefaultImage }}
+{{- end }}
+{{- if .Step.SecretsImage }}
+          image: {{ .Step.SecretsImage }}
+{{- end }}
+{{- end }}

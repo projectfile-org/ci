@@ -1,0 +1,134 @@
+---
+# SPDX-FileCopyrightText: 2026 Damián Búho <damian.buho@proton.me>
+#
+# SPDX-License-Identifier: MIT
+$schema: https://projectfile.org/schema/v1.json
+copyright:
+  year: 2026
+identity:
+  created: "2026-06-01"
+  name: ci-resolver
+  summary: Lowers org.projectfile.ci DAG to CI workflows
+  title: Projectfile CI Resolver
+includes:
+  - .makefile/b19/ci.yaml
+  - .makefile/b19/images/go.yaml
+  - .makefile/b19/images/ubuntu.yaml
+  - .makefile/library/languages/go.yaml
+  - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml
+  - https://kiota.ch/projectfile/metadata/raw/branch/main/include.yaml
+kind: SoftwareSourceCode
+links:
+  - label: Projectfile CI Resolver on Codeberg
+    type: source-code
+    url: https://codeberg.org/projectfile/ci-resolver
+  - label: Projectfile CI Resolver on GitHub
+    type: source-code
+    url: https://github.com/damian-buho/projectfile-ci-resolver
+  - label: Projectfile CI Resolver on kiota.ch
+    type: source-code
+    url: https://kiota.ch/projectfile/ci-resolver
+  - label: Issues on Codeberg
+    type: bugs
+    url: https://codeberg.org/projectfile/ci-resolver/issues
+  - label: Issues on GitHub
+    type: bugs
+    url: https://github.com/damian-buho/projectfile-ci-resolver/issues
+org:
+  projectfile:
+    artifacts:
+      go-binary:
+        command: pf-ci
+        kind: binary
+        path: dist/pf-ci
+    build:
+      args:
+        GOPROXY: ""
+    ci:
+      env:
+        GOPROXY: https://kiota.ch/api/packages/projectfile/go,direct
+      forgejo:
+        credentials:
+          FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      nodes:
+        binaries-built:
+          matrix:
+            axes:
+              GOARCH:
+                - amd64
+                - arm64
+              GOOS:
+                - linux
+                - darwin
+          needs:
+            build-binaries: true
+            gsa: true
+            source-is-ready: true
+        binaries-released:
+          matrix:
+            axes:
+              GOARCH:
+                - amd64
+                - arm64
+              GOOS:
+                - linux
+                - darwin
+          needs:
+            binaries-built: true
+            forgejo-release: true
+            gh-release: true
+          when:
+            events:
+              - tag
+        published:
+          needs:
+            binaries-released: true
+            install-binary: true
+      status: maintained
+      tools:
+        build-binaries:
+          artifact: dist
+          env:
+            - GOPROXY
+            - GOOS
+            - GOARCH
+            - GITHUB_REF_NAME
+          guard: go.mod
+          image: GO_TOOL_IMAGE
+          m6e:
+            prefer-local: true
+          run: .scripts/build-binaries.sh
+        forgejo-release:
+          action: forgejo-release
+          env:
+            - FORGEJO_TOKEN
+          gha: false
+          m6e: false
+        gh-release:
+          env:
+            - GH_TOKEN
+          forgejo: false
+          m6e: false
+          run: .scripts/gh-release.sh "$${{ github.ref_name }}"
+        install-binary:
+          forgejo: false
+          gha: false
+          run: .scripts/install-binary.sh
+    readme:
+      usage:
+        - name: binary
+          prefix: "Lower the CI DAG to a forge’s workflow files:"
+          commands:
+            - pf-ci resolve
+            - pf-ci generate -target forgejo
+            - pf-ci generate -target gha -check
+repositories:
+  - role: origin
+    type: git
+    url: ssh://git@codeberg.org/projectfile/ci-resolver.git
+  - role: mirror
+    type: git
+    url: git@github.com:damian-buho/projectfile-ci-resolver.git
+  - role: mirror
+    type: git
+    url: ssh://git@kiota.ch/projectfile/ci-resolver.git

@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Damián Búho <damian.buho@proton.me>
+#
+# SPDX-License-Identifier: MIT
+
+---
+name: dev-projectfile-ci-resolver
+services:
+  projectfile-ci-resolver:
+    container_name: ${M6E_CONTAINER_INSTANCE}
+    image: ${M6E_IMAGE_FULLNAME}
+    networks:
+      - dev-projectfile-network
+    environment:
+      - LANG
+      - TZ
+networks:
+  dev-projectfile-network:
+    name: dev-projectfile-network

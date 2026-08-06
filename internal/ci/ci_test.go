@@ -1,0 +1,706 @@
+// SPDX-FileCopyrightText: 2026 Damián Búho <damian.buho@proton.me>
+//
+// SPDX-License-Identifier: MIT
+
+package ci
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// testB19Ubuntu is the canonical basename exercised across the image/interpolate
+// tests (goconst).
+const testB19Ubuntu = "b19/ubuntu"
+
+// TestImageBasenameExplicit pins the convention-over-configuration rule: an explicit
+// org.projectfile.ci.image is read verbatim by Parse (the derivation in Load is the
+// fallback ONLY, and never overrides an author's value).
+func TestImageBasenameExplicit(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "image": "b19/ubuntu",
+	  "tools": {"container-build": {"provider": "container-build"}},
+	  "nodes": {"ready": {"goal": true, "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if st.Image != testB19Ubuntu {
+		t.Errorf("explicit image must survive Parse verbatim, got %q", st.Image)
+	}
+}
+
+// TestBuildArgsDecode pins the typed `args` grammar: each NAME maps to a single-key
+// {source: ref}, decoded name-sorted into a BuildArg slice with the source kind and
+// ref preserved for the render lowering.
+func TestBuildArgsDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "image": "b19/ubuntu",
+	  "tools": {"container-build": {"action": "container-build", "args": {
+	    "SOURCE_DOCKER_REGISTRY": {"var": "SOURCE_DOCKER_REGISTRY"},
+	    "M6E_NAMESPACE": "${image.namespace}",
+	    "M6E_VERSION": {"ci": "version"},
+	    "B19_UBUNTU_HASH": {"file": ".container/foundation/deps/ubuntu/{B19_UBUNTU_SERIES}.sha256.deps"}
+	  }}},
+	  "nodes": {"ready": {"goal": true, "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := st.Tools["container-build"].Args
+	// The string form decodes to SourceLiteral with the RAW ${…} ref — Parse keeps
+	// it verbatim; interpolation to the literal happens later in Load (needs the doc).
+	want := []BuildArg{
+		{Name: "B19_UBUNTU_HASH", Source: SourceFile, Ref: ".container/foundation/deps/ubuntu/{B19_UBUNTU_SERIES}.sha256.deps"},
+		{Name: "M6E_NAMESPACE", Source: SourceLiteral, Ref: "${image.namespace}"},
+		{Name: "M6E_VERSION", Source: SourceCI, Ref: CIKeyVersion},
+		{Name: "SOURCE_DOCKER_REGISTRY", Source: SourceVar, Ref: "SOURCE_DOCKER_REGISTRY"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("args: want %d entries, got %d (%+v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("args[%d]: want %+v got %+v", i, want[i], got[i])
+		}
+	}
+}
+
+// TestBuildArgsReject pins the fail-fast: an unknown source (the retired `get:`
+// included — it is now the `${…}` STRING form, not an object source), an unknown ci
+// key, and a non-singleton source object must each fail the parse — a typo can not
+// silently drop a required build-arg (and clobber a Dockerfile default empty).
+func TestBuildArgsReject(t *testing.T) {
+	for name, args := range map[string]string{
+		"unknown-source": `{"X": {"env": "X"}}`,
+		"retired-get":    `{"X": {"get": "image.name"}}`,
+		"unknown-ci-key": `{"X": {"ci": "sha"}}`,
+		"two-sources":    `{"X": {"var": "X", "file": "p"}}`,
+	} {
+		doc := `{"tools": {"container-build": {"action": "container-build", "args": ` + args + `}},
+		  "nodes": {"ready": {"goal": true, "needs": {"container-build": true}}}}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: expected a parse error, got nil", name)
+		}
+	}
+}
+
+// TestBuildInputsDecode pins the org.projectfile.build.args wire shapes the
+// resolver auto-forwards as container-build build-args: a bare SCALAR (string,
+// number, or bool — coerced to its literal string form so `B19_GCC_SERIES: 16` is
+// not bamboozled into quoting), an explicit {default: <scalar>}, and a {file}
+// input. Decoded name-sorted; UseNumber preserves `3.14` exactly (no float lie).
+func TestBuildInputsDecode(t *testing.T) {
+	got, err := decodeBuildInputs([]byte(`{
+	  "B19_FD_IMAGE": "",
+	  "B19_GCC_SERIES": 16,
+	  "B19_NODE_FLOAT": 3.14,
+	  "B19_DEBUG": true,
+	  "B19_UBUNTU_VERSION": {"default": "resolute"},
+	  "B19_UBUNTU_SERIES": {"default": 24},
+	  "B19_UBUNTU_HASH": {"file": ".container/{B19_UBUNTU_SERIES}/hash"}
+	}`))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := []BuildInput{
+		{Name: "B19_DEBUG", Default: BoolTrue},
+		{Name: "B19_FD_IMAGE"},
+		{Name: "B19_GCC_SERIES", Default: "16"},
+		{Name: "B19_NODE_FLOAT", Default: "3.14"},
+		{Name: "B19_UBUNTU_HASH", File: ".container/{B19_UBUNTU_SERIES}/hash"},
+		{Name: "B19_UBUNTU_SERIES", Default: "24"},
+		{Name: "B19_UBUNTU_VERSION", Default: "resolute"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("inputs: want %d entries, got %d (%+v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("inputs[%d]: want %+v got %+v", i, want[i], got[i])
+		}
+	}
+	// An absent args subtree yields no inputs (graceful, not an error).
+	if out, err := decodeBuildInputs(nil); err != nil || out != nil {
+		t.Errorf("nil args: want (nil, nil), got (%+v, %v)", out, err)
+	}
+	// Declaring both default and file is ambiguous — it must fail the parse.
+	if _, err := decodeBuildInputs([]byte(`{"X": {"default": "a", "file": "b"}}`)); err == nil {
+		t.Error("default+file: expected a parse error, got nil")
+	}
+	// A non-scalar default (an array) must fail, not silently coerce.
+	if _, err := decodeBuildInputs([]byte(`{"X": {"default": [1, 2]}}`)); err == nil {
+		t.Error("array default: expected a parse error, got nil")
+	}
+}
+
+// TestMatrixAxisScalarValues pins that a matrix axis accepts bare YAML/JSON scalars,
+// not just quoted strings: an author writing `B19_NODE_SERIES: [24, 26]` (the b19/node
+// style) must decode to the literal tokens, and UseNumber must preserve `3.14` exactly
+// rather than reformatting the float. This is the b19/{erlang,gcc,java,llvm,node} fix.
+func TestMatrixAxisScalarValues(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "image": "b19/node",
+	  "matrix": {"axes": {"INT": [24, 26], "FLOAT": ["3.14"], "MIXED": [1, "fpm", true]}},
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := map[string][]string{}
+	for _, a := range st.Axes {
+		got[a.Key] = a.Values
+	}
+	for key, want := range map[string][]string{
+		"INT":   {"24", "26"},
+		"FLOAT": {"3.14"},
+		"MIXED": {"1", "fpm", "true"},
+	} {
+		if len(got[key]) != len(want) {
+			t.Fatalf("axis %s: want %v got %v", key, want, got[key])
+		}
+		for i := range want {
+			if got[key][i] != want[i] {
+				t.Errorf("axis %s[%d]: want %q got %q", key, i, want[i], got[key][i])
+			}
+		}
+	}
+}
+
+// TestPerNodeMatrixAxes pins the polymorphic node `matrix`: a bool `true` is a CELL
+// over the GLOBAL axes (no own axes), while an object `{axes: {...}}` is a CELL over
+// its OWN axes — the two coexist in one subtree, isolated, so binaries fan over
+// {GOOS,GOARCH} while the image-build node stays on the global series matrix.
+func TestPerNodeMatrixAxes(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "matrix": {"axes": {"SERIES": ["resolute", "noble"]}},
+	  "tools": {"container-build": {"action": "container-build"}, "build-binaries": {"run": "go build"}},
+	  "nodes": {
+	    "image-built":  {"matrix": true, "needs": {"container-build": true}},
+	    "bins-built":   {"matrix": {"axes": {"GOOS": ["linux", "darwin"], "GOARCH": ["amd64", "arm64"]}}, "needs": {"build-binaries": true}},
+	    "ready":        {"goal": true, "needs": {"image-built": true, "bins-built": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The bool node is a cell with NO own axes (falls back to global at resolve time).
+	img := st.Nodes["image-built"]
+	if !img.Matrix || len(img.Axes) != 0 {
+		t.Errorf("image-built: want matrix cell with no own axes, got matrix=%v axes=%v", img.Matrix, img.Axes)
+	}
+	// The object node is a cell carrying its OWN axes, key-sorted (GOARCH before GOOS).
+	bins := st.Nodes["bins-built"]
+	if !bins.Matrix {
+		t.Fatalf("bins-built: an axes object must imply a matrix cell")
+	}
+	gotKeys := []string{}
+	for _, a := range bins.Axes {
+		gotKeys = append(gotKeys, a.Key)
+	}
+	if len(gotKeys) != 2 || gotKeys[0] != "GOARCH" || gotKeys[1] != "GOOS" {
+		t.Errorf("bins-built own axes: want [GOARCH GOOS], got %v", gotKeys)
+	}
+	// The per-node axes are isolated from the global set (the global stays SERIES).
+	if len(st.Axes) != 1 || st.Axes[0].Key != "SERIES" {
+		t.Errorf("global axes must stay SERIES-only, got %v", st.Axes)
+	}
+}
+
+// TestMatrixOverridesDecode pins matrix.overrides: each row splits into MATCH (axis
+// keys) and VARS (the rest), bare scalars coerce to strings (an unquoted 21 → "21",
+// mirroring axis values), and the extra-var names surface via ExtraVarKeys/MatrixKeys
+// so a build-arg or image placeholder referencing one is treated as cell-defined.
+func TestMatrixOverridesDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "matrix": {
+	    "axes": {"B19_ZIG_SERIES": ["0.16", "0.15"]},
+	    "overrides": [
+	      {"B19_ZIG_SERIES": "0.16", "B19_LLVM_SERIES": 21},
+	      {"B19_ZIG_SERIES": "0.15", "B19_LLVM_SERIES": 20}
+	    ]
+	  },
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(st.Overrides) != 2 {
+		t.Fatalf("overrides: want 2 rows, got %d (%+v)", len(st.Overrides), st.Overrides)
+	}
+	// Row 0: MATCH B19_ZIG_SERIES=0.16, VAR B19_LLVM_SERIES=21 (coerced from int).
+	r0 := st.Overrides[0]
+	if len(r0.Match) != 1 || r0.Match[0] != (KV{Key: "B19_ZIG_SERIES", Value: "0.16"}) {
+		t.Errorf("row0 match: want {B19_ZIG_SERIES=0.16}, got %+v", r0.Match)
+	}
+	if len(r0.Vars) != 1 || r0.Vars[0] != (KV{Key: "B19_LLVM_SERIES", Value: "21"}) {
+		t.Errorf("row0 vars: want {B19_LLVM_SERIES=21}, got %+v", r0.Vars)
+	}
+	// The extra var is a matrix key (a cell carries it), alongside the axis.
+	if !st.ExtraVarKeys()["B19_LLVM_SERIES"] {
+		t.Errorf("ExtraVarKeys must include B19_LLVM_SERIES, got %v", st.ExtraVarKeys())
+	}
+	if !st.MatrixKeys()["B19_LLVM_SERIES"] || !st.MatrixKeys()["B19_ZIG_SERIES"] {
+		t.Errorf("MatrixKeys must include the axis and the extra var, got %v", st.MatrixKeys())
+	}
+}
+
+// TestMatrixOverridesRejects pins the fail-fast: a row whose axis-value match no cell
+// satisfies is refused (a typo'd series never silently drops its vars), and a
+// non-scalar field is refused.
+func TestMatrixOverridesRejects(t *testing.T) {
+	for name, override := range map[string]string{
+		"no-match":   `[{"B19_ZIG_SERIES": "0.99", "B19_LLVM_SERIES": 21}]`,
+		"non-scalar": `[{"B19_ZIG_SERIES": "0.16", "B19_LLVM_SERIES": [1, 2]}]`,
+	} {
+		doc := `{"matrix": {"axes": {"B19_ZIG_SERIES": ["0.16", "0.15"]}, "overrides": ` + override + `},
+		  "tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"container-build": true}}}}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: expected a parse error, got nil", name)
+		}
+	}
+}
+
+// TestEmitDecode pins that a publish tool's `emit` survives Parse onto the manifest —
+// the event name the render lowers to a fact emission after that tool's step.
+func TestEmitDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "tools": {"oci-push": {"action": "oci-push", "emit": "ci.image.published"}},
+	  "nodes": {"published": {"goal": true, "needs": {"oci-push": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := st.Tools["oci-push"].Emit; got != "ci.image.published" {
+		t.Errorf("emit: want ci.image.published, got %q", got)
+	}
+}
+
+// TestEmitRejectsNonPublisher pins the fail-closed pairing: the emitted payload is read
+// back from what the publish action wrote, so `emit` on a tool that publishes nothing
+// would POST an image fact with nothing in it. Refuse it at Parse instead.
+func TestEmitRejectsNonPublisher(t *testing.T) {
+	for name, tool := range map[string]string{
+		"plain-run":    `{"run": "auto-shellcheck", "emit": "ci.image.published"}`,
+		"wrong-action": `{"action": "container-build", "emit": "ci.image.published"}`,
+	} {
+		doc := `{"tools": {"t": ` + tool + `}, "nodes": {"done": {"goal": true, "needs": {"t": true}}}}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: emit on a non-publishing tool must be a parse error, got nil", name)
+		}
+	}
+}
+
+// TestMaxParallelDecode pins that a matrix node's `max-parallel` survives Parse onto
+// the model — the per-node cap the render lifts onto strategy.max-parallel.
+func TestMaxParallelDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"image-built": {"goal": true, "matrix": true, "max-parallel": 1, "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := st.Nodes["image-built"].MaxParallel; got != 1 {
+		t.Errorf("max-parallel: want 1, got %d", got)
+	}
+}
+
+// TestMaxParallelRejects pins the fail-fast guards: max-parallel is meaningless off a
+// matrix node and must be a positive cap — either mistake is a parse error, never a
+// silently-dropped field.
+func TestMaxParallelRejects(t *testing.T) {
+	for name, node := range map[string]string{
+		"non-matrix": `{"goal": true, "max-parallel": 1, "needs": {"container-build": true}}`,
+		"negative":   `{"goal": true, "matrix": true, "max-parallel": -2, "needs": {"container-build": true}}`,
+	} {
+		doc := `{"tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"image-built": ` + node + `}}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: expected a parse error, got nil", name)
+		}
+	}
+}
+
+// TestDispatchBuildArgsFlag pins that `dispatch: {build-args: true}` decodes onto the
+// goal's Dispatch (with no explicit inputs), so the render can auto-expose the declared
+// build.args as workflow_dispatch inputs. An absent flag leaves it false.
+func TestDispatchBuildArgsFlag(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"image-built": {"goal": true, "dispatch": {"build-args": true}, "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	d := st.Nodes["image-built"].Dispatch
+	if d == nil {
+		t.Fatal("dispatch must be non-nil when build-args is set")
+	}
+	if !d.BuildArgs {
+		t.Errorf("BuildArgs: want true, got false")
+	}
+	if len(d.Inputs) != 0 {
+		t.Errorf("no explicit inputs authored, want 0, got %d", len(d.Inputs))
+	}
+}
+
+// TestManifestEnvDecode pins that a tool's `env:` name list survives Parse — the
+// vendor-neutral credential/passthrough NEED a render binds per target. Names only;
+// no value ever lives in the manifest.
+func TestManifestEnvDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "tools": {"gh-release": {"run": "gh release create", "env": ["GH_TOKEN", "GOPROXY"]}},
+	  "nodes": {"published": {"goal": true, "needs": {"gh-release": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := st.Tools["gh-release"].Env
+	if len(got) != 2 || got[0] != "GH_TOKEN" || got[1] != "GOPROXY" {
+		t.Errorf("env: want [GH_TOKEN GOPROXY], got %v", got)
+	}
+}
+
+// TestCredentialsOverlayDecode pins the §9-B deployment surface: org.projectfile.ci.
+// gha.credentials decodes to the per-target {ENV_NAME: secret-ref} map (the value
+// being the only place a `${{ secrets.* }}` ref ever appears), keyed under gha so a
+// forgejo render never reads it.
+func TestCredentialsOverlayDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "gha": {"permissions": {"contents": "write"},
+	          "credentials": {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}},
+	  "tools": {"gh-release": {"run": "gh release create", "env": ["GH_TOKEN"]}},
+	  "nodes": {"published": {"goal": true, "needs": {"gh-release": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	p, ok := st.Platforms["gha"]
+	if !ok {
+		t.Fatal("gha platform overlay missing")
+	}
+	if got := p.Credentials["GH_TOKEN"]; got != "${{ secrets.GITHUB_TOKEN }}" {
+		t.Errorf("credentials[GH_TOKEN]: want secret ref, got %q", got)
+	}
+	if _, leaked := st.Platforms["forgejo"]; leaked {
+		t.Error("forgejo overlay must stay absent — credentials are keyed per target")
+	}
+}
+
+// TestCheckoutTokenOverlayDecode proves the per-target `checkout-token` opt-in threads
+// from the merged subtree JSON into Platforms[target].CheckoutToken. It is a BOOLEAN —
+// the secret name is a renderer constant, so no name (and nothing secret — §8) is ever
+// spelled in the document.
+func TestCheckoutTokenOverlayDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "forgejo": {"checkout-token": true},
+	  "tools": {"shellcheck": {"run": "shellcheck"}},
+	  "nodes": {"linted": {"goal": true, "needs": {"shellcheck": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	p, ok := st.Platforms["forgejo"]
+	if !ok {
+		t.Fatal("forgejo platform overlay missing")
+	}
+	if !p.CheckoutToken {
+		t.Error("checkout-token: want the opt-in carried through, got false")
+	}
+	if _, leaked := st.Platforms["gha"]; leaked {
+		t.Error("gha overlay must stay absent — a robot account is keyed per target")
+	}
+}
+
+// TestActionsOverlayDecode proves the per-target `actions` ref-override map threads
+// from the merged subtree JSON into Platforms[target].Actions (the render override
+// reads it from there). Keyed per target like every other overlay field.
+func TestActionsOverlayDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "forgejo": {"actions": {"checkout": "actions/checkout@v7",
+	                          "ci-actions": "projectfile/ci-actions@v1"}},
+	  "tools": {"shellcheck": {"run": "shellcheck"}},
+	  "nodes": {"linted": {"goal": true, "needs": {"shellcheck": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	p, ok := st.Platforms["forgejo"]
+	if !ok {
+		t.Fatal("forgejo platform overlay missing")
+	}
+	if got := p.Actions["checkout"]; got != "actions/checkout@v7" {
+		t.Errorf("actions[checkout]: want the pinned ref, got %q", got)
+	}
+	if got := p.Actions["ci-actions"]; got != "projectfile/ci-actions@v1" {
+		t.Errorf("actions[ci-actions]: want repo@tag, got %q", got)
+	}
+	if _, leaked := st.Platforms["gha"]; leaked {
+		t.Error("gha overlay must stay absent — action refs are keyed per target")
+	}
+}
+
+// TestValidateImageAccepts pins the back-compatible / valid shapes ValidateImage must
+// PASS: a non-matrix bare basename, a build-only matrix sharing the bare ref (no push),
+// a templated ref whose placeholders name declared GLOBAL axes, and one naming a
+// PER-NODE axis (the union of both axis sources is the legal placeholder set).
+func TestValidateImageAccepts(t *testing.T) {
+	for name, doc := range map[string]string{
+		"non-matrix-bare": `{
+		  "image": "o9s/postgresql",
+		  "tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"ready": {"goal": true, "needs": {"container-build": true}}}}`,
+		"build-only-matrix-bare": `{
+		  "image": "b19/ubuntu",
+		  "matrix": {"axes": {"B19_UBUNTU_SERIES": ["noble", "resolute"]}},
+		  "tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"image-built": {"matrix": true, "goal": true, "needs": {"container-build": true}}}}`,
+		"templated-global-axis": `{
+		  "image": "b19/php-{PHP_SAPI}-{B19_PHP_SERIES}",
+		  "matrix": {"axes": {"B19_PHP_SERIES": ["8.4", "8.5"], "PHP_SAPI": ["cli", "fpm"]}},
+		  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
+		  "nodes": {"image-built": {"matrix": true, "needs": {"container-build": true}},
+		            "published": {"matrix": true, "goal": true, "needs": {"image-built": true, "oci-push": true}}}}`,
+		"templated-per-node-axis": `{
+		  "image": "b19/cli-{GOARCH}",
+		  "tools": {"build-binaries": {"run": "go build"}, "oci-push": {"action": "oci-push"}},
+		  "nodes": {"bins-built": {"matrix": {"axes": {"GOARCH": ["amd64", "arm64"]}}, "needs": {"build-binaries": true}},
+		            "published": {"goal": true, "needs": {"bins-built": true, "oci-push": true}}}}`,
+		// cli shape: a SINGLE image push (publish-image is matrix:true but the GLOBAL
+		// axes are empty, so it does NOT fan) coexisting with an UNRELATED per-node
+		// binary matrix. The push is one ref, not a collision — the bare basename is fine.
+		"single-push-with-unrelated-binary-matrix": `{
+		  "image": "projectfile/cli",
+		  "tools": {"build-binaries": {"run": "go build"}, "oci-push": {"action": "oci-push"},
+		            "container-build": {"action": "container-build"}},
+		  "nodes": {"bins-built": {"matrix": {"axes": {"GOARCH": ["amd64", "arm64"]}}, "needs": {"build-binaries": true}},
+		            "image-built": {"matrix": true, "needs": {"container-build": true}},
+		            "publish-image": {"matrix": true, "needs": {"image-built": true, "oci-push": true}},
+		            "published": {"goal": true, "needs": {"bins-built": true, "publish-image": true}}}}`,
+	} {
+		st, err := Parse([]byte(doc))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", name, err)
+		}
+		if err := st.ValidateImage(); err != nil {
+			t.Errorf("%s: ValidateImage must accept, got %v", name, err)
+		}
+	}
+}
+
+// TestValidateImageRejects pins the two fail-fasts, both keyed off DATA (declared
+// axes + the oci-push ACTION token), never a node name (Law 1):
+//   - unknown-axis: a {KEY} placeholder names an axis the project never declares.
+//   - collision: a matrix build CONSUMED by an oci-push but with no {AXIS} placeholder —
+//     every cell would push the same ref.
+func TestValidateImageRejects(t *testing.T) {
+	for name, doc := range map[string]string{
+		"unknown-axis": `{
+		  "image": "b19/ubuntu-{B19_UBUNTU_SERIESS}",
+		  "matrix": {"axes": {"B19_UBUNTU_SERIES": ["noble", "resolute"]}},
+		  "tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"image-built": {"matrix": true, "goal": true, "needs": {"container-build": true}}}}`,
+		"unknown-axis-no-matrix": `{
+		  "image": "acme/app-{NOPE}",
+		  "tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"ready": {"goal": true, "needs": {"container-build": true}}}}`,
+		"collision-matrix-push": `{
+		  "image": "b19/ubuntu",
+		  "matrix": {"axes": {"B19_UBUNTU_SERIES": ["noble", "resolute"]}},
+		  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
+		  "nodes": {"image-built": {"matrix": true, "needs": {"container-build": true}},
+		            "published": {"matrix": true, "goal": true, "needs": {"image-built": true, "oci-push": true}}}}`,
+	} {
+		st, err := Parse([]byte(doc))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", name, err)
+		}
+		if err := st.ValidateImage(); err == nil {
+			t.Errorf("%s: ValidateImage must reject, got nil", name)
+		}
+	}
+}
+
+// TestWebhookVar pins the webhook-var name resolution off the `{ env: NAME }`
+// binding (D6): an explicit env NAME yields that var; an absent binding (empty
+// events block, or webhook with no url.env) falls back to the built-in default so
+// the sink is still enabled by the mere presence of the events block.
+func TestWebhookVar(t *testing.T) {
+	cases := map[string]string{
+		`{"webhook": {"url": {"env": "MY_HOOK"}}}`:            "MY_HOOK",
+		`{"webhook": {"url": {"env": "EVENTS_WEBHOOK_URL"}}}`: "EVENTS_WEBHOOK_URL",
+		`{}`:                       DefaultWebhookVar, // empty block opts in with the default
+		`{"webhook": {}}`:          DefaultWebhookVar, // webhook present, no url binding
+		`{"webhook": {"url": {}}}`: DefaultWebhookVar, // url present, no env NAME
+	}
+	for in, want := range cases {
+		var re rawEvents
+		if err := json.Unmarshal([]byte(in), &re); err != nil {
+			t.Fatalf("unmarshal %q: %v", in, err)
+		}
+		if got := webhookVar(re); got != want {
+			t.Errorf("webhookVar(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestInterpolateSyntax pins the ${…} mechanic's pure-string behaviour (needs no
+// document): the image.* synthetics resolve from the basename split, `$$` escapes a
+// literal `${…}` (the dc-up-d runtime case), a bare `$VAR` is left untouched, and a
+// string with no reference passes through verbatim.
+func TestInterpolateSyntax(t *testing.T) {
+	ip := interpolator{basename: testB19Ubuntu}
+	cases := []struct{ in, want string }{
+		{"gsa ${image.namespace}", "gsa b19"},
+		{"x ${image.name} y", "x ubuntu y"},
+		{"${image.basename}", testB19Ubuntu},
+		{`timeout "$${M6E_TIMEOUT:-300}s" up`, `timeout "${M6E_TIMEOUT:-300}s" up`}, // $$ → literal ${…}
+		{"echo $HOME done", "echo $HOME done"},                                      // bare $ untouched
+		{"cost is $$5", "cost is $5"},                                               // $$ not before { → literal $
+		{"no refs here", "no refs here"},
+	}
+	for _, c := range cases {
+		got, err := ip.interpolate(c.in)
+		if err != nil {
+			t.Errorf("interpolate(%q): unexpected error %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("interpolate(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestInterpolateGuards pins the fail-loud cases: the deferred selector/projection
+// syntax is refused (not silently mis-resolved), and an unterminated ${ errors —
+// both without touching the document.
+func TestInterpolateGuards(t *testing.T) {
+	ip := interpolator{basename: testB19Ubuntu}
+	for _, in := range []string{
+		"${org.projectfile.artifacts[kind=binary].path}", // selector deferred (needs core v1.0.2)
+		"tail ${unterminated",                            // no closing brace
+	} {
+		if _, err := ip.interpolate(in); err == nil {
+			t.Errorf("interpolate(%q): expected error, got nil", in)
+		}
+	}
+}
+
+// TestLoadInterpolatesArtifactRefs is the end-to-end proof: a tool `run` carrying a
+// ${org.projectfile.artifacts.<name>.path} reference resolves against the merged doc
+// during Load, and an UNresolvable reference collapses to EMPTY (D4 reversed — a
+// preset ref to an artifact this project omits leaves the arg unset, never a hard error).
+func TestLoadInterpolatesArtifactRefs(t *testing.T) {
+	write := func(t *testing.T, run string) string {
+		t.Helper()
+		dir := t.TempDir()
+		p := filepath.Join(dir, "projectfile.yaml")
+		doc := `$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: demo
+org:
+  projectfile:
+    artifacts:
+      go-binary:
+        kind: binary
+        path: dist/demo
+    ci:
+      tools:
+        gsa:
+          image: GO_TOOL_IMAGE
+          run: ` + run + `
+      nodes:
+        analyzed:
+          goal: true
+          needs:
+            gsa: true
+`
+		if err := os.WriteFile(p, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// Resolvable: the artifact path lands in the run command.
+	st, err := Load(write(t, "gsa ${org.projectfile.artifacts.go-binary.path}"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := st.Tools["gsa"].Run; got != "gsa dist/demo" {
+		t.Errorf("gsa run = %q, want %q", got, "gsa dist/demo")
+	}
+
+	// Unresolvable → empty (D4 reversed): the arg is left unset, Load still succeeds.
+	st, err = Load(write(t, "gsa ${org.projectfile.artifacts.missing.path}"))
+	if err != nil {
+		t.Fatalf("Load (unresolved): unexpected error %v", err)
+	}
+	if got := st.Tools["gsa"].Run; got != "gsa " {
+		t.Errorf("gsa run (unresolved) = %q, want %q", got, "gsa ")
+	}
+}
+
+// TestLoadResolvesReleaseAssetPath pins the forgejo-release action's binary-path
+// resolution: during Load, a forgejo-release tool's ReleaseAssetPath is populated
+// from the single org.projectfile.artifacts entry with kind=binary. Fail-closed:
+// zero or >1 kind=binary artifact errors (ambiguous attach target), and a non-
+// forgejo-release tool is left untouched.
+func TestLoadResolvesReleaseAssetPath(t *testing.T) {
+	// write builds a projectfile with one kind=binary artifact and a forgejo-release
+	// action tool; extra artifacts can be appended via the artifacts param.
+	write := func(t *testing.T, artifacts string) string {
+		t.Helper()
+		dir := t.TempDir()
+		p := filepath.Join(dir, "projectfile.yaml")
+		doc := `$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: demo
+org:
+  projectfile:
+    artifacts:
+` + artifacts + `
+    ci:
+      tools:
+        forgejo-release:
+          action: forgejo-release
+          env: [FORGEJO_TOKEN]
+      nodes:
+        released:
+          goal: true
+          needs:
+            forgejo-release: true
+`
+		if err := os.WriteFile(p, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// Happy path: one kind=binary artifact → path resolved onto the manifest.
+	st, err := Load(write(t, "      go-binary:\n        kind: binary\n        path: dist/demo"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := st.Tools["forgejo-release"].ReleaseAssetPath; got != "dist/demo" {
+		t.Errorf("ReleaseAssetPath = %q, want %q", got, "dist/demo")
+	}
+
+	// Fail-closed: zero kind=binary artifacts.
+	if _, err := Load(write(t, "      docs:\n        kind: website\n        path: dist/docs")); err == nil {
+		t.Errorf("Load with no kind=binary artifact: expected error, got nil")
+	}
+
+	// Fail-closed: two kind=binary artifacts (ambiguous attach target).
+	two := "      a:\n        kind: binary\n        path: dist/a\n      b:\n        kind: binary\n        path: dist/b"
+	if _, err := Load(write(t, two)); err == nil {
+		t.Errorf("Load with two kind=binary artifacts: expected error, got nil")
+	}
+}

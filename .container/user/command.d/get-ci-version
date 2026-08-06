@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Damián Búho <damian.buho@proton.me>
+#
+# SPDX-License-Identifier: MIT
+
+  set -e
+  pf-ci --version 2>&1 | awk '{print $NF}' || echo "unknown"

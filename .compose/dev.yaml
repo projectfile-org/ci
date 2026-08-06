@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Damián Búho <damian.buho@proton.me>
+#
+# SPDX-License-Identifier: MIT
+
+---
+name: dev-projectfile-ci-resolver
+services:
+  projectfile-ci-resolver:
+    container_name: ${M6E_CONTAINER_INSTANCE}
+    image: ${M6E_IMAGE_FULLNAME}
+    labels:
+      com.docker.compose.watch: 'true'
+    networks:
+      - dev-projectfile-network
+    environment:
+      - LANG
+      - TZ
+      - B19_VERBOSITY=debug
+    tmpfs:
+      - /tmp:size=64m
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+networks:
+  dev-projectfile-network:
+    name: dev-projectfile-network
+    external: true
