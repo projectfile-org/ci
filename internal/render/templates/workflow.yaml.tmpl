@@ -106,6 +106,13 @@ jobs:
             {{ end }}{{ $kv.Key }}: {{ printf "%q" $kv.Value }}{{ end }}
 {{- end }}
 {{- end }}
+{{- if .Exclude }}
+        exclude:
+{{- range .Exclude }}
+          - {{ range $i, $kv := .Fields }}{{ if $i }}
+            {{ end }}{{ $kv.Key }}: {{ printf "%q" $kv.Value }}{{ end }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if .Env }}
     env:

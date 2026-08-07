@@ -61,6 +61,51 @@ func TestPerNodeMatrixIsolatesFanOut(t *testing.T) {
 	}
 }
 
+// TestMatrixExcludeSubtractsCells pins the multiplicity `matrix.exclude` produces on
+// BOTH matrices at once, and their isolation: the global cut applies to the node on
+// the global axes and NEVER to the node fanning its own, whose own cut applies
+// instead. A JOIN downstream of both still runs once — subtraction changes how many
+// cells exist, never the timing classes.
+func TestMatrixExcludeSubtractsCells(t *testing.T) {
+	st, err := ci.Parse([]byte(`{
+	  "matrix": {"axes": {"SERIES": ["resolute", "noble"], "ARCH": ["amd64", "arm64"]},
+	             "exclude": [{"SERIES": "noble", "ARCH": "arm64"}]},
+	  "tools": {"container-build": {"action": "container-build"}, "build-binaries": {"run": "go build"}},
+	  "nodes": {
+	    "image-built": {"matrix": true, "needs": {"container-build": true}},
+	    "bins-built":  {"matrix": {"axes": {"GOOS": ["linux", "darwin"], "GOARCH": ["amd64", "arm64", "riscv64"]},
+	                               "exclude": [{"GOOS": "darwin", "GOARCH": "riscv64"}]},
+	                    "needs": {"build-binaries": true}},
+	    "ready":       {"goal": true, "needs": {"image-built": true, "bins-built": true, "manifest-create": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	by := map[string]Job{}
+	for _, j := range rm.Jobs {
+		by[j.Name] = j
+	}
+
+	// Global axes: 2*2 = 4 cells, minus noble/arm64.
+	if got := by["container-build"].Cells(); got != 3 {
+		t.Errorf("container-build: want 3 cells (global 2x2 minus one), got %d", got)
+	}
+	// Own axes: 2*3 = 6 cells, minus darwin/riscv64 — the global cut names axes this
+	// grid does not even have, so inheriting it would subtract nothing or everything.
+	if got := by["build-binaries"].Cells(); got != 5 {
+		t.Errorf("build-binaries: want 5 cells (own 2x3 minus one), got %d", got)
+	}
+	// The fan-in is still once, whatever the cells number.
+	if got := by["manifest-create"].Cells(); got != 1 {
+		t.Errorf("manifest-create: JOIN must run once, got %d", got)
+	}
+}
+
 // TestNodeModelMaterialisesReachableNodes pins NodeModel: every reachable node
 // becomes a NodeView (its own tool members + reachable upstream node-deps), and a
 // tool's ToolDeps is the union of its owning nodes' upstream node names — the

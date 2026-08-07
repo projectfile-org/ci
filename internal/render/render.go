@@ -1465,7 +1465,13 @@ type JobView struct {
 	// carries each cell's derived vars (e.g. a per-series LLVM version). Set only for
 	// a GLOBAL-matrix cell job (overrides is a global-matrix feature); a per-node
 	// matrix cell has none. Render-only: derived from the subtree, joined at Build time.
-	Include []IncludeView `json:"include,omitempty"`
+	Include []MatrixRowView `json:"include,omitempty"`
+	// Exclude is this cell job's strategy.matrix.exclude rows — the cells its axes
+	// mint that nothing builds (matrix.exclude). Unlike Include it belongs to
+	// WHICHEVER matrix the job fans over: a per-node matrix carries its own exclusions,
+	// so the rows travel with the axes (resolve.Job) instead of being read off the
+	// subtree. Empty => the full grid.
+	Exclude []MatrixRowView `json:"exclude,omitempty"`
 	// EnvNames is the union of the steps' manifest credential names — what bindEnv
 	// resolves against the target's `credentials` overlay at Workflow time (a match →
 	// secret ref appended to Env; no match → left to the inherited runner env).
@@ -2598,6 +2604,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		dlSeen := map[string]bool{}
 		hasReports := false
 		var axes []ci.Axis
+		var excludes []ci.Exclusion
 		axesSet := false
 		for _, t := range memberTools {
 			j := byName[t]
@@ -2608,7 +2615,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						"(tool %q) — a node=job renders one strategy.matrix, so its tools must share axes", nv.Name, t)
 				}
 				if !axesSet {
-					axes = j.Axes
+					// Exclusions belong to the matrix the axes came from, so they are taken
+					// with them — a fused job never mixes one node's grid with another's cuts.
+					axes, excludes = j.Axes, j.Excludes
 					axesSet = true
 				}
 			}
@@ -2700,6 +2709,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		}
 		if axesSet {
 			job.Matrix = AxisMap(axes)
+			job.Exclude = excludeViews(excludes)
 			job.Class = string(resolve.ClassCell)
 			// matrix.overrides is a GLOBAL-matrix feature: emit it only when this cell
 			// job's axes ARE the global axes (a per-node matrix cell has different
@@ -3170,18 +3180,20 @@ func (a AxisMap) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// IncludeView is one matrix.overrides row rendered as a strategy.matrix.include
-// entry. GHA include emits EVERY field of a row and matches the entry to a cell
-// where the fields that name matrix axes align; the non-axis fields are the extra
-// vars the cell gains. So Fields carries match axis-values AND extra vars together,
-// key-sorted. Values are emitted double-quoted (strings) so a numeric-looking value
-// ("0.16", "21") matches the double-quoted axis values for cell matching and stays
-// a string the way build-args consume them.
-type IncludeView struct {
+// MatrixRowView is one row of a rendered strategy.matrix ADJUSTER — an `include`
+// entry (a matrix.overrides row) or an `exclude` entry (a matrix.exclude row); both
+// take the same shape, a key-sorted field list, and differ only in which block they
+// land in. GHA matches a row to a cell where the fields that name matrix axes align:
+// for include, the remaining fields are the extra vars the cell gains; for exclude,
+// there are no remaining fields and the matched cell is dropped. Values are emitted
+// double-quoted (strings) so a numeric-looking value ("0.16", "21") matches the
+// double-quoted axis values for cell matching and stays a string the way build-args
+// consume them.
+type MatrixRowView struct {
 	Fields []KVView `json:"fields"`
 }
 
-// KVView is one key→value pair of a rendered strategy.matrix.include entry.
+// KVView is one key→value pair of a rendered strategy.matrix include/exclude entry.
 type KVView struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -3190,19 +3202,36 @@ type KVView struct {
 // includeViews lowers the parsed matrix.overrides rows to the render view: each row
 // flattens its MATCH (axis-values) and VARS (extra vars) into one key-sorted field
 // list, the shape strategy.matrix.include takes.
-func includeViews(entries []ci.OverrideEntry) []IncludeView {
-	out := make([]IncludeView, 0, len(entries))
+func includeViews(entries []ci.OverrideEntry) []MatrixRowView {
+	out := make([]MatrixRowView, 0, len(entries))
 	for _, e := range entries {
 		all := append([]ci.KV(nil), e.Match...)
 		all = append(all, e.Vars...)
 		sort.Slice(all, func(i, j int) bool { return all[i].Key < all[j].Key })
-		fields := make([]KVView, 0, len(all))
-		for _, kv := range all {
-			fields = append(fields, KVView{Key: kv.Key, Value: kv.Value})
-		}
-		out = append(out, IncludeView{Fields: fields})
+		out = append(out, MatrixRowView{Fields: kvViews(all)})
 	}
 	return out
+}
+
+// excludeViews lowers the parsed matrix.exclude rows to the render view. A row is
+// already key-sorted axis KEY→value pairs (buildExcludes), which is exactly what
+// strategy.matrix.exclude takes — the forge then mints the product minus these
+// combinations, so the cells a workflow runs equal the cells every other lowering
+// of the same DAG runs.
+func excludeViews(rows []ci.Exclusion) []MatrixRowView {
+	out := make([]MatrixRowView, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, MatrixRowView{Fields: kvViews(r)})
+	}
+	return out
+}
+
+func kvViews(kvs []ci.KV) []KVView {
+	fields := make([]KVView, 0, len(kvs))
+	for _, kv := range kvs {
+		fields = append(fields, KVView{Key: kv.Key, Value: kv.Value})
+	}
+	return fields
 }
 
 // substKeys returns the {placeholder} substitution set: the job's real matrix axes

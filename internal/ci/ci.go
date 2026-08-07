@@ -56,6 +56,11 @@ type Node struct {
 	// the pipeline — e.g. a `build-binaries` node fanning {GOOS,GOARCH} while the
 	// image-build nodes stay on their own (or no) matrix. Set => Matrix is true.
 	Axes []Axis
+	// Excludes are the cells THIS node's own axes mint but must not build (see
+	// Exclusion). Meaningful only alongside Axes: a node on the GLOBAL axes takes the
+	// global exclusions instead, never a mix — per-node axes are isolated, so their
+	// exclusions are too.
+	Excludes []Exclusion
 	// MaxParallel caps how many of this node's matrix cells run at once
 	// (strategy.max-parallel). 0 => unset (the forge's full-parallel default). Set on
 	// a matrix node whose cells are individually resource-hungry — e.g. an image build
@@ -156,6 +161,18 @@ type OverrideEntry struct {
 	Match []KV // axis KEY → value; empty => matches every cell (vars apply to all)
 	Vars  []KV // extra NAME → value bound onto matching cells
 }
+
+// Exclusion is one matrix.exclude row: the axis KEY→value pairs a cell must ALL
+// carry to be DROPPED from the product. It is the exact complement of an
+// OverrideEntry — that one DECORATES a cell the axes enumerate, this one REMOVES
+// one; neither ever mints a cell. The driver is a grid that is not fully
+// buildable ({GOOS,GOARCH} mints darwin/riscv64, which no toolchain targets):
+// subtracting the corner keeps ONE node owning the tool, where a second node for
+// the survivor would multi-home it (node=job cannot place a diamond). Every key
+// is a declared axis of the SAME matrix, every row matches ≥1 cell, and the rows
+// together never empty the product — all three refused at parse (buildExcludes),
+// because an exclusion that quietly excludes nothing is the costliest kind of typo.
+type Exclusion []KV
 
 // BuildArg is one decoded container-build argument: the build-arg NAME plus the
 // SOURCE its value comes from and a Ref the source interprets. The render lowers
@@ -471,6 +488,7 @@ type Subtree struct {
 	Image         string          // built-image BASENAME: registry-relative path (`b19/ubuntu`, composed <registry>/<image>:<tag> at render) OR a complete `:tag`-bearing ref (verbatim). Explicit `image:` wins; empty => Load DERIVES <last-label(identity.namespace)>/<identity.name>. Stamped into the OCI archive (container-build name=) so a consumer `docker load`s a TAGGED image (no anonymous archives).
 	Axes          []Axis          // matrix axes, key-sorted (empty => no matrix)
 	Overrides     []OverrideEntry // matrix.overrides rows (extra per-cell vars keyed by an axis-value match); empty => none
+	Excludes      []Exclusion     // matrix.exclude rows (cells the axes mint but nothing builds); empty => the full grid
 	Nodes         map[string]Node
 	NodeOrder     []string            // node names, sorted — deterministic iteration
 	Tools         map[string]Manifest // tool name -> execution manifest (may be empty)
@@ -597,9 +615,11 @@ func (st *Subtree) ForGoal(name string) *Subtree {
 // ---------------------------------------------------------------------------
 
 type rawSubtree struct {
-	Image   string              `json:"image"` // built-image basename (explicit; empty => derived from identity in Load)
-	Env     map[string]string   `json:"env"`   // workflow-level env: NAME -> make-plane VALUE, inherited by every job
-	Matrix  *rawMatrix          `json:"matrix"`
+	Image string            `json:"image"` // built-image basename (explicit; empty => derived from identity in Load)
+	Env   map[string]string `json:"env"`   // workflow-level env: NAME -> make-plane VALUE, inherited by every job
+	// Matrix is the GLOBAL matrix object, kept raw so decodeMatrix can decode it
+	// STRICTLY (an unsupported key must not vanish silently — see decodeMatrix).
+	Matrix  json.RawMessage     `json:"matrix"`
 	Nodes   map[string]rawNode  `json:"nodes"`
 	Tools   map[string]Manifest `json:"tools"`
 	Gha     *rawPlatform        `json:"gha"`     // GitHub Actions deployment overlay
@@ -645,6 +665,7 @@ type rawConcurrency struct {
 type rawMatrix struct {
 	Axes      map[string]json.RawMessage   `json:"axes"`
 	Overrides []map[string]json.RawMessage `json:"overrides"`
+	Exclude   []map[string]json.RawMessage `json:"exclude"`
 }
 
 type rawNode struct {
@@ -1035,17 +1056,30 @@ func Parse(data []byte) (*Subtree, error) {
 	st := &Subtree{Nodes: make(map[string]Node, len(raw.Nodes)), Image: raw.Image, Env: raw.Env}
 
 	// GLOBAL matrix axes — key-sorted for a deterministic cell order and CELL render.
-	if raw.Matrix != nil {
-		axes, err := buildAxes(raw.Matrix.Axes)
+	if len(bytes.TrimSpace(raw.Matrix)) > 0 {
+		m, err := decodeMatrix(raw.Matrix)
+		if err != nil {
+			return nil, err
+		}
+		axes, err := buildAxes(m.Axes)
 		if err != nil {
 			return nil, err
 		}
 		st.Axes = axes
+		// matrix.exclude: the cells the axes mint but nothing builds. Decoded BEFORE
+		// overrides because it changes WHICH cells exist — an override is then
+		// validated against the cells that SURVIVE, so a row decorating only excluded
+		// cells is the same loud no-match error as a typo'd axis value.
+		ex, err := buildExcludes(m.Exclude, axes)
+		if err != nil {
+			return nil, err
+		}
+		st.Excludes = ex
 		// matrix.overrides: extra per-cell vars keyed by an axis-value match. Decoded
 		// AFTER axes (the match/var split keys off the axis set) and validated
 		// against the cells the axes enumerate (a row matching no cell is refused —
 		// an override decorates existing cells, never spawns new ones).
-		ov, err := buildOverrides(raw.Matrix.Overrides, axes)
+		ov, err := buildOverrides(m.Overrides, axes, ex)
 		if err != nil {
 			return nil, err
 		}
@@ -1058,7 +1092,7 @@ func Parse(data []byte) (*Subtree, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode needs of node %q: %w", name, err)
 		}
-		isCell, axes, err := decodeNodeMatrix(rn.Matrix)
+		isCell, axes, excludes, err := decodeNodeMatrix(rn.Matrix)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", name, err)
 		}
@@ -1090,7 +1124,7 @@ func Parse(data []byte) (*Subtree, error) {
 			}
 			concurrency = &Concurrency{Group: rn.Concurrency.Group, CancelInProgress: rn.Concurrency.CancelInProgress}
 		}
-		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, MaxParallel: rn.MaxParallel, Concurrency: concurrency, Needs: needs, When: when, Schedule: schedule, Dispatch: dispatch}
+		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, Excludes: excludes, MaxParallel: rn.MaxParallel, Concurrency: concurrency, Needs: needs, When: when, Schedule: schedule, Dispatch: dispatch}
 		st.NodeOrder = append(st.NodeOrder, name)
 	}
 	sort.Strings(st.NodeOrder)
@@ -1621,7 +1655,7 @@ func buildAxes(axesRaw map[string]json.RawMessage) ([]Axis, error) {
 // is caught here as a no-match row rather than silently dropping the vars. Field
 // values are coerced from bare scalars (`21`, `true`) exactly as an axis value is,
 // so an author writes `B19_LLVM_SERIES: 21` unquoted.
-func buildOverrides(raws []map[string]json.RawMessage, axes []Axis) ([]OverrideEntry, error) {
+func buildOverrides(raws []map[string]json.RawMessage, axes []Axis, excludes []Exclusion) ([]OverrideEntry, error) {
 	if len(raws) == 0 {
 		return nil, nil
 	}
@@ -1645,10 +1679,12 @@ func buildOverrides(raws []map[string]json.RawMessage, axes []Axis) ([]OverrideE
 		}
 		entries = append(entries, OverrideEntry{Match: match, Vars: vars})
 	}
-	// Validate every row matches ≥1 cell. No axes => the one empty cell; a row then
-	// matches iff its MATCH is empty (a non-empty match names an axis that does not
-	// exist, which buildOverrides above routed to VARS — so such a row matches all).
-	cells := productCells(axes)
+	// Validate every row matches ≥1 SURVIVING cell (the product minus matrix.exclude
+	// — decorating a cell nothing builds is as dead as decorating one the axes never
+	// minted). No axes => the one empty cell; a row then matches iff its MATCH is
+	// empty (a non-empty match names an axis that does not exist, which buildOverrides
+	// above routed to VARS — so such a row matches all).
+	cells := Cells(axes, excludes)
 	if len(cells) == 0 {
 		cells = []map[string]string{{}}
 	}
@@ -1666,6 +1702,107 @@ func buildOverrides(raws []map[string]json.RawMessage, axes []Axis) ([]OverrideE
 		}
 	}
 	return entries, nil
+}
+
+// buildExcludes decodes matrix.exclude into Exclusion rows (key-sorted, like every
+// other decoded list, for byte-stable output). Each field binds ONE axis value; a
+// cell carrying every pair of a row is dropped from the product. Three defects are
+// refused here, all of them a typo that would otherwise exclude nothing (or
+// everything) in silence:
+//   - a field naming something that is not a declared axis of THIS matrix — unlike
+//     an override, where a non-axis field is an extra var, an exclusion has no such
+//     half, so the key can only be a mistake;
+//   - a row matching no cell (a value no axis carries);
+//   - rows that together empty the product — a matrix with no cell realises no work,
+//     which is never what an author meant to write.
+//
+// Values are coerced from bare scalars exactly as an axis value is, so `GOARCH: 386`
+// and `GOARCH: "386"` mean the same cell.
+func buildExcludes(raws []map[string]json.RawMessage, axes []Axis) ([]Exclusion, error) {
+	if len(raws) == 0 {
+		return nil, nil
+	}
+	axisSet := make(map[string]bool, len(axes))
+	for _, a := range axes {
+		axisSet[a.Key] = true
+	}
+	rows := make([]Exclusion, 0, len(raws))
+	for i, row := range raws {
+		var match Exclusion
+		for _, k := range sortedKeys(row) {
+			if !axisSet[k] {
+				return nil, fmt.Errorf("matrix.exclude[%d]: field %q is not a declared matrix axis %v — "+
+					"an exclusion names axis keys only (it removes cells; it never binds a variable)", i, k, axisKeyNames(axes))
+			}
+			val, ok := decodeScalarToString(row[k])
+			if !ok {
+				return nil, fmt.Errorf("matrix.exclude[%d]: field %q must be a scalar (string, number, or boolean) — "+
+					"one value per axis; excluding several values takes several entries", i, k)
+			}
+			match = append(match, KV{Key: k, Value: val})
+		}
+		rows = append(rows, match)
+	}
+	// Every row must hit the grid, and the grid must survive.
+	full := productCells(axes)
+	for i, e := range rows {
+		matched := false
+		for _, c := range full {
+			if rowMatches(e, c) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("matrix.exclude[%d]: %s matches no cell of the axes product — "+
+				"an exclusion removes cells the axes enumerate, so a value no axis carries excludes nothing", i, kvsString(e))
+		}
+	}
+	if len(Cells(axes, rows)) == 0 {
+		return nil, fmt.Errorf("matrix.exclude removes every cell of the axes product (%d cells) — "+
+			"a matrix with no cell runs nothing", len(full))
+	}
+	return rows, nil
+}
+
+// axisKeyNames lists the declared axis KEYS, for an error message that names what
+// the author could have meant.
+func axisKeyNames(axes []Axis) []string {
+	keys := make([]string, len(axes))
+	for i, a := range axes {
+		keys[i] = a.Key
+	}
+	return keys
+}
+
+// Cells is the realised cell set: the axes product MINUS every cell an exclusion
+// row matches. It is the ONE definition of "which cells exist" — override
+// validation, the partial-var scan, and the resolver's per-cell multiplicity all
+// read it, so the grid cannot mean one thing at parse and another at lowering.
+// Empty axes => nil (no cells), exactly as productCells.
+func Cells(axes []Axis, excludes []Exclusion) []map[string]string {
+	cells := productCells(axes)
+	if len(excludes) == 0 {
+		return cells
+	}
+	kept := make([]map[string]string, 0, len(cells))
+	for _, c := range cells {
+		if !excluded(c, excludes) {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+// excluded reports whether ANY exclusion row matches the cell (rows are unordered
+// and purely subtractive — one hit is enough).
+func excluded(cell map[string]string, excludes []Exclusion) bool {
+	for _, e := range excludes {
+		if rowMatches(e, cell) {
+			return true
+		}
+	}
+	return false
 }
 
 // productCells returns the cartesian product of axes as a list of axis-key→value
@@ -1738,7 +1875,7 @@ func (st *Subtree) PartialExtraVars() map[string]bool {
 	if len(extras) == 0 {
 		return nil
 	}
-	cells := productCells(st.Axes)
+	cells := Cells(st.Axes, st.Excludes)
 	if len(cells) == 0 {
 		cells = []map[string]string{{}}
 	}
@@ -1782,6 +1919,21 @@ func (st *Subtree) MatrixKeys() map[string]bool {
 	return keys
 }
 
+// decodeMatrix decodes a matrix OBJECT — the shape shared by the GLOBAL matrix and
+// a per-node one — STRICTLY: an unknown key is a parse error, never a block that
+// vanishes. Silence here is expensive out of all proportion to the typo, because
+// the symptom is a projectfile that looks changed and workflows that regenerate
+// byte for byte identical, with no line of output to suspect.
+func decodeMatrix(raw json.RawMessage) (*rawMatrix, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var m rawMatrix
+	if err := dec.Decode(&m); err != nil {
+		return nil, fmt.Errorf("matrix: want {axes: {...}} with optional overrides/exclude: %w", err)
+	}
+	return &m, nil
+}
+
 // decodeNodeMatrix interprets a node's `matrix` field, which is polymorphic:
 //   - a BOOL: `true` makes the node a CELL over the GLOBAL subtree axes (the common
 //     case — every matrix node shares one fan-out, e.g. b19's series); `false`/absent
@@ -1789,23 +1941,35 @@ func (st *Subtree) MatrixKeys() map[string]bool {
 //   - an OBJECT `{axes: {...}}`: the node is a CELL over its OWN axes, isolated from
 //     the global set, so two artifact classes can fan over DIFFERENT dimensions in
 //     one pipeline (binaries over {GOOS,GOARCH}, the image over arch). An explicit
-//     axes object always implies the node is a cell.
+//     axes object always implies the node is a cell. It takes the same `exclude`
+//     list as the global matrix, subtracting cells its own axes cannot build.
 //
-// Empty input => (false, nil): not a matrix node.
-func decodeNodeMatrix(raw json.RawMessage) (isCell bool, axes []Axis, err error) {
+// `overrides` is refused here: extra per-cell VARS are a global-matrix feature (the
+// render emits them as strategy.matrix.include only for a job whose axes ARE the
+// global ones), so a node-level block would decorate nothing.
+//
+// Empty input => (false, nil, nil): not a matrix node.
+func decodeNodeMatrix(raw json.RawMessage) (isCell bool, axes []Axis, excludes []Exclusion, err error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return false, nil, nil
+		return false, nil, nil, nil
 	}
 	var b bool
 	if json.Unmarshal(raw, &b) == nil {
-		return b, nil, nil // bare bool => global-axes cell (true) or not a cell (false)
+		return b, nil, nil, nil // bare bool => global-axes cell (true) or not a cell (false)
 	}
-	var m rawMatrix
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return false, nil, fmt.Errorf("matrix: want a bool or {axes: {...}}: %w", err)
+	m, err := decodeMatrix(raw)
+	if err != nil {
+		return false, nil, nil, fmt.Errorf("matrix: want a bool or {axes: {...}}: %w", err)
+	}
+	if len(m.Overrides) > 0 {
+		return false, nil, nil, fmt.Errorf("matrix.overrides is a global-matrix feature — " +
+			"move the rows to the top-level matrix (a per-node matrix has no cell of the global product to decorate)")
 	}
 	if axes, err = buildAxes(m.Axes); err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
-	return true, axes, nil
+	if excludes, err = buildExcludes(m.Exclude, axes); err != nil {
+		return false, nil, nil, err
+	}
+	return true, axes, excludes, nil
 }

@@ -645,6 +645,46 @@ func TestMatrixOverridesLowering(t *testing.T) {
 	}
 }
 
+// TestMatrixExcludeRender pins the exclude lowering on BOTH forges: a node matrix's
+// `exclude` rows reach strategy.matrix.exclude with their fields key-sorted and
+// quoted exactly as the axis values are, so the forge drops the same cells the make
+// and Tekton lowerings drop. The driver is a platform grid with an impossible corner
+// (no darwin/riscv64 toolchain) that must stay ONE node, because the artifact
+// hand-off is keyed by the cell.
+func TestMatrixExcludeRender(t *testing.T) {
+	subtree := `{
+	  "nodes": {"binaries-built": {"goal": true,
+	    "matrix": {"axes": {"GOOS": ["linux", "darwin"], "GOARCH": ["amd64", "arm64", "riscv64"]},
+	               "exclude": [{"GOOS": "darwin", "GOARCH": "riscv64"}]},
+	    "needs": {"build-binaries": true}}}
+	}`
+	st, err := ci.Parse([]byte(subtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	wantExclude := strings.TrimLeft(`        exclude:
+          - GOARCH: "riscv64"
+            GOOS: "darwin"`, " ")
+	for _, target := range []string{TargetGHA, TargetForgejo} {
+		out, err := Workflow(m, Targets[target], ci.Platform{})
+		if err != nil {
+			t.Fatalf("%s: %v", target, err)
+		}
+		if !strings.Contains(string(out), wantExclude) {
+			t.Errorf("%s workflow missing the exclude block:\nwant:\n%s\ngot:\n%s", target, wantExclude, out)
+		}
+		// The axes themselves stay whole — exclude subtracts cells, never values.
+		if !strings.Contains(string(out), `GOARCH: ["amd64", "arm64", "riscv64"]`) {
+			t.Errorf("%s workflow must keep the full GOARCH axis, got:\n%s", target, out)
+		}
+	}
+}
+
 // TestMatrixOverridesPartialFallback pins the b19/llvm case: an override decorates
 // ONLY the exception cell (series 20 -> noble), leaving series 21/22 undecorated.
 // Both the standalone extra-var binding and the composed FROM ref that embeds it must

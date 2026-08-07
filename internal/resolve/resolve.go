@@ -41,21 +41,20 @@ type Job struct {
 	Args  string    // resolved {args:"…"} string, empty if none
 	Needs []string  // upstream tool-job names (contracted past abstract nodes), sorted
 	Axes  []ci.Axis // matrix axes when the owning node is a CELL, else nil
-	Class Class     // timing class inherited from the owning node
+	// Excludes are the cells Axes mint that this job must NOT run (matrix.exclude of
+	// the SAME matrix the axes come from). Empty => the full grid.
+	Excludes []ci.Exclusion
+	Class    Class // timing class inherited from the owning node
 }
 
 // Cells returns this job's per-run multiplicity: a CELL job runs once per cell of
-// the axes' cartesian product; SOURCE/JOIN once. This is the `counts` the
-// conformance vectors assert (the matrix fan-out/fan-in).
+// the axes' cartesian product MINUS the excluded ones; SOURCE/JOIN once. This is
+// the `counts` the conformance vectors assert (the matrix fan-out/fan-in).
 func (j Job) Cells() int {
 	if j.Class != ClassCell || len(j.Axes) == 0 {
 		return 1
 	}
-	n := 1
-	for _, a := range j.Axes {
-		n *= len(a.Values)
-	}
-	return n
+	return len(ci.Cells(j.Axes, j.Excludes))
 }
 
 // Model is the resolved job model: the goals and the jobs that run for them.
@@ -251,15 +250,17 @@ func (g *graph) classify() {
 	}
 }
 
-// effectiveAxes returns the axes a CELL node fans over: its OWN axes when the node
-// declares a per-node matrix (isolating one artifact class's dimensions — binaries
-// over {GOOS,GOARCH}), else the GLOBAL subtree axes (the common case, e.g. b19's
-// series shared by every matrix node).
-func (g *graph) effectiveAxes(node string) []ci.Axis {
-	if own := g.st.Nodes[node].Axes; len(own) > 0 {
-		return own
+// effectiveMatrix returns the axes a CELL node fans over AND the cells those axes
+// mint but nothing builds: the node's OWN pair when it declares a per-node matrix
+// (isolating one artifact class's dimensions — binaries over {GOOS,GOARCH}), else
+// the GLOBAL pair (the common case, e.g. b19's series shared by every matrix node).
+// The two travel together because per-node axes are isolated: taking the global
+// exclusions against own axes would subtract cells that grid never minted.
+func (g *graph) effectiveMatrix(node string) ([]ci.Axis, []ci.Exclusion) {
+	if n := g.st.Nodes[node]; len(n.Axes) > 0 {
+		return n.Axes, n.Excludes
 	}
-	return g.st.Axes
+	return g.st.Axes, g.st.Excludes
 }
 
 func (g *graph) classOf(n string) Class {
@@ -280,10 +281,11 @@ func (g *graph) classOf(n string) Class {
 // single-owner tools, but the union rule keeps the singleton honest).
 func (g *graph) buildJobs(reach map[string]bool) []Job {
 	type acc struct {
-		args  string
-		needs map[string]bool
-		class Class
-		axes  []ci.Axis
+		args     string
+		needs    map[string]bool
+		class    Class
+		axes     []ci.Axis
+		excludes []ci.Exclusion
 	}
 	tools := make(map[string]*acc)
 	order := []string{} // first-seen order before the final name sort
@@ -318,7 +320,7 @@ func (g *graph) buildJobs(reach map[string]bool) []Job {
 			}
 			if nodeClass == ClassCell {
 				a.class = ClassCell
-				a.axes = g.effectiveAxes(n)
+				a.axes, a.excludes = g.effectiveMatrix(n)
 			} else if a.class != ClassCell && nodeClass == ClassJoin {
 				a.class = ClassJoin
 			}
@@ -333,7 +335,7 @@ func (g *graph) buildJobs(reach map[string]bool) []Job {
 			needs = append(needs, u)
 		}
 		sort.Strings(needs)
-		jobs = append(jobs, Job{Name: name, Args: a.args, Needs: needs, Axes: a.axes, Class: a.class})
+		jobs = append(jobs, Job{Name: name, Args: a.args, Needs: needs, Axes: a.axes, Excludes: a.excludes, Class: a.class})
 	}
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
 	return jobs

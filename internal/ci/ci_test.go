@@ -266,6 +266,110 @@ func TestMatrixOverridesRejects(t *testing.T) {
 	}
 }
 
+// TestMatrixExcludeDecode pins matrix.exclude on BOTH matrices: the global one and a
+// node's own. Each row is key-sorted axis KEY→value pairs, scalars coerce like axis
+// values, and Cells subtracts exactly the matched cells from the product — the count
+// every lowering fans over.
+func TestMatrixExcludeDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "matrix": {
+	    "axes": {"GOOS": ["linux", "darwin"], "GOARCH": ["amd64", "arm64", "riscv64"]},
+	    "exclude": [{"GOOS": "darwin", "GOARCH": "riscv64"}]
+	  },
+	  "nodes": {
+	    "binaries-built": {"goal": true, "matrix": true, "needs": {"build-binaries": true}},
+	    "images-built": {"matrix": {"axes": {"ARCH": ["amd64", "arm64"], "FLAVOUR": ["slim", "full"]},
+	                                "exclude": [{"ARCH": "arm64", "FLAVOUR": "full"}]},
+	                     "needs": {"container-build": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(st.Excludes) != 1 || len(st.Excludes[0]) != 2 ||
+		st.Excludes[0][0] != (KV{Key: "GOARCH", Value: "riscv64"}) ||
+		st.Excludes[0][1] != (KV{Key: "GOOS", Value: "darwin"}) {
+		t.Fatalf("global exclude: want key-sorted {GOARCH=riscv64, GOOS=darwin}, got %+v", st.Excludes)
+	}
+	// 2 x 3 = 6 cells, minus the one excluded combination.
+	if got := len(Cells(st.Axes, st.Excludes)); got != 5 {
+		t.Errorf("global cells: want 5, got %d", got)
+	}
+	// The excluded cell is the one that is gone, not some neighbour.
+	for _, c := range Cells(st.Axes, st.Excludes) {
+		if c["GOOS"] == "darwin" && c["GOARCH"] == "riscv64" {
+			t.Errorf("cell darwin/riscv64 survived the exclusion: %v", c)
+		}
+	}
+	// A per-node matrix carries its OWN exclusions, isolated from the global ones.
+	n := st.Nodes["images-built"]
+	if got := len(Cells(n.Axes, n.Excludes)); got != 3 {
+		t.Errorf("node cells: want 3 (2x2 minus arm64/full), got %d", got)
+	}
+}
+
+// TestMatrixExcludeRejects pins the fail-fast set: an exclusion that excludes nothing
+// (a non-axis field, a value no cell carries) or everything (the whole product) is a
+// parse error, because either one is a typo whose only symptom would be a cell count
+// nobody expected.
+func TestMatrixExcludeRejects(t *testing.T) {
+	for name, exclude := range map[string]string{
+		"non-axis-field":   `[{"GOOS": "linux", "CGO_ENABLED": "0"}]`,
+		"no-match":         `[{"GOOS": "plan9", "GOARCH": "riscv64"}]`,
+		"non-scalar":       `[{"GOOS": "darwin", "GOARCH": ["riscv64", "arm64"]}]`,
+		"empties-product":  `[{"GOOS": "linux"}, {"GOOS": "darwin"}]`,
+		"empty-row":        `[{}]`,
+		"exclude-no-axes":  `[{"GOOS": "linux"}]`,
+		"node-level-match": `[{"GOOS": "linux", "GOARCH": "riscv64"}]`,
+	} {
+		axes := `"axes": {"GOOS": ["linux", "darwin"], "GOARCH": ["amd64", "riscv64"]}, `
+		if name == "exclude-no-axes" {
+			axes = ""
+		}
+		doc := `{"matrix": {` + axes + `"exclude": ` + exclude + `},
+		  "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"build-binaries": true}}}}`
+		if name == "node-level-match" { // the same rules bind a per-node matrix
+			doc = `{"nodes": {"ready": {"goal": true, "matrix": {"axes": {"GOOS": ["linux"]},
+			  "exclude": ` + exclude + `}, "needs": {"build-binaries": true}}}}`
+		}
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: expected a parse error, got nil", name)
+		}
+	}
+}
+
+// TestMatrixOverridesRejectsExcludedCell pins the interaction: an override row that
+// matches ONLY cells matrix.exclude removed decorates nothing, so it is the same
+// no-match error as a typo'd axis value. The two lists are read as one grid, never
+// against each other's stale view of it.
+func TestMatrixOverridesRejectsExcludedCell(t *testing.T) {
+	doc := `{"matrix": {
+	    "axes": {"GOOS": ["linux", "darwin"], "GOARCH": ["amd64", "riscv64"]},
+	    "exclude": [{"GOOS": "darwin", "GOARCH": "riscv64"}],
+	    "overrides": [{"GOOS": "darwin", "GOARCH": "riscv64", "CGO_ENABLED": "1"}]
+	  },
+	  "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"build-binaries": true}}}}`
+	if _, err := Parse([]byte(doc)); err == nil {
+		t.Error("an override matching only an excluded cell must be refused, got nil")
+	}
+}
+
+// TestNodeMatrixRejectsUnhonouredKeys pins that a node matrix REFUSES what it cannot
+// honour instead of dropping it. Both spellings used to be accepted and discarded in
+// silence, whose symptom is a projectfile that looks changed and workflows that
+// regenerate byte for byte identical.
+func TestNodeMatrixRejectsUnhonouredKeys(t *testing.T) {
+	for name, matrix := range map[string]string{
+		"overrides": `{"axes": {"GOOS": ["linux"]}, "overrides": [{"GOOS": "linux", "CGO_ENABLED": "1"}]}`,
+		"unknown":   `{"axess": {"GOOS": ["linux"]}}`,
+	} {
+		doc := `{"nodes": {"ready": {"goal": true, "matrix": ` + matrix + `, "needs": {"build-binaries": true}}}}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("node matrix %s: expected a parse error, got nil", name)
+		}
+	}
+}
+
 // TestEmitDecode pins that a publish tool's `emit` survives Parse onto the manifest —
 // the event name the render lowers to a fact emission after that tool's step.
 func TestEmitDecode(t *testing.T) {
