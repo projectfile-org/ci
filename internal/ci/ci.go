@@ -19,17 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 )
-
-func init() {
-	// Claim the "ci-resolver" cache slot so pf-ci reads/writes its own include
-	// cache ($XDG_CACHE_HOME/projectfile/ci-resolver/) and never collides with
-	// pf-cli or pf-bridge. pf-ci has no warm command — it fetches includes on
-	// demand via core's 3-tier resolver.
-	projectfile.SetCacheApp("ci-resolver")
-}
 
 // Need is one enabled `needs` entry — a Make-target name plus optional args.
 // A node-vs-tool distinction is NOT made here: the spec says every needs entry
