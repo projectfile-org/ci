@@ -1477,8 +1477,6 @@ Build, test, scan and publish the release artifacts
 
 Run the pseudo-CI pipeline locally — build, test and scan, without publishing
 
-> Goal — lowered to its own CI workflow.
-
 ### `static-passes`
 
 Run every static check — lint, documentation, licence compliance and vulnerability scans
