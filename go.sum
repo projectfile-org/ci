@@ -48,9 +48,5 @@ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
-kiota.ch/projectfile/core/v2 v2.5.0 h1:fcenBnnsVfrvTr2t9Mp83cd9YneuQE93EE3uaYJvQdI=
-kiota.ch/projectfile/core/v2 v2.5.0/go.mod h1:8EBb+xQanofOxlgSE4vCU/TNGEsnBcKz0/wi5idxHn4=
-kiota.ch/projectfile/core/v2 v2.6.0 h1:LKTL3OAV+Q2fR0obrzYbg2Xjkq2j3/CIIF6JMB8xVTI=
-kiota.ch/projectfile/core/v2 v2.6.0/go.mod h1:8EBb+xQanofOxlgSE4vCU/TNGEsnBcKz0/wi5idxHn4=
-kiota.ch/projectfile/core/v2 v2.7.0 h1:38PPRBaawbBV2wRIt4lex0B+zUZs59N3WLDKMyKOOZU=
-kiota.ch/projectfile/core/v2 v2.7.0/go.mod h1:8EBb+xQanofOxlgSE4vCU/TNGEsnBcKz0/wi5idxHn4=
+kiota.ch/projectfile/core/v2 v2.8.0 h1:f+E+p/wJdA/9onn3ZK0hItH/DmT90bJzefnC4RS6m0c=
+kiota.ch/projectfile/core/v2 v2.8.0/go.mod h1:8EBb+xQanofOxlgSE4vCU/TNGEsnBcKz0/wi5idxHn4=
