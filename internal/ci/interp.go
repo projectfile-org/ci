@@ -8,8 +8,15 @@ import (
 	"fmt"
 	"strings"
 
+	"kiota.ch/projectfile/core/v2/pkg/interp"
 	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 )
+
+// imageScope is the subtree a reference is resolved against before the document
+// root: the project's DECLARED image parts. It is the same scope the readme
+// bridge and the m6e reader bind, which is what keeps one template meaning one
+// thing in all three planes.
+const imageScope = "org.projectfile.image"
 
 // interpolator resolves BRACED `${<pf-path>}` generation-time references inside a
 // tool INVOCATION (a `run` command, a positional-args string, a `set-env` value,
@@ -18,8 +25,7 @@ import (
 // forge-plane twin of the m6e reader's `pf-cli get` pass (Law 3: one neutral rule,
 // two engine spellings).
 type interpolator struct {
-	doc      *projectfile.Document
-	basename string // finalized image basename, for the image.* synthetic split
+	doc *projectfile.Document
 }
 
 // interpolate scans s and resolves every braced `${…}` reference at generation
@@ -36,12 +42,10 @@ type interpolator struct {
 //     reader's `pf get || true` twin (Law 3: one neutral rule, two engine spellings).
 //     The cost: a genuine typo silently drops the arg instead of failing loudly.
 //
-// SELECTOR / PROJECTION (`${…[kind=binary]…}` / `${…[]…}`) fanning to multiple
-// positional args is DEFERRED: it needs core's widened `pkg/fieldpath.Resolve`,
-// which lands with the (currently blocked) core v1.0.2 publish. Until then a `[` in
-// a reference is refused loudly (never silently mis-resolved). Every real fleet ref
-// is a plain dotted path (`org.projectfile.artifacts.<name>.path|url`) or an
-// image.* synthetic, all of which resolve on the pinned core v1.0.0 surface.
+// A reference naming SEVERAL values (a `{kind=binary}` selector over a map) is
+// left VERBATIM by core rather than collapsed to the first, so it reaches this
+// plane unresolved and lands on the empty rule above. Fanning one reference out
+// to several positional args is a render concern nothing declares yet.
 func (ip interpolator) interpolate(s string) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -82,73 +86,32 @@ func (ip interpolator) interpolate(s string) (string, error) {
 	return b.String(), nil
 }
 
-// resolve computes one `${expr}` reference. The three `image.*` addresses are
-// SYNTHETIC (derived from the image basename split, not real document paths — the
-// same split the retired `{get:}` identity args used). Every other expr is a DOTTED
-// extension path (`org.projectfile.<ns>.<key>…<leaf>`), resolved against the merged
-// doc via the same Extension walk read.go's subtree uses (the pinned-core v1.0.0
-// surface). A miss at any hop resolves to EMPTY (D4, reversed) — an absent artifact
-// or a typo leaves the arg UNSET, never a hard error. Only the deferred selector
-// `[k=v]` / projection `[]` (see interpolate) is still refused loudly here: it is a
-// capability gap on pinned core v1.0.0, NOT a data miss, and refusing it keeps the
-// forge plane from silently diverging from the m6e reader, which resolves the full
-// grammar.
+// resolve computes one `${expr}` reference, through core's `interp` — the SAME
+// engine the readme bridge and pf-cli use, so the three planes can never disagree
+// about what an address means. It is called per reference rather than over the
+// whole string because the D4 empty-on-miss rule below is this plane's own: core
+// leaves an unresolved reference VERBATIM (right for a badge URL, which is then
+// dropped whole), while a tool argument here has to collapse to nothing.
+//
+// The scope is `org.projectfile.image`, so a template naming the image's own
+// declared parts (`${org}`, `${name}`, `${path}`, `${tag}`) reads them without
+// spelling the address, exactly as a sink `ref` template does. A part whose value
+// is itself a reference — `name: ${identity.name}` — resolves recursively.
+//
+// A miss resolves to EMPTY (D4, reversed): an absent artifact or a typo leaves the
+// arg UNSET, never a hard error. The old `[k=v]` bracket spelling is still refused
+// LOUDLY, because it is not a miss: the selector grammar is `{k=v}`, and silently
+// dropping the argument would publish a well-formed command with a hole in it.
 func (ip interpolator) resolve(expr string) (string, error) {
-	switch expr {
-	case "image.basename":
-		return ip.basename, nil
-	case "image.namespace":
-		ns, _ := basenameParts(ip.basename)
-		return ns, nil
-	case "image.name":
-		_, name := basenameParts(ip.basename)
-		return name, nil
-	}
 	if strings.ContainsAny(expr, "[]") {
-		return "", fmt.Errorf("reference ${%s}: selector/projection is not yet supported "+
-			"(needs core pkg/fieldpath.Resolve, pending the core v1.0.2 publish)", expr)
+		return "", fmt.Errorf("reference ${%s}: `[…]` is not the selector spelling — "+
+			"write `{k=v}` for a selector and `{}` for a projection", expr)
 	}
-	ns, keys := splitExtPath(expr)
-	m, ok := projectfile.Extension(ip.doc, ns)
+	out, ok := interp.ExpandIn(ip.doc, "${"+expr+"}", imageScope)
 	if !ok {
-		return "", nil // unresolved → empty (D4 reversed): extension absent, leave the arg unset
+		return "", nil // unresolved → empty (D4 reversed): leave the arg unset
 	}
-	var v any = m
-	for _, k := range keys {
-		mm, ok := v.(map[string]any)
-		if !ok {
-			return "", nil // a non-map hop cannot continue → unresolved → empty
-		}
-		if v, ok = mm[k]; !ok {
-			return "", nil // key absent → unresolved → empty
-		}
-	}
-	return formatScalar(v), nil
-}
-
-// formatScalar renders a resolved leaf to the wire string a `run`/arg expects: a
-// bare string verbatim, any other scalar via %v. A path or url (the only artifact
-// leaves) is always a string.
-func formatScalar(v any) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return fmt.Sprintf("%v", v)
-}
-
-// basenameParts splits an image basename into its (namespace, name) halves — the
-// last `/`-separated label as the namespace, the rest (minus any `:tag`) as the
-// name. Shared home of the split the `${image.namespace}` / `${image.name}`
-// synthetics resolve (previously the render lowering's `{get:}` arm).
-func basenameParts(image string) (namespace, name string) {
-	name = image
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		namespace, name = name[:i], name[i+1:]
-	}
-	if i := strings.LastIndex(name, ":"); i >= 0 {
-		name = name[:i]
-	}
-	return namespace, name
+	return out, nil
 }
 
 // interpolateRefs resolves every `${<pf-path>}` reference in the subtree's tool
@@ -158,8 +121,8 @@ func basenameParts(image string) (namespace, name string) {
 // 2026-07-10): a shared-preset ref to an artifact THIS project omits leaves the arg
 // unset rather than failing the generate. Only a malformed ref (an unterminated
 // `${`, or the deferred `[…]` selector) still errors.
-func (r *Reader) interpolateRefs(st *Subtree, basename string) error {
-	ip := interpolator{doc: r.doc, basename: basename}
+func (r *Reader) interpolateRefs(st *Subtree) error {
+	ip := interpolator{doc: r.doc}
 	for name, man := range st.Tools {
 		var err error
 		if man.Run, err = ip.interpolate(man.Run); err != nil {

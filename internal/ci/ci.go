@@ -890,11 +890,10 @@ func Load(pfPath string) (*Subtree, error) {
 		st.Image = r.imageBasename()
 	}
 	// Resolve every `${<pf-path>}` generation-time reference in the tool invocations
-	// (run / positional args / set-env / string build-args) against the merged doc,
-	// now that the image basename is finalized (the image.* synthetics read it). A
+	// (run / positional args / set-env / string build-args) against the merged doc. A
 	// miss resolves to EMPTY (D4, reversed) — a preset ref to an artifact this project
-	// omits leaves the arg unset; only a malformed/deferred ref errors.
-	if err := r.interpolateRefs(st, st.Image); err != nil {
+	// omits leaves the arg unset; only a malformed ref errors.
+	if err := r.interpolateRefs(st); err != nil {
 		return nil, fmt.Errorf("org.projectfile.ci: %w", err)
 	}
 	// Resolve the forgejo-release action's binary asset path from

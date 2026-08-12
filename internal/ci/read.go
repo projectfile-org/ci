@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"kiota.ch/projectfile/core/v2/pkg/interp"
 	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 )
 
@@ -67,10 +68,19 @@ func (r *Reader) subtree(path string) ([]byte, error) {
 	return raw, nil
 }
 
-// imageBasename returns the derived container-image basename via core's
-// single-home rule ("" on a miss — the caller treats empty as "no naming step").
+// imageBasename returns the container-image basename the project DECLARES, as
+// `org.projectfile.image.path` composed under its own scope ("" on a miss — the
+// caller treats empty as "no naming step").
+//
+// It is a document read, not a rule: the path is a template over parts the
+// project states (`${org}/${name}`, or whatever grammar it invents), so the
+// readme bridge, the m6e reader and this plane all name one image identically
+// without any of them carrying a copy of the formula.
 func (r *Reader) imageBasename() string {
-	v, _ := projectfile.ImageBasename(r.doc)
+	v, ok := interp.ExpandIn(r.doc, "${"+imageScope+".path}", imageScope)
+	if !ok {
+		return ""
+	}
 	return v
 }
 

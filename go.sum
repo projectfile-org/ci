@@ -50,3 +50,5 @@ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 kiota.ch/projectfile/core/v2 v2.8.0 h1:f+E+p/wJdA/9onn3ZK0hItH/DmT90bJzefnC4RS6m0c=
 kiota.ch/projectfile/core/v2 v2.8.0/go.mod h1:8EBb+xQanofOxlgSE4vCU/TNGEsnBcKz0/wi5idxHn4=
+kiota.ch/projectfile/core/v2 v2.9.0 h1:IxGsx0Ewu6I0pxukyvu0XPqGrdI2qNGikC3qBZu9U3U=
+kiota.ch/projectfile/core/v2 v2.9.0/go.mod h1:8EBb+xQanofOxlgSE4vCU/TNGEsnBcKz0/wi5idxHn4=

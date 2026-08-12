@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 )
 
 // testB19Ubuntu is the canonical basename exercised across the image/interpolate
@@ -654,16 +656,46 @@ func TestWebhookVar(t *testing.T) {
 	}
 }
 
-// TestInterpolateSyntax pins the ${…} mechanic's pure-string behaviour (needs no
-// document): the image.* synthetics resolve from the basename split, `$$` escapes a
-// literal `${…}` (the dc-up-d runtime case), a bare `$VAR` is left untouched, and a
-// string with no reference passes through verbatim.
+// declaredImageDoc writes a projectfile declaring the image as PARTS and returns
+// its merged document. The parts, not any rule here, are what `${org}`/`${name}`
+// resolve to — which is the whole point of the scope.
+func declaredImageDoc(t *testing.T) *projectfile.Document {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: ubuntu
+org:
+  projectfile:
+    image:
+      org: b19
+      name: ${identity.name}
+      path: ${org}/${name}
+      tag: latest
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestInterpolateSyntax pins the ${…} mechanic: a bare part resolves under the
+// image SCOPE, a part whose value is itself a reference resolves recursively,
+// `$$` escapes a literal `${…}` (the dc-up-d runtime case), a bare `$VAR` is left
+// untouched, and an unresolvable reference collapses to empty (D4).
 func TestInterpolateSyntax(t *testing.T) {
-	ip := interpolator{basename: testB19Ubuntu}
+	ip := interpolator{doc: declaredImageDoc(t)}
 	cases := []struct{ in, want string }{
-		{"gsa ${image.namespace}", "gsa b19"},
-		{"x ${image.name} y", "x ubuntu y"},
-		{"${image.basename}", testB19Ubuntu},
+		{"gsa ${org}", "gsa b19"},                                                   // a declared part, read under the scope
+		{"x ${name} y", "x ubuntu y"},                                               // ${identity.name}, resolved recursively
+		{"${path}", testB19Ubuntu},                                                  // the composed basename
+		{"${org.projectfile.image.path}", testB19Ubuntu},                            // the same value by full address
+		{"a ${org.projectfile.nope.here} b", "a  b"},                                // miss → empty (D4)
 		{`timeout "$${M6E_TIMEOUT:-300}s" up`, `timeout "${M6E_TIMEOUT:-300}s" up`}, // $$ → literal ${…}
 		{"echo $HOME done", "echo $HOME done"},                                      // bare $ untouched
 		{"cost is $$5", "cost is $5"},                                               // $$ not before { → literal $
@@ -681,13 +713,13 @@ func TestInterpolateSyntax(t *testing.T) {
 	}
 }
 
-// TestInterpolateGuards pins the fail-loud cases: the deferred selector/projection
-// syntax is refused (not silently mis-resolved), and an unterminated ${ errors —
-// both without touching the document.
+// TestInterpolateGuards pins the fail-loud cases: the retired `[k=v]` bracket
+// spelling is refused rather than silently dropped to empty, and an unterminated
+// ${ errors.
 func TestInterpolateGuards(t *testing.T) {
-	ip := interpolator{basename: testB19Ubuntu}
+	ip := interpolator{doc: declaredImageDoc(t)}
 	for _, in := range []string{
-		"${org.projectfile.artifacts[kind=binary].path}", // selector deferred (needs core v1.0.2)
+		"${org.projectfile.artifacts[kind=binary].path}", // `[…]` is not the selector spelling
 		"tail ${unterminated",                            // no closing brace
 	} {
 		if _, err := ip.interpolate(in); err == nil {
