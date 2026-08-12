@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"kiota.ch/projectfile/core/v2/pkg/projectfile"
@@ -838,5 +839,96 @@ org:
 	two := "      a:\n        kind: binary\n        path: dist/a\n      b:\n        kind: binary\n        path: dist/b"
 	if _, err := Load(write(t, two)); err == nil {
 		t.Errorf("Load with two kind=binary artifacts: expected error, got nil")
+	}
+}
+
+// publishDoc is a document declaring two destinations with DIFFERENT path
+// grammars plus the routes that reach them — the shape the publish plane exists
+// for. `hub` flattens what `ghcr` nests, and neither shape is known to any code.
+func publishDoc(t *testing.T) *projectfile.Document {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: ubuntu
+repositories:
+  - role: origin
+    type: git
+    url: ssh://git@kiota.ch/b19/ubuntu.git
+org:
+  projectfile:
+    image:
+      org: b19
+      name: ${identity.name}
+      series: "{B19_UBUNTU_SERIES}"
+      path: ${org}/${name}/${series}
+      flatpath: ${org}-${name}-${series}
+      tag: latest
+    sinks:
+      ghcr:
+        ref: ghcr.io/damian-buho/${path}:${tag}
+      hub:
+        ref: docker.io/damianbuho/${flatpath}:${tag}
+      broken:
+        ref: example.test/${nosuchpart}:${tag}
+    publish:
+      github:
+        push: [ghcr, hub, broken]
+        pull: ghcr
+      kiota:
+        push: [ghcr]
+        pull: ghcr
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestPublishRefsComposePerLowering pins the whole publish plane in one read:
+//   - a lowering publishes to the route of the forge it RUNS on — `gha` is GitHub
+//     Actions, and a Forgejo lowering takes the slug of the origin host, so the
+//     kiota route reaches it without anyone restating the mapping;
+//   - two sinks with incompatible path grammars compose from ONE declaration,
+//     which is what lets a single archive land nested and flattened;
+//   - a `{AXIS}` placeholder survives composition verbatim, for the cell to fill;
+//   - a template naming an undeclared part is DROPPED, never published with a
+//     hole in it.
+func TestPublishRefsComposePerLowering(t *testing.T) {
+	r := &Reader{doc: publishDoc(t)}
+	got, err := r.publishRefs()
+	if err != nil {
+		t.Fatalf("publishRefs: %v", err)
+	}
+	want := map[string][]SinkRef{
+		LoweringGHA: {
+			{Sink: "ghcr", Ref: "ghcr.io/damian-buho/b19/ubuntu/{B19_UBUNTU_SERIES}:latest"},
+			{Sink: "hub", Ref: "docker.io/damianbuho/b19-ubuntu-{B19_UBUNTU_SERIES}:latest"},
+		},
+		LoweringForgejo: {
+			{Sink: "ghcr", Ref: "ghcr.io/damian-buho/b19/ubuntu/{B19_UBUNTU_SERIES}:latest"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("publishRefs:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// TestPublishRefsAbsentWithoutRoutes pins the back-compatible half: a project
+// that declares no route composes nothing, so oci-push keeps the single
+// OUTPUT_REGISTRY destination every project had before this plane existed.
+func TestPublishRefsAbsentWithoutRoutes(t *testing.T) {
+	r := &Reader{doc: declaredImageDoc(t)}
+	got, err := r.publishRefs()
+	if err != nil {
+		t.Fatalf("publishRefs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("publishRefs: got %#v, want none", got)
 	}
 }

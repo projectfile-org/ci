@@ -19,6 +19,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"kiota.ch/projectfile/core/v2/pkg/genlog"
+	"kiota.ch/projectfile/core/v2/pkg/interp"
 )
 
 // Need is one enabled `needs` entry — a Make-target name plus optional args.
@@ -718,6 +721,22 @@ type Build struct {
 	// secrets-provision step (the empty-subtree no-op). Non-nil ⇒ render injects a
 	// SYNTHETIC secrets-provision step before dc-up-d in the live (fused) job.
 	Secrets json.RawMessage
+	// PublishRefs is the composed destination list per LOWERING key ("gha"|"forgejo"):
+	// where a pipeline of that lowering publishes to. Composed at LOAD time from
+	// org.projectfile.publish.<forge>.push (the sink NAMES) and each
+	// org.projectfile.sinks.<name>.ref (the whole grammar), so render threads finished
+	// references and knows no path shape. Empty => the project declares no route, and
+	// oci-push keeps its single OUTPUT_REGISTRY destination.
+	PublishRefs map[string][]SinkRef
+}
+
+// SinkRef is one composed publish destination: the sink NAME the credentials key on,
+// and the reference that sink's own template states. A `{AXIS}` placeholder survives
+// verbatim — it carries no `$`, so composition never touches it and render substitutes
+// it per matrix cell, exactly as it does for the image basename.
+type SinkRef struct {
+	Sink string
+	Ref  string
 }
 
 // Events is the decoded org.projectfile.events subtree. Phase 1 is intentionally
@@ -850,10 +869,139 @@ func LoadBuild(pfPath string) (*Build, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 && len(buildTarget) == 0 {
+	publishRefs, err := r.publishRefs()
+	if err != nil {
+		return nil, err
+	}
+	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
+		len(buildTarget) == 0 && len(publishRefs) == 0 {
 		return nil, nil
 	}
-	return &Build{Images: images, Args: inputs, Events: events, Secrets: secRaw, BuildTarget: buildTarget}, nil
+	return &Build{
+		Images: images, Args: inputs, Events: events, Secrets: secRaw,
+		BuildTarget: buildTarget, PublishRefs: publishRefs,
+	}, nil
+}
+
+// rawPublish is one org.projectfile.publish.<forge> route. Only `push` is read here:
+// `pull` answers where a BUILD sources its base images, which the make plane resolves
+// through its registry vars, not the publish leaf.
+type rawPublish struct {
+	Push []string `json:"push"`
+}
+
+// publishRefs composes every declared destination, keyed by the LOWERING that
+// publishes it. The document keys routes by FORGE slug, because a route is a fact
+// about a forge; render works in lowerings, because that is what a workflow file is.
+// Mapping the two here keeps render free of forge knowledge and leaves exactly one
+// place to correct when a project gains a third home.
+func (r *Reader) publishRefs() (map[string][]SinkRef, error) {
+	pubRaw, err := r.subtree("org.projectfile.publish")
+	if err != nil {
+		return nil, err
+	}
+	if len(pubRaw) == 0 {
+		return nil, nil
+	}
+	var routes map[string]rawPublish
+	if err := json.Unmarshal(pubRaw, &routes); err != nil {
+		return nil, fmt.Errorf("org.projectfile.publish: parse: %w", err)
+	}
+	// The sink TEMPLATES, read as values. Expanding `${org.projectfile.sinks.X.ref}`
+	// instead would spend one re-expansion level on the lookup itself, and a template
+	// whose parts nest (`path` → `${org}/${name}` → `${identity.name}`) then exhausts
+	// core's depth bound and reports unresolved on a reference that composed fine.
+	// The readme bridge expands the template for the same reason.
+	sinkRaw, err := r.subtree("org.projectfile.sinks")
+	if err != nil {
+		return nil, err
+	}
+	var sinks map[string]struct {
+		Ref string `json:"ref"`
+	}
+	if len(sinkRaw) > 0 {
+		if err := json.Unmarshal(sinkRaw, &sinks); err != nil {
+			return nil, fmt.Errorf("org.projectfile.sinks: parse: %w", err)
+		}
+	}
+	out := map[string][]SinkRef{}
+	for lowering, forge := range r.publishForges(routes) {
+		for _, sink := range routes[forge].Push {
+			if sink == "" {
+				continue
+			}
+			tmpl := sinks[sink].Ref
+			if tmpl == "" {
+				genlog.Warn("publish sink dropped — declares no ref template",
+					"forge", forge, "sink", sink,
+					"remedy", "declare ref on org.projectfile.sinks."+sink)
+				continue
+			}
+			// Composed by core's engine under the image scope — the SAME call the
+			// readme bridge and the make plane make, so the three planes cannot
+			// disagree about where this project publishes.
+			ref, resolved := interp.ExpandIn(r.doc, tmpl, imageScope)
+			if !resolved {
+				// A half-composed reference is a well-formed name for the WRONG
+				// repository, so it is dropped rather than published.
+				genlog.Warn("publish sink dropped — ref left unresolved",
+					"forge", forge, "sink", sink, "template", tmpl, "composed", ref,
+					"remedy", "declare the missing part under "+imageScope)
+				continue
+			}
+			out[lowering] = append(out[lowering], SinkRef{Sink: sink, Ref: ref})
+		}
+	}
+	return out, nil
+}
+
+// The lowering keys a route can apply to, and the one forge slug that is a property
+// of a lowering rather than of a project: `gha` IS GitHub Actions. A Forgejo lowering
+// names no fixed forge — kiota and Codeberg both speak it — so its slug is read from
+// the document.
+const (
+	LoweringGHA     = "gha"
+	LoweringForgejo = "forgejo"
+	forgeGitHub     = "github"
+)
+
+// publishForges answers which forge slug each lowering runs on. A Forgejo lowering
+// runs on whichever instance hosts the ORIGIN, which only the document knows — so it
+// is read, never assumed, and a route keyed by that slug is the one that applies.
+func (r *Reader) publishForges(routes map[string]rawPublish) map[string]string {
+	forges := map[string]string{}
+	if _, ok := routes[forgeGitHub]; ok {
+		forges[LoweringGHA] = forgeGitHub
+	}
+	if slug := r.originForgeSlug(); slug != "" {
+		if _, ok := routes[slug]; ok {
+			forges[LoweringForgejo] = slug
+		}
+	}
+	return forges
+}
+
+// originForgeSlug is the first domain label of the origin repository's host — the
+// same slug rule the readme bridge derives its forge remotes with, so a route keyed
+// `kiota` matches the kiota.ch origin without anyone restating the mapping.
+func (r *Reader) originForgeSlug() string {
+	// `repositories` is a LIST, so the selector is the bracket form. The brace form
+	// selects within a MAP, and using it here silently answers nothing.
+	raw, ok := interp.ExpandIn(r.doc, "${repositories[role=origin].url}", imageScope)
+	if !ok || raw == "" {
+		return ""
+	}
+	// Any transport: ssh://git@host/o/r.git, https://host/o/r, git@host:o/r.git.
+	host := raw
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	if i := strings.Index(host, "@"); i >= 0 {
+		host = host[i+1:]
+	}
+	host = strings.FieldsFunc(host, func(c rune) bool { return c == '/' || c == ':' })[0]
+	label, _, _ := strings.Cut(host, ".")
+	return label
 }
 
 // Load runs pf-cli against the projectfile at dir (empty => auto-discover the

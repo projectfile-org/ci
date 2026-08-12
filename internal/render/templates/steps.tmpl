@@ -225,8 +225,17 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
           # always threaded — empty => Docker Hub. NOT the per-namespace INPUT registries
           # (B19_DOCKER_REGISTRY & friends answer "where base images come FROM"); this
           # answers "where THIS project publishes TO". Set per forge (org var = default,
-          # repo var = project-wise override).
+          # repo var = project-wise override). Ignored when `refs` below is present.
           registry: {{ outputRegistryExpr }}
+{{- with publishRefsFor .Target .Step.PublishRefs }}
+          # Every destination this forge's route declares, each reference composed by
+          # the sink that declared it — so one archive lands under whatever path grammar
+          # each registry wants. Credentials key on the SINK name.
+          refs: |
+{{- range . }}
+            {{ .Sink }} {{ .Ref }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{- define "providers/forgejo-release" }}

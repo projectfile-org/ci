@@ -106,9 +106,12 @@ const (
 )
 
 // Target key constants — the CLI selector values that index the Targets map.
+// Single-homed in `ci`, which reads the same keys off the document (build-target,
+// platforms, publish routes): two spellings of one lowering would let the loader and
+// the renderer disagree about which target a project declared.
 const (
-	TargetGHA     = "gha"
-	TargetForgejo = "forgejo"
+	TargetGHA     = ci.LoweringGHA
+	TargetForgejo = ci.LoweringForgejo
 )
 
 // Action slot names — the keys in org.projectfile.ci.<target>.actions.
@@ -1359,6 +1362,16 @@ type StepView struct {
 	// push ref_name IS the version. The cascade itself is imperative shell in the versioned
 	// oci-push action (Law 2), never here — the resolver only hands it the tag.
 	PublishVersion string `json:"publish-version,omitempty"`
+	// PublishRefs is the oci-push `refs:` input — one `<sink> <ref>` line per
+	// destination this lowering publishes to, each composed by the document that
+	// declared the sink. It is what lets ONE archive land nested on one registry and
+	// flattened on another; the resolver threads finished references and knows no path
+	// shape. Empty => the project declares no route, and the action falls back to the
+	// single OUTPUT_REGISTRY destination it always had. Keyed by LOWERING because a
+	// StepView is rendered once for every target: the axes are substituted here (they
+	// are target-independent), and the template selects the list its own target
+	// publishes.
+	PublishRefs map[string][]ci.SinkRef `json:"publish-refs,omitempty"`
 	// ReleaseAssetPath is the forgejo-release `release-asset-path:` input — the
 	// UNSUFFIXED binary path resolved from org.projectfile.artifacts (the single
 	// kind=binary entry's .path, e.g. dist/pf-cli). The action suffixes it with
@@ -2216,6 +2229,18 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// build-arg — the version lives in ONE place (ciContextExpr).
 	if man.Action == ActionOciPush {
 		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
+		// Per-cell: a composed ref carries `{AXIS}` verbatim, because composition
+		// never touches a token with no `$`. The same substitution the basename
+		// above gets, so a matrix cell publishes its own series to every sink.
+		if b != nil && len(b.PublishRefs) > 0 {
+			step.PublishRefs = map[string][]ci.SinkRef{}
+			for lowering, refs := range b.PublishRefs {
+				for _, sr := range refs {
+					step.PublishRefs[lowering] = append(step.PublishRefs[lowering],
+						ci.SinkRef{Sink: sr.Sink, Ref: substAxes(sr.Ref, subst)})
+				}
+			}
+		}
 	}
 	// The tool-level fact emission, opted into TWICE: the tool names the event, and the
 	// project declares org.projectfile.events (the block holding the webhook var). Either
@@ -3113,13 +3138,21 @@ func writerCaches(s StepView) []Cache {
 
 // funcs are the dumb formatting helpers the template leans on (the template
 // computes nothing of substance — that all happens in Build).
+// publishRefsFor selects the destinations THIS target publishes to. The step carries
+// every lowering's list, because one StepView is rendered for each target; picking one
+// is a lookup, not a computation, which is why it belongs in a template helper.
+func publishRefsFor(target Target, refs map[string][]ci.SinkRef) []ci.SinkRef {
+	return refs[target.Key]
+}
+
 var funcs = template.FuncMap{
-	"composeImage":  composeImage,
-	"cacheHostPath": cacheHostPath,
-	"cacheMounts":   cacheMounts,
-	"cacheKey":      cacheKey,
-	"cacheSaveKey":  cacheSaveKey,
-	"writerCaches":  writerCaches,
+	"publishRefsFor": publishRefsFor,
+	"composeImage":   composeImage,
+	"cacheHostPath":  cacheHostPath,
+	"cacheMounts":    cacheMounts,
+	"cacheKey":       cacheKey,
+	"cacheSaveKey":   cacheSaveKey,
+	"writerCaches":   writerCaches,
 	// alwaysExpr is the `${{ always() }}` step guard (GHA/Forgejo-identical) the report
 	// upload renders so a fail-closed scan still publishes its SARIF/JSON. A func, not an
 	// inline literal, because `${{ … }}` collides with Go template's own `{{ }}` delimiters.
