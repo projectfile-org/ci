@@ -1425,6 +1425,57 @@ func TestAuditScanPullsPublishedImage(t *testing.T) {
 	}
 }
 
+// TestAuditScanTargetsThePullSink pins the audit target against the DECLARED read
+// destination rather than a composed prefix. The fixture reads from Docker Hub, whose
+// path is FLAT (`namespace/name`) — a shape `<OUTPUT_REGISTRY>/<nested basename>` cannot
+// produce at all, so a passing assertion proves the sink's own grammar reached the scan
+// and not merely that some ref did. Both spellings of the ref (the job `env:` block and
+// the run-tool `env:` input) must be the ONE value, and the axis must still be per cell.
+func TestAuditScanTargetsThePullSink(t *testing.T) {
+	st, err := ci.Parse([]byte(auditSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// Only the GHA lowering declares a route, so the same model exercises both paths.
+	m := Build(rm, st, &ci.Build{PullRefs: map[string]ci.SinkRef{
+		ci.LoweringGHA: {Sink: "hub", Ref: "docker.io/damianbuho/b19-ubuntu-{B19_UBUNTU_SERIES}:latest"},
+	}})
+	gha, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatalf("gha: %v", err)
+	}
+	want := "docker.io/damianbuho/b19-ubuntu-${{ matrix.B19_UBUNTU_SERIES }}:latest"
+	for _, block := range []string{
+		"      " + ImagePublishedEnv + ": " + want,      // job env
+		"            " + ImagePublishedEnv + "=" + want, // the run-tool env input
+	} {
+		if !strings.Contains(string(gha), block) {
+			t.Errorf("audit scan missing %q\n---\n%s", block, gha)
+		}
+	}
+	if strings.Contains(string(gha), "vars.OUTPUT_REGISTRY }}/b19/ubuntu") {
+		t.Errorf("a declared pull sink must REPLACE the prefix composition\n---\n%s", gha)
+	}
+	// Rendered SECOND from the SAME model: forgejo declares no pull, so it must keep the
+	// OUTPUT_REGISTRY fallback rather than inherit the destination the GHA pass bound —
+	// the StepView is shared across targets, which is where such a leak would live.
+	forgejo, err := Workflow(m, Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatalf("forgejo: %v", err)
+	}
+	if strings.Contains(string(forgejo), "docker.io/damianbuho") {
+		t.Errorf("forgejo declares no pull and must not inherit the GHA destination\n---\n%s", forgejo)
+	}
+	fallback := "${{ vars.OUTPUT_REGISTRY }}/b19/ubuntu-${{ matrix.B19_UBUNTU_SERIES }}:latest"
+	if !strings.Contains(string(forgejo), ImagePublishedEnv+": "+fallback) {
+		t.Errorf("forgejo must keep the prefix fallback\n---\n%s", forgejo)
+	}
+}
+
 // artifactSubtree is the binary-build → forge-release split: a plain `run:` producer
 // (build-binaries, manifest `artifact: dist`) in a matrix cell, and a release consumer
 // (gh-release) whose node needs the producer's node — so the build-artifact edge is

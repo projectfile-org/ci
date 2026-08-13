@@ -1373,6 +1373,12 @@ type StepView struct {
 	// are target-independent), and the template selects the list its own target
 	// publishes.
 	PublishRefs map[string][]ci.SinkRef `json:"publish-refs,omitempty"`
+	// PullRefs is the audit re-scan target per LOWERING — the composed
+	// `publish.<forge>.pull` destination, keyed and axis-substituted exactly as
+	// PublishRefs is, and for the same reason: one StepView serves every target. Only a
+	// scanner requesting ImagePublishedEnv carries it. Empty on a target whose route
+	// declares no pull, where the OUTPUT_REGISTRY prefix in Env stands.
+	PullRefs map[string]string `json:"pull-refs,omitempty"`
 	// ReleaseTargets is the binaries-plane twin of PublishRefs: where this lowering
 	// attaches its release. Keyed by LOWERING for the same reason — one StepView is
 	// rendered for every target. Empty => the ambient Forgejo context, i.e. the forge
@@ -2225,9 +2231,22 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		}
 	}
 	// Inject the resolver-computed published-image ref for a scanner that requested it
-	// (ImagePublishedEnv): the audit re-scan target, <OUTPUT_REGISTRY>/<per-cell basename>:latest.
+	// (ImagePublishedEnv). Env carries the no-route FALLBACK; PullRefs carries the
+	// composed destination per lowering, which auditTarget binds once the target is
+	// known — a StepView is shared across targets, so the per-lowering value cannot be
+	// decided here.
 	if wantsPublishedImage {
 		step.Env = append(step.Env, EnvVar{Key: ImagePublishedEnv, Value: publishedImageRef(st.Image, subst)})
+		if b != nil && len(b.PullRefs) > 0 {
+			step.PullRefs = map[string]string{}
+			for lowering, sr := range b.PullRefs {
+				// Per-cell: a composed ref carries `{AXIS}` verbatim, because
+				// composition never touches a token with no `$`. The same
+				// substitution the publish refs get, so a matrix cell audits its own
+				// series rather than a placeholder no registry holds.
+				step.PullRefs[lowering] = substAxes(sr.Ref, subst)
+			}
+		}
 	}
 	// Both ends of the image lifecycle need the project basename (per-cell ref): the
 	// build PRODUCER stamps it into the OCI archive, the oci-push CONSUMER re-tags to it.
@@ -3002,6 +3021,10 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		// downstream reads it — but a job whose matrix grows must do so before its
 		// view is handed to the template.
 		jobs[i] = publishCells(jobs[i], target.Key)
+		// Bind the audit re-scan target to what THIS lowering's route pulls from, before
+		// valOf is taken: the step's `env:` input is read back from the job env below, so
+		// the two spellings of the ref stay one value.
+		jobs[i] = auditTarget(jobs[i], target.Key)
 		// Resolve every forwarded env/build-arg NAME to its VALUE from this job's
 		// post-bindEnv env (matrix axes, the image-archive path, the credential refs
 		// bindEnv just appended). A composite ci-action does NOT inherit the job `env:`
@@ -3194,16 +3217,52 @@ func composeImage(registry, img string) string {
 	return VarRef(registry) + "/" + img + ":" + selfImageTagExpr()
 }
 
-// publishedImageRef renders the PUBLISHED registry ref of a project's per-cell image at the
-// mutable `:latest` tag — the value of the ImagePublishedEnv contract var an `audited` image
-// re-scan reads. Registry is the OUTPUT_REGISTRY oci-push prefixes the push ref with; basename
+// publishedImageRef renders the FALLBACK published ref of a project's per-cell image at the
+// mutable `:latest` tag — the ImagePublishedEnv value for a project whose route declares no
+// `pull` sink. Registry is the OUTPUT_REGISTRY oci-push prefixes the push ref with; basename
 // is the per-cell built-image basename (substAxes over the subtree image, the SAME transform
 // container-build/oci-push apply); `latest` is fixed (not imageTagExpr's dev/latest flip) — the
-// audit deliberately scans the published rolling tag, matching the make plane's M6E_IMAGE_PUBLISHED.
-// NOTE: an empty OUTPUT_REGISTRY (a Docker-Hub mirror) yields a leading-slash ref; the fleet
-// always sets OUTPUT_REGISTRY, so a Docker-Hub-published audit must set it too.
+// audit deliberately scans the published rolling tag.
+//
+// It is a PREFIX composition and therefore knows one path grammar: `<registry>/<nested
+// path>:latest`. A destination refusing a nested path (Docker Hub holds exactly
+// `namespace/name`) cannot be named this way, which is why a declared route audits through
+// auditTarget instead. This path survives for the ~130 projects that declare no route.
+// NOTE: an empty OUTPUT_REGISTRY yields a leading-slash ref; the fleet always sets it.
 func publishedImageRef(image string, subst []ci.Axis) string {
 	return outputRegistryExpr() + "/" + substAxes(image, subst) + ":latest"
+}
+
+// auditTarget binds the `audited` re-scan target for THIS lowering: the composed
+// `publish.<forge>.pull` destination replaces the OUTPUT_REGISTRY prefix the neutral model
+// carries. Per target, beside publishCells and the credential refs, because a route is a
+// fact about a forge — a GitHub pipeline audits what it pushed to ghcr, a kiota one what it
+// pushed to kiota.
+//
+// It rewrites the JOB env only. The step's own `env:` input is taken from that job env
+// afterwards (EnvForward via valOf), so binding it once here reaches both spellings — and
+// the StepView, which is SHARED across targets, is never mutated.
+func auditTarget(j JobView, targetKey string) JobView {
+	ref := ""
+	for _, st := range j.Steps {
+		if r, ok := st.PullRefs[targetKey]; ok && r != "" {
+			ref = r
+			break
+		}
+	}
+	if ref == "" {
+		return j
+	}
+	env := append([]EnvVar(nil), j.Env...)
+	for i := range env {
+		if env[i].Key == ImagePublishedEnv {
+			genlog.Decision("audit_target", j.Name+" -> "+ref,
+				"org.projectfile.publish.pull (lowering "+targetKey+")", env[i].Value)
+			env[i].Value = ref
+		}
+	}
+	j.Env = env
+	return j
 }
 
 // cacheHostPath is the host-side dir a named cache mounts from: the target's CacheDir

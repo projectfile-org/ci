@@ -876,7 +876,7 @@ org:
     publish:
       github:
         push: [ghcr, hub, broken]
-        pull: ghcr
+        pull: hub
       kiota:
         push: [ghcr]
         pull: ghcr
@@ -907,11 +907,11 @@ func TestPublishRefsComposePerLowering(t *testing.T) {
 	}
 	want := map[string][]SinkRef{
 		LoweringGHA: {
-			{Sink: "ghcr", Ref: "ghcr.io/damian-buho/b19/ubuntu/{B19_UBUNTU_SERIES}:latest"},
+			{Sink: sinkGHCR, Ref: refGHCR},
 			{Sink: "hub", Ref: "docker.io/damianbuho/b19-ubuntu-{B19_UBUNTU_SERIES}:latest"},
 		},
 		LoweringForgejo: {
-			{Sink: "ghcr", Ref: "ghcr.io/damian-buho/b19/ubuntu/{B19_UBUNTU_SERIES}:latest"},
+			{Sink: sinkGHCR, Ref: refGHCR},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -933,9 +933,52 @@ func TestPublishRefsAbsentWithoutRoutes(t *testing.T) {
 	}
 }
 
+// TestPullRefsComposePerLowering pins the READ plane against the same document:
+//   - `pull` is its own declaration, not the first `push` entry and not the highest
+//     priority — the github route pushes to ghcr FIRST and still reads from hub;
+//   - it composes through the same sink templates, so the audit target inherits
+//     whatever path grammar the destination declared (hub is FLAT, ghcr NESTS) with
+//     no code aware of either shape;
+//   - `{AXIS}` survives for the cell to fill, exactly as on the push side.
+func TestPullRefsComposePerLowering(t *testing.T) {
+	r := &Reader{doc: publishDoc(t)}
+	got, err := r.pullRefs()
+	if err != nil {
+		t.Fatalf("pullRefs: %v", err)
+	}
+	want := map[string]SinkRef{
+		LoweringGHA:     {Sink: "hub", Ref: "docker.io/damianbuho/b19-ubuntu-{B19_UBUNTU_SERIES}:latest"},
+		LoweringForgejo: {Sink: sinkGHCR, Ref: refGHCR},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("pullRefs:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// TestPullRefsAbsentWithoutRoutes pins the fallback half: no route means no composed
+// read destination, so the audit keeps the OUTPUT_REGISTRY prefix every project has.
+func TestPullRefsAbsentWithoutRoutes(t *testing.T) {
+	r := &Reader{doc: declaredImageDoc(t)}
+	got, err := r.pullRefs()
+	if err != nil {
+		t.Fatalf("pullRefs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("pullRefs: got %#v, want none", got)
+	}
+}
+
 // sinkKiota is the origin forge's slug in these fixtures — the first domain label
-// of kiota.ch, which is how a route names it.
-const sinkKiota = "kiota"
+// of kiota.ch, which is how a route names it. sinkGHCR is the nesting destination
+// both route planes reach in publishDoc.
+const (
+	sinkKiota = "kiota"
+	sinkGHCR  = "ghcr"
+	// refGHCR is what publishDoc's ghcr template composes to: a NESTED path with the
+	// axis left verbatim for the cell to fill. Both route planes expect this one value,
+	// which is the point — push and pull compose a sink identically.
+	refGHCR = "ghcr.io/damian-buho/b19/ubuntu/{B19_UBUNTU_SERIES}:latest"
+)
 
 // releaseDoc declares two source-code links and a route that releases to BOTH — the
 // shape the binaries plane exists for. The two repository paths differ, which is the

@@ -728,6 +728,13 @@ type Build struct {
 	// references and knows no path shape. Empty => the project declares no route, and
 	// oci-push keeps its single OUTPUT_REGISTRY destination.
 	PublishRefs map[string][]SinkRef
+	// PullRefs is the READ destination per LOWERING key: the one place a consumer of
+	// this project is sent to, composed from org.projectfile.publish.<forge>.pull and
+	// that sink's own `ref`. Its consumer is the `audited` re-scan target, so an audit
+	// names the destination the document declares instead of gluing a registry prefix
+	// onto a basename. Empty => no route declares a pull, and render falls back to the
+	// single OUTPUT_REGISTRY destination.
+	PullRefs map[string]SinkRef
 	// ReleaseTargets is the binaries-plane twin: where a pipeline of that lowering
 	// ATTACHES its release, composed at LOAD time from org.projectfile.publish.<forge>.
 	// release (the forge names) and the source-code links those names match. Empty =>
@@ -879,29 +886,39 @@ func LoadBuild(pfPath string) (*Build, error) {
 	if err != nil {
 		return nil, err
 	}
+	pullRefs, err := r.pullRefs()
+	if err != nil {
+		return nil, err
+	}
 	releaseTargets, err := r.releaseTargets()
 	if err != nil {
 		return nil, err
 	}
 	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
-		len(buildTarget) == 0 && len(publishRefs) == 0 && len(releaseTargets) == 0 {
+		len(buildTarget) == 0 && len(publishRefs) == 0 && len(pullRefs) == 0 && len(releaseTargets) == 0 {
 		return nil, nil
 	}
 	return &Build{
 		Images: images, Args: inputs, Events: events, Secrets: secRaw,
-		BuildTarget: buildTarget, PublishRefs: publishRefs, ReleaseTargets: releaseTargets,
+		BuildTarget: buildTarget, PublishRefs: publishRefs, PullRefs: pullRefs,
+		ReleaseTargets: releaseTargets,
 	}, nil
 }
 
-// rawPublish is one org.projectfile.publish.<forge> route. `pull` is not read here:
-// it answers where a BUILD sources its base images, which the make plane resolves
-// through its registry vars, not the publish leaf.
+// rawPublish is one org.projectfile.publish.<forge> route. `pull` names the ONE
+// destination a consumer of this project READS from — the ref the readme prints and
+// the ref the `audited` re-scan pulls. It is declared rather than derived from
+// `priority`, because a pipeline reads from where it is cheapest to read (kiota builds
+// from kiota) and that is not the destination a reader is sent to. It does NOT answer
+// where a build sources its BASE images: those are foreign coordinates, resolved
+// through org.projectfile.images and the registry vars.
 //
 // `push` and `release` are the two PLANES, kept apart because they are: an image is a
 // ref composed from a sink template, a release is a tarball attached to a git tag by a
 // token. A release destination therefore names a FORGE, never a sink.
 type rawPublish struct {
 	Push    []string `json:"push"`
+	Pull    string   `json:"pull"`
 	Release []string `json:"release"`
 }
 
@@ -1024,52 +1041,100 @@ func (r *Reader) publishRefs() (map[string][]SinkRef, error) {
 	if err != nil || len(routes) == 0 {
 		return nil, err
 	}
-	// The sink TEMPLATES, read as values. Expanding `${org.projectfile.sinks.X.ref}`
-	// instead would spend one re-expansion level on the lookup itself, and a template
-	// whose parts nest (`path` → `${org}/${name}` → `${identity.name}`) then exhausts
-	// core's depth bound and reports unresolved on a reference that composed fine.
-	// The readme bridge expands the template for the same reason.
-	sinkRaw, err := r.subtree("org.projectfile.sinks")
+	sinks, err := r.sinkTemplates()
 	if err != nil {
+		return nil, err
+	}
+	out := map[string][]SinkRef{}
+	for lowering, forge := range r.publishForges(routes) {
+		for _, sink := range routes[forge].Push {
+			if ref, ok := r.composeSink(sinks, forge, sink, "publish"); ok {
+				out[lowering] = append(out[lowering], ref)
+			}
+		}
+	}
+	return out, nil
+}
+
+// pullRefs composes the destination each lowering READS from — `publish.<forge>.pull`,
+// keyed by lowering exactly as publishRefs keys its push list. One ref per lowering,
+// because `pull` is a scalar: a reader is sent to one place.
+//
+// Its consumer is the `audited` image re-scan, which has no build in scope and must
+// name what it pulls. Composing it here rather than gluing a prefix in render is what
+// makes the audit read the SAME grammar the sink declared — a destination holding a
+// flat path (Docker Hub) is audited at its flat path, with no code aware of either
+// shape. No route, or a route with no `pull` => empty, and render keeps the single
+// OUTPUT_REGISTRY destination every project has today.
+func (r *Reader) pullRefs() (map[string]SinkRef, error) {
+	routes, err := r.publishRoutes()
+	if err != nil || len(routes) == 0 {
+		return nil, err
+	}
+	sinks, err := r.sinkTemplates()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]SinkRef{}
+	for lowering, forge := range r.publishForges(routes) {
+		if ref, ok := r.composeSink(sinks, forge, routes[forge].Pull, "pull"); ok {
+			out[lowering] = ref
+		}
+	}
+	return out, nil
+}
+
+// sinkTemplates reads the org.projectfile.sinks table as VALUES. Expanding
+// `${org.projectfile.sinks.X.ref}` instead would spend one re-expansion level on the
+// lookup itself, and a template whose parts nest (`path` → `${org}/${name}` →
+// `${identity.name}`) then exhausts core's depth bound and reports unresolved on a
+// reference that composed fine. The readme bridge expands the template for the same
+// reason.
+func (r *Reader) sinkTemplates() (map[string]string, error) {
+	sinkRaw, err := r.subtree("org.projectfile.sinks")
+	if err != nil || len(sinkRaw) == 0 {
 		return nil, err
 	}
 	var sinks map[string]struct {
 		Ref string `json:"ref"`
 	}
-	if len(sinkRaw) > 0 {
-		if err := json.Unmarshal(sinkRaw, &sinks); err != nil {
-			return nil, fmt.Errorf("org.projectfile.sinks: parse: %w", err)
-		}
+	if err := json.Unmarshal(sinkRaw, &sinks); err != nil {
+		return nil, fmt.Errorf("org.projectfile.sinks: parse: %w", err)
 	}
-	out := map[string][]SinkRef{}
-	for lowering, forge := range r.publishForges(routes) {
-		for _, sink := range routes[forge].Push {
-			if sink == "" {
-				continue
-			}
-			tmpl := sinks[sink].Ref
-			if tmpl == "" {
-				genlog.Warn("publish sink dropped — declares no ref template",
-					"forge", forge, "sink", sink,
-					"remedy", "declare ref on org.projectfile.sinks."+sink)
-				continue
-			}
-			// Composed by core's engine under the image scope — the SAME call the
-			// readme bridge and the make plane make, so the three planes cannot
-			// disagree about where this project publishes.
-			ref, resolved := interp.ExpandIn(r.doc, tmpl, imageScope)
-			if !resolved {
-				// A half-composed reference is a well-formed name for the WRONG
-				// repository, so it is dropped rather than published.
-				genlog.Warn("publish sink dropped — ref left unresolved",
-					"forge", forge, "sink", sink, "template", tmpl, "composed", ref,
-					"remedy", "declare the missing part under "+imageScope)
-				continue
-			}
-			out[lowering] = append(out[lowering], SinkRef{Sink: sink, Ref: ref})
-		}
+	out := make(map[string]string, len(sinks))
+	for name, s := range sinks {
+		out[name] = s.Ref
 	}
 	return out, nil
+}
+
+// composeSink resolves ONE destination name to its composed reference. Shared by both
+// route planes so a sink cannot mean one path when pushed to and another when pulled
+// from; `plane` names the caller in the drop warnings and nothing else.
+func (r *Reader) composeSink(sinks map[string]string, forge, sink, plane string) (SinkRef, bool) {
+	if sink == "" {
+		return SinkRef{}, false
+	}
+	tmpl := sinks[sink]
+	if tmpl == "" {
+		genlog.Warn(plane+" sink dropped — declares no ref template",
+			"forge", forge, "sink", sink,
+			"remedy", "declare ref on org.projectfile.sinks."+sink)
+		return SinkRef{}, false
+	}
+	// Composed by core's engine under the image scope — the SAME call the readme
+	// bridge and the make plane make, so the three planes cannot disagree about where
+	// this project publishes.
+	ref, resolved := interp.ExpandIn(r.doc, tmpl, imageScope)
+	if !resolved {
+		// A half-composed reference is a well-formed name for the WRONG repository, so
+		// it is dropped rather than published to or audited.
+		genlog.Warn(plane+" sink dropped — ref left unresolved",
+			"forge", forge, "sink", sink, "template", tmpl, "composed", ref,
+			"remedy", "declare the missing part under "+imageScope)
+		return SinkRef{}, false
+	}
+	return SinkRef{Sink: sink, Ref: ref}, true
 }
 
 // The lowering keys a route can apply to, and the one forge slug that is a property
