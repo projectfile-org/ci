@@ -28,6 +28,7 @@ import (
 	"strings"
 	"text/template"
 
+	"kiota.ch/projectfile/core/v2/pkg/genlog"
 	"projectfile.org/projectfile/ci-resolver/internal/ci"
 	"projectfile.org/projectfile/ci-resolver/internal/resolve"
 )
@@ -1372,6 +1373,25 @@ type StepView struct {
 	// are target-independent), and the template selects the list its own target
 	// publishes.
 	PublishRefs map[string][]ci.SinkRef `json:"publish-refs,omitempty"`
+	// ReleaseTargets is the binaries-plane twin of PublishRefs: where this lowering
+	// attaches its release. Keyed by LOWERING for the same reason — one StepView is
+	// rendered for every target. Empty => the ambient Forgejo context, i.e. the forge
+	// the pipeline runs on, which is every project today.
+	ReleaseTargets map[string][]ci.ReleaseTarget `json:"release-targets,omitempty"`
+	// ReleaseURL / ReleaseRepo are the forgejo-release `server-url:` / `repo:` inputs,
+	// bound to the destination axis's include rows. They travel as matrix variables
+	// rather than as the axis itself because the axis carries the NAME the token
+	// derives from, and a URL cannot serve as a credential key.
+	ReleaseURL  string `json:"-"`
+	ReleaseRepo string `json:"-"`
+	// PublishSink is the publish action's `sink:` input — WHICH destination this cell
+	// owns, bound to the destination matrix axis publishCells appends. It is what turns
+	// a loop inside one action into one CELL per destination, so a registry refusing a
+	// push fails its own cell rather than the release. Render-only: the axis values are
+	// per LOWERING (a GitHub pipeline pushes to ghcr, a kiota one to kiota), so the
+	// binding is made per target beside `if:` and the credential refs. Empty on a target
+	// this step declares no route for, which is the historical single-job fan-out.
+	PublishSink string `json:"-"`
 	// ReleaseAssetPath is the forgejo-release `release-asset-path:` input — the
 	// UNSUFFIXED binary path resolved from org.projectfile.artifacts (the single
 	// kind=binary entry's .path, e.g. dist/pf-cli). The action suffixes it with
@@ -2256,6 +2276,11 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	if man.Action == ActionForgejoRelease {
 		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
 		step.ReleaseAssetPath = man.ReleaseAssetPath
+		// No axis substitution, unlike a sink ref: a forge URL and a repository path
+		// are properties of the DESTINATION, not of the build cell.
+		if b != nil && len(b.ReleaseTargets) > 0 {
+			step.ReleaseTargets = b.ReleaseTargets
+		}
 	}
 	// container-build args — NAMES ride build-args, VALUES the step env (the action
 	// forwards by name); a file: arg rides file-args (the action reads it); an axis
@@ -2972,6 +2997,11 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		} else {
 			jobs[i].If = jobIf(jobs[i].Events)
 		}
+		// Fan the publish job over its destinations, per lowering. Before the env
+		// folds below: the axis is an action INPUT, not an env binding, so nothing
+		// downstream reads it — but a job whose matrix grows must do so before its
+		// view is handed to the template.
+		jobs[i] = publishCells(jobs[i], target.Key)
 		// Resolve every forwarded env/build-arg NAME to its VALUE from this job's
 		// post-bindEnv env (matrix axes, the image-archive path, the credential refs
 		// bindEnv just appended). A composite ci-action does NOT inherit the job `env:`
@@ -3045,6 +3075,91 @@ func bindEnv(j JobView, creds map[string]string) []EnvVar {
 		}
 	}
 	return out
+}
+
+// PublishSinkAxis is the DESTINATION matrix axis: one publish cell per place the
+// artifact goes, exactly as a build runs one cell per platform. Its values are sink
+// NAMES, which carry no `$` and so survive composition verbatim like every other axis
+// here. Prefixed like the other resolver-injected variables so it cannot collide with
+// a project's own axis.
+const PublishSinkAxis = "M6E_PUBLISH_SINK"
+
+// publishCells makes the destination an AXIS of a publish job, so the fan-out over
+// registries happens in the MATRIX rather than inside one action's loop. Three things
+// follow, and none of them is coded for: a destination that fails fails ITS cell
+// instead of the release, each cell reaches one credential, and a per-destination step
+// (ECR's create-repository) becomes an ordinary per-cell step.
+//
+// It runs per TARGET because a route is a fact about a forge — a GitHub pipeline
+// pushes to ghcr, a kiota one to kiota — so the axis VALUES differ per lowering while
+// the neutral model carries them all. Same boundary as `if:` and the credential refs.
+//
+// The axis is APPENDED to the job's build axes rather than replacing them: a matrix
+// image publishes each series to each destination, so the grid is the product. It
+// never reaches artifact naming — the archive is one per BUILD cell, shared by every
+// destination — because Build already fixed the stems from the build axes alone.
+func publishCells(j JobView, targetKey string) JobView {
+	var sinks []string
+	var rows []MatrixRowView
+	for si := range j.Steps {
+		st := &j.Steps[si]
+		// Assigned unconditionally: StepViews are shared across the per-target
+		// renders, so a step left untouched here would keep the PREVIOUS target's
+		// binding and publish a cell this target never declared.
+		st.PublishSink, st.ReleaseURL, st.ReleaseRepo = "", "", ""
+		refs, targets := st.PublishRefs[targetKey], st.ReleaseTargets[targetKey]
+		if len(refs) == 0 && len(targets) == 0 {
+			continue
+		}
+		st.PublishSink = matrixVarExpr(PublishSinkAxis, nil, nil)
+		for _, r := range refs {
+			sinks = appendUnique(sinks, r.Sink)
+		}
+		// A release destination carries coordinates the axis cannot: a forge URL and
+		// the repository path ON that forge, which differ per destination and are
+		// static per cell. That is exactly a matrix `include` row, so they ride one
+		// instead of becoming two more axes nothing would ever fan over.
+		if len(targets) == 0 {
+			continue
+		}
+		st.ReleaseURL = matrixVarExpr(releaseURLVar, nil, nil)
+		st.ReleaseRepo = matrixVarExpr(releaseRepoVar, nil, nil)
+		for _, t := range targets {
+			sinks = appendUnique(sinks, t.Sink)
+			rows = append(rows, MatrixRowView{Fields: []KVView{
+				{Key: PublishSinkAxis, Value: t.Sink},
+				{Key: releaseRepoVar, Value: t.Repo},
+				{Key: releaseURLVar, Value: t.URL},
+			}})
+		}
+	}
+	if len(sinks) == 0 {
+		return j
+	}
+	genlog.Decision("publish_cells", j.Name+" -> "+strings.Join(sinks, ","),
+		"org.projectfile.publish (lowering "+targetKey+")", "org.projectfile.sinks")
+	j.Matrix = append(append(AxisMap{}, j.Matrix...), ci.Axis{Key: PublishSinkAxis, Values: sinks})
+	j.Include = append(append([]MatrixRowView{}, j.Include...), rows...)
+	j.Class = string(resolve.ClassCell)
+	return j
+}
+
+// releaseURLVar / releaseRepoVar are the per-cell release coordinates, carried as
+// matrix include fields beside the destination axis.
+const (
+	releaseURLVar  = "M6E_RELEASE_URL"
+	releaseRepoVar = "M6E_RELEASE_REPO"
+)
+
+// appendUnique keeps the destination axis a SET in declaration order: a job hosting
+// both publish planes must fan each destination once, not once per plane.
+func appendUnique(vals []string, v string) []string {
+	for _, have := range vals {
+		if have == v {
+			return vals
+		}
+	}
+	return append(vals, v)
 }
 
 // composeImage resolves the project's OWN built image to a concrete ref (the

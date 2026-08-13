@@ -236,6 +236,11 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
             {{ .Sink }} {{ .Ref }}
 {{- end }}
 {{- end }}
+{{- with .Step.PublishSink }}
+          # This CELL's destination, off the publish axis: the job runs one cell per
+          # place the archive goes, so a registry refusing a push fails only its own.
+          sink: {{ . }}
+{{- end }}
 {{- end }}
 
 {{- define "providers/forgejo-release" }}
@@ -249,6 +254,18 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
           # kind=binary entry). The action suffixes it per cell (→ <path>-${GOOS}-${GOARCH})
           # to find the binary the build→consumer download edge restored to the workspace.
           release-asset-path: {{ .Step.ReleaseAssetPath }}
+{{- with .Step.ReleaseURL }}
+          # WHERE this cell attaches, off the publish axis. A forge granting no build
+          # minutes still gets the same binaries: they are pushed from the forge that
+          # has runners. The repo is its own field because the name differs per forge.
+          server-url: {{ . }}
+          repo: {{ $.Step.ReleaseRepo }}
+{{- end }}
+{{- with .Step.PublishSink }}
+          # Selects the destination's own token (<SINK>_TOKEN), so two forges never
+          # share one credential.
+          sink: {{ . }}
+{{- end }}
 {{- end }}
 
 {{- /*

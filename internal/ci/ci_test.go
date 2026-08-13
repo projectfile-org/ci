@@ -932,3 +932,101 @@ func TestPublishRefsAbsentWithoutRoutes(t *testing.T) {
 		t.Fatalf("publishRefs: got %#v, want none", got)
 	}
 }
+
+// sinkKiota is the origin forge's slug in these fixtures — the first domain label
+// of kiota.ch, which is how a route names it.
+const sinkKiota = "kiota"
+
+// releaseDoc declares two source-code links and a route that releases to BOTH — the
+// shape the binaries plane exists for. The two repository paths differ, which is the
+// whole reason the coordinates cannot be derived from one another.
+func releaseDoc(t *testing.T) *projectfile.Document {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: bridge
+repositories:
+  - role: origin
+    type: git
+    url: ssh://git@kiota.ch/projectfile/bridge.git
+links:
+  - type: source-code
+    url: https://kiota.ch/projectfile/bridge
+  - type: source-code
+    url: https://codeberg.org/damian-buho/projectfile-bridge
+  - type: homepage
+    url: https://projectfile.org
+org:
+  projectfile:
+    publish:
+      kiota:
+        release: [kiota, codeberg, nowhere]
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestReleaseTargetsResolvePerLowering pins the binaries plane's read:
+//   - a route names forge SLUGS, and the coordinates come from the source-code links
+//     the project already declares — the URL is never restated;
+//   - the repository path is carried, not derived: the two forges spell it
+//     differently, which is the fact the whole split exists for;
+//   - a destination no link declares is DROPPED, because guessing its path would
+//     attach a release to a repository nobody named;
+//   - a non-source-code link is not a release destination.
+func TestReleaseTargetsResolvePerLowering(t *testing.T) {
+	r := &Reader{doc: releaseDoc(t)}
+	got, err := r.releaseTargets()
+	if err != nil {
+		t.Fatalf("releaseTargets: %v", err)
+	}
+	want := map[string][]ReleaseTarget{
+		LoweringForgejo: {
+			{Sink: sinkKiota, URL: "https://kiota.ch", Repo: "projectfile/bridge"},
+			{Sink: "codeberg", URL: "https://codeberg.org", Repo: "damian-buho/projectfile-bridge"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("releaseTargets:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// TestReleaseTargetsAbsentWithoutRoute pins the no-op half every project relies on
+// today: a publish route carrying only `push` releases nowhere new, so the action
+// keeps the ambient Forgejo context.
+func TestReleaseTargetsAbsentWithoutRoute(t *testing.T) {
+	r := &Reader{doc: publishDoc(t)}
+	got, err := r.releaseTargets()
+	if err != nil {
+		t.Fatalf("releaseTargets: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("releaseTargets: got %#v, want none", got)
+	}
+}
+
+// TestSplitForgeURLReadsEveryTransport pins the decomposition against the transports a
+// link is really written in. A slug is the first domain label — the same rule the
+// origin's own forge is matched by — and a `.git` suffix or a port never reaches it.
+func TestSplitForgeURLReadsEveryTransport(t *testing.T) {
+	const repo = "o/r"
+	for _, tc := range []struct{ raw, slug, base, repo string }{
+		{"https://codeberg.org/o/r", "codeberg", "https://codeberg.org", repo},
+		{"ssh://git@kiota.ch/o/r.git", sinkKiota, "https://kiota.ch", repo},
+		{"git@github.com:o/r.git", "github", "https://github.com", repo},
+		{"https://kiota.ch:3000/o/r/", sinkKiota, "https://kiota.ch:3000", repo},
+	} {
+		slug, base, repo := splitForgeURL(tc.raw)
+		if slug != tc.slug || base != tc.base || repo != tc.repo {
+			t.Errorf("splitForgeURL(%q) = %q,%q,%q; want %q,%q,%q",
+				tc.raw, slug, base, repo, tc.slug, tc.base, tc.repo)
+		}
+	}
+}

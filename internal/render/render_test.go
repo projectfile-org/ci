@@ -1524,6 +1524,26 @@ func TestBuildArtifactHandoff(t *testing.T) {
 	}
 }
 
+// releaseSubtree is a GOOS x GOARCH binary build whose publish leaf is the
+// forgejo-release provider — the shape every fleet Go project has, reduced to the
+// nodes the release plane acts on.
+const releaseSubtree = `{
+  "matrix": {"axes": {"GOOS": ["linux"], "GOARCH": ["amd64"]}},
+  "tools": {
+    "build-binaries": {"run": "go build -o dist/pf .", "artifact": "dist"},
+    "forgejo-release": {"action": "forgejo-release", "env": ["FORGEJO_TOKEN"]}
+  },
+  "nodes": {
+    "binaries-built": {"matrix": true, "needs": {"build-binaries": true}},
+    "binaries-released": {"matrix": true, "needs": {"binaries-built": true, "forgejo-release": true}},
+    "published": {"goal": true, "needs": {"binaries-released": true}}
+  }
+}`
+
+// testReleaseAsset is the unsuffixed binary path releaseSubtree builds; the action
+// appends the cell axes to it.
+const testReleaseAsset = "dist/pf"
+
 // TestForgejoReleaseAction pins the providers/forgejo-release lowering: an action
 // consumer of the binary-build hand-off renders as `uses:` (not a bare `run:`),
 // carrying the git tag (version) + the resolved binary path (release-asset-path)
@@ -1531,26 +1551,14 @@ func TestBuildArtifactHandoff(t *testing.T) {
 // the action runs (the hand-off is driven by the needs edge + the producer's
 // artifact:, not by the consumer's action/run shape).
 func TestForgejoReleaseAction(t *testing.T) {
-	src := `{
-	  "matrix": {"axes": {"GOOS": ["linux"], "GOARCH": ["amd64"]}},
-	  "tools": {
-	    "build-binaries": {"run": "go build -o dist/pf .", "artifact": "dist"},
-	    "forgejo-release": {"action": "forgejo-release", "env": ["FORGEJO_TOKEN"]}
-	  },
-	  "nodes": {
-	    "binaries-built": {"matrix": true, "needs": {"build-binaries": true}},
-	    "binaries-released": {"matrix": true, "needs": {"binaries-built": true, "forgejo-release": true}},
-	    "published": {"goal": true, "needs": {"binaries-released": true}}
-	  }
-	}`
-	st, err := ci.Parse([]byte(src))
+	st, err := ci.Parse([]byte(releaseSubtree))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	// Parse does not run Load's artifact-path resolution; set it manually to test the
 	// render lowering in isolation (Load-side resolution is pinned by TestLoadResolvesReleaseAssetPath).
 	man := st.Tools["forgejo-release"]
-	man.ReleaseAssetPath = "dist/pf"
+	man.ReleaseAssetPath = testReleaseAsset
 	st.Tools["forgejo-release"] = man
 	rm, err := resolve.Resolve(st)
 	if err != nil {
@@ -1564,7 +1572,7 @@ func TestForgejoReleaseAction(t *testing.T) {
 	if step.PublishVersion != "${{ github.ref_name }}" {
 		t.Errorf("PublishVersion = %q, want ${{ github.ref_name }}", step.PublishVersion)
 	}
-	if step.ReleaseAssetPath != "dist/pf" {
+	if step.ReleaseAssetPath != testReleaseAsset {
 		t.Errorf("ReleaseAssetPath = %q, want dist/pf", step.ReleaseAssetPath)
 	}
 	// The consumer node still downloads the producer's dist/ artifact (the hand-off
@@ -3943,5 +3951,151 @@ func TestSelfImageToolStep(t *testing.T) {
 		&ci.Subtree{Tools: map[string]ci.Manifest{"t": {Image: "NODE_TOOL_IMAGE"}}}, &ci.Build{}, nil)
 	if other.SelfImage {
 		t.Error("SelfImage set for an ordinary ci.images var name")
+	}
+}
+
+// TestPublishFansOutOverDestinations pins the destination AXIS: a route naming two
+// sinks renders TWO publish cells, not one job looping both, so a registry refusing a
+// push fails its own cell. The axis multiplies the build axes rather than replacing
+// them, and the archive stays keyed by the BUILD cell — one build is published to
+// every destination, so a sink in the artifact name would name a file no build
+// ever uploaded.
+func TestPublishFansOutOverDestinations(t *testing.T) {
+	st, err := ci.Parse([]byte(publishSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	b := &ci.Build{PublishRefs: map[string][]ci.SinkRef{
+		ci.LoweringGHA: {
+			{Sink: "ghcr", Ref: "ghcr.io/damian-buho/b19/ubuntu-{B19_UBUNTU_SERIES}:latest"},
+			{Sink: "hub-main", Ref: "docker.io/damianbuho/b19-ubuntu-{B19_UBUNTU_SERIES}:latest"},
+		},
+		ci.LoweringForgejo: {{Sink: "kiota", Ref: "kiota.ch/b19/ubuntu-{B19_UBUNTU_SERIES}:latest"}},
+	}}
+	out, err := Workflow(Build(rm, st, b), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		`M6E_PUBLISH_SINK: ["ghcr", "hub-main"]`,                // one cell per destination
+		`B19_UBUNTU_SERIES: ["resolute", "noble"]`,              // the build axis SURVIVES
+		"sink: ${{ matrix.M6E_PUBLISH_SINK }}",                  // the cell names the one it owns
+		"artifact-name: image-${{ matrix.B19_UBUNTU_SERIES }}-", // archive keyed by the BUILD cell alone
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("publish job missing %q\n---\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "image-${{ matrix.M6E_PUBLISH_SINK }}") {
+		t.Errorf("the destination axis must not reach artifact naming\n---\n%s", s)
+	}
+}
+
+// TestPublishCellsAreScopedToTheirLowering pins the half that makes the axis honest:
+// a route is a fact about a FORGE, so a GitHub pipeline fans over GitHub's
+// destinations and a kiota one over kiota's. One StepView is rendered once per
+// target, so this also catches a binding leaking from the previous render.
+func TestPublishCellsAreScopedToTheirLowering(t *testing.T) {
+	st, err := ci.Parse([]byte(publishSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, &ci.Build{PublishRefs: map[string][]ci.SinkRef{
+		ci.LoweringGHA: {{Sink: "ghcr", Ref: "ghcr.io/damian-buho/p:latest"}},
+	}})
+	gha, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatalf("gha: %v", err)
+	}
+	if !strings.Contains(string(gha), `M6E_PUBLISH_SINK: ["ghcr"]`) {
+		t.Errorf("gha lowering missing its own destination\n---\n%s", gha)
+	}
+	// Rendered SECOND, from the same model: forgejo declares no route, so it must keep
+	// the single-job fan-out — no axis, and no `sink:` left over from the GHA pass.
+	forgejo, err := Workflow(m, Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatalf("forgejo: %v", err)
+	}
+	for _, gone := range []string{"M6E_PUBLISH_SINK", "sink:"} {
+		if strings.Contains(string(forgejo), gone) {
+			t.Errorf("forgejo declares no route but carries %q\n---\n%s", gone, forgejo)
+		}
+	}
+}
+
+// TestReleaseFansOutOverForges pins the binaries half of the destination axis: a
+// route naming two forges renders one release CELL per forge, each carrying that
+// forge's own URL and its own repository path — the two differ per forge, which is
+// why the coordinates ride matrix include rows rather than being derived from the
+// axis. The cell also names its destination, which is what selects <SINK>_TOKEN, so
+// a foreign forge's credential never reaches the cell releasing on the origin.
+func TestReleaseFansOutOverForges(t *testing.T) {
+	st, err := ci.Parse([]byte(releaseSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	man := st.Tools["forgejo-release"]
+	man.ReleaseAssetPath = testReleaseAsset
+	st.Tools["forgejo-release"] = man
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	b := &ci.Build{ReleaseTargets: map[string][]ci.ReleaseTarget{
+		ci.LoweringForgejo: {
+			{Sink: "kiota", URL: "https://kiota.ch", Repo: "projectfile/bridge"},
+			{Sink: "codeberg", URL: "https://codeberg.org", Repo: "damian-buho/projectfile-bridge"},
+		},
+	}}
+	out, err := Workflow(Build(rm, st, b), Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		`M6E_PUBLISH_SINK: ["kiota", "codeberg"]`,            // one cell per forge
+		`GOOS: ["linux"]`,                                    // the build axes SURVIVE
+		`M6E_PUBLISH_SINK: "codeberg"`,                       // include row, matched on the axis
+		`M6E_RELEASE_REPO: "damian-buho/projectfile-bridge"`, // the name differs per forge
+		`M6E_RELEASE_URL: "https://codeberg.org"`,
+		"server-url: ${{ matrix.M6E_RELEASE_URL }}",
+		"repo: ${{ matrix.M6E_RELEASE_REPO }}",
+		"sink: ${{ matrix.M6E_PUBLISH_SINK }}",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("release job missing %q\n---\n%s", want, s)
+		}
+	}
+}
+
+// TestReleaseWithoutRouteKeepsAmbientForge pins the no-op half, which is what every
+// fleet project relies on today: declaring no `release` route renders no axis and no
+// coordinates, so the action falls back to the Forgejo context it runs in.
+func TestReleaseWithoutRouteKeepsAmbientForge(t *testing.T) {
+	st, err := ci.Parse([]byte(releaseSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, &ci.Build{}), Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	for _, gone := range []string{"M6E_PUBLISH_SINK", "server-url:", "repo:", "sink:"} {
+		if strings.Contains(string(out), gone) {
+			t.Errorf("no release route declared but workflow carries %q\n---\n%s", gone, out)
+		}
 	}
 }

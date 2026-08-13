@@ -728,6 +728,12 @@ type Build struct {
 	// references and knows no path shape. Empty => the project declares no route, and
 	// oci-push keeps its single OUTPUT_REGISTRY destination.
 	PublishRefs map[string][]SinkRef
+	// ReleaseTargets is the binaries-plane twin: where a pipeline of that lowering
+	// ATTACHES its release, composed at LOAD time from org.projectfile.publish.<forge>.
+	// release (the forge names) and the source-code links those names match. Empty =>
+	// the project releases only on the forge it runs on, which is the ambient Forgejo
+	// Actions context and needs no input at all.
+	ReleaseTargets map[string][]ReleaseTarget
 }
 
 // SinkRef is one composed publish destination: the sink NAME the credentials key on,
@@ -873,21 +879,139 @@ func LoadBuild(pfPath string) (*Build, error) {
 	if err != nil {
 		return nil, err
 	}
+	releaseTargets, err := r.releaseTargets()
+	if err != nil {
+		return nil, err
+	}
 	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
-		len(buildTarget) == 0 && len(publishRefs) == 0 {
+		len(buildTarget) == 0 && len(publishRefs) == 0 && len(releaseTargets) == 0 {
 		return nil, nil
 	}
 	return &Build{
 		Images: images, Args: inputs, Events: events, Secrets: secRaw,
-		BuildTarget: buildTarget, PublishRefs: publishRefs,
+		BuildTarget: buildTarget, PublishRefs: publishRefs, ReleaseTargets: releaseTargets,
 	}, nil
 }
 
-// rawPublish is one org.projectfile.publish.<forge> route. Only `push` is read here:
-// `pull` answers where a BUILD sources its base images, which the make plane resolves
+// rawPublish is one org.projectfile.publish.<forge> route. `pull` is not read here:
+// it answers where a BUILD sources its base images, which the make plane resolves
 // through its registry vars, not the publish leaf.
+//
+// `push` and `release` are the two PLANES, kept apart because they are: an image is a
+// ref composed from a sink template, a release is a tarball attached to a git tag by a
+// token. A release destination therefore names a FORGE, never a sink.
 type rawPublish struct {
-	Push []string `json:"push"`
+	Push    []string `json:"push"`
+	Release []string `json:"release"`
+}
+
+// ReleaseTarget is one composed release destination: the NAME the token derives from,
+// the forge base URL to attach on, and the repository path ON that forge. Repo is
+// carried rather than derived because it differs per forge — kiota holds
+// projectfile/bridge, GitHub holds damian-buho/projectfile-bridge.
+type ReleaseTarget struct {
+	Sink string
+	URL  string
+	Repo string
+}
+
+// releaseTargets resolves every declared release destination, keyed by the LOWERING
+// that attaches it — the binaries-plane twin of publishRefs.
+//
+// A route names forge SLUGS; the coordinates come from the source-code links the
+// project already declares, matched by the same first-domain-label rule
+// originForgeSlug uses. Nothing is restated: the URL lives once, in links.
+//
+// No `release` key => nil, and the release action keeps the ambient Forgejo context —
+// the single-forge behaviour every project has today.
+func (r *Reader) releaseTargets() (map[string][]ReleaseTarget, error) {
+	routes, err := r.publishRoutes()
+	if err != nil || len(routes) == 0 {
+		return nil, err
+	}
+	forgeLinks := map[string]ReleaseTarget{}
+	for _, l := range r.doc.Links {
+		if l.Type != linkSourceCode {
+			continue
+		}
+		slug, base, repo := splitForgeURL(l.URL)
+		if slug == "" || repo == "" {
+			continue
+		}
+		// First in document order wins, the rule slug collisions already use.
+		if _, seen := forgeLinks[slug]; !seen {
+			forgeLinks[slug] = ReleaseTarget{Sink: slug, URL: base, Repo: repo}
+		}
+	}
+	out := map[string][]ReleaseTarget{}
+	for lowering, forge := range r.publishForges(routes) {
+		for _, name := range routes[forge].Release {
+			target, ok := forgeLinks[name]
+			if !ok {
+				// A destination with no link has no repository path, and guessing one
+				// would attach a release to a repository nobody named.
+				genlog.Warn("release destination dropped — no source-code link declares it",
+					"forge", forge, "destination", name,
+					"remedy", "declare a links[type=source-code] entry on "+name)
+				continue
+			}
+			out[lowering] = append(out[lowering], target)
+		}
+	}
+	return out, nil
+}
+
+// linkSourceCode is the link type a forge repository is declared under (spec §4.7).
+const linkSourceCode = "source-code"
+
+// splitForgeURL decomposes a forge repository URL into the slug a route names it by,
+// the base URL a release attaches on, and the `<owner>/<repo>` path on that forge.
+// Any transport, because a link may be written in any of them.
+func splitForgeURL(raw string) (slug, base, repo string) {
+	rest := raw
+	// The base is what a release client talks HTTP to, so a git transport (ssh://,
+	// git://) resolves to the forge's web origin rather than being carried through.
+	scheme := "https"
+	if i := strings.Index(rest, "://"); i >= 0 {
+		if s := rest[:i]; s == "http" || s == "https" {
+			scheme = s
+		}
+		rest = rest[i+3:]
+	}
+	if i := strings.Index(rest, "@"); i >= 0 {
+		rest = rest[i+1:]
+	}
+	// Host and path are split on the first slash — except in the scp-style
+	// `git@host:owner/repo.git`, where the colon is the separator. A colon may also
+	// introduce a PORT, and the two are told apart by what follows it: a port is
+	// digits only. The port stays in the BASE (it addresses the forge) and never
+	// reaches the slug (which is the first domain label).
+	authority, path, _ := strings.Cut(rest, "/")
+	host := authority
+	if h, after, ok := strings.Cut(authority, ":"); ok {
+		if _, err := strconv.Atoi(after); err == nil {
+			host = h
+		} else {
+			host, authority, path = h, h, after+"/"+path
+		}
+	}
+	label, _, _ := strings.Cut(host, ".")
+	return label, scheme + "://" + authority, strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+}
+
+// publishRoutes reads the org.projectfile.publish table once for both planes. A route
+// is one document fact; reading it twice would let the two planes disagree about which
+// forges the project publishes from at all.
+func (r *Reader) publishRoutes() (map[string]rawPublish, error) {
+	pubRaw, err := r.subtree("org.projectfile.publish")
+	if err != nil || len(pubRaw) == 0 {
+		return nil, err
+	}
+	var routes map[string]rawPublish
+	if err := json.Unmarshal(pubRaw, &routes); err != nil {
+		return nil, fmt.Errorf("org.projectfile.publish: parse: %w", err)
+	}
+	return routes, nil
 }
 
 // publishRefs composes every declared destination, keyed by the LOWERING that
@@ -896,16 +1020,9 @@ type rawPublish struct {
 // Mapping the two here keeps render free of forge knowledge and leaves exactly one
 // place to correct when a project gains a third home.
 func (r *Reader) publishRefs() (map[string][]SinkRef, error) {
-	pubRaw, err := r.subtree("org.projectfile.publish")
-	if err != nil {
+	routes, err := r.publishRoutes()
+	if err != nil || len(routes) == 0 {
 		return nil, err
-	}
-	if len(pubRaw) == 0 {
-		return nil, nil
-	}
-	var routes map[string]rawPublish
-	if err := json.Unmarshal(pubRaw, &routes); err != nil {
-		return nil, fmt.Errorf("org.projectfile.publish: parse: %w", err)
 	}
 	// The sink TEMPLATES, read as values. Expanding `${org.projectfile.sinks.X.ref}`
 	// instead would spend one re-expansion level on the lookup itself, and a template
