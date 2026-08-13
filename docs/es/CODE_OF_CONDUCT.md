@@ -5,13 +5,13 @@ pf-cli-managed: yes
 -->
 
 <!-- textlint-disable terminology -->
-[English](CODE_OF_CONDUCT.md) · [Українська](docs/uk/CODE_OF_CONDUCT.md)
+[English](../../CODE_OF_CONDUCT.md) · [Українська](../uk/CODE_OF_CONDUCT.md)
 
 # Código de Conducta del Contributor Covenant
 
 ## Nuestro compromiso
 
-Nos comprometemos a que la participación en Projectfile CI Resolver sea acogedora,
+Nos comprometemos a que la participación en [Projectfile CI Resolver](README.md) sea acogedora,
 segura y equitativa para todas las personas. Asumimos el compromiso de
 fomentar un entorno que respete y promueva la dignidad, los derechos y las
 aportaciones de todas las personas, con independencia de características como
@@ -81,7 +81,7 @@ Conducta:
 Este Código de Conducta se aplica en todos los espacios de la comunidad —
 incidencias, solicitudes de incorporación de cambios, canales de chat, listas
 de correo y eventos presenciales — y también cuando una persona
-representa oficialmente a Projectfile CI Resolver en espacios públicos.
+representa oficialmente a [Projectfile CI Resolver](README.md) en espacios públicos.
 
 ## Atribución
 
@@ -89,9 +89,11 @@ Este Código de Conducta es una adaptación del [Contributor Covenant][homepage]
 versión 3.0, disponible en
 <https://www.contributor-covenant.org/version/3/0/code_of_conduct.html>.
 
-El Contributor Covenant se publica bajo la
-[Licencia Creative Commons Atribución-CompartirIgual 4.0 Internacional][CC-BY-SA].
+El Contributor Covenant se publica bajo la licencia
+[Creative Commons Attribution-ShareAlike 4.0 International][CC-BY-SA].
 
 [homepage]: https://www.contributor-covenant.org
 [CC-BY-SA]: https://creativecommons.org/licenses/by-sa/4.0/
+
+*Generado desde projectfile ([saber cómo](https://projectfile.org/how-to/code-of-conduct))*
 <!-- textlint-enable -->

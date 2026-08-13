@@ -5,13 +5,13 @@ pf-cli-managed: yes
 -->
 
 <!-- textlint-disable terminology -->
-[English](CODE_OF_CONDUCT.md) · [Español](docs/es/CODE_OF_CONDUCT.md)
+[English](../../CODE_OF_CONDUCT.md) · [Español](../es/CODE_OF_CONDUCT.md)
 
 # Кодекс поведінки Contributor Covenant
 
 ## Наша обіцянка
 
-Ми обіцяємо зробити участь у Projectfile CI Resolver гостинною, безпечною та
+Ми обіцяємо зробити участь у [Projectfile CI Resolver](README.md) гостинною, безпечною та
 справедливою для всіх. Ми прагнемо підтримувати середовище, яке поважає й
 утверджує гідність, права та внесок кожної людини, незалежно від таких ознак,
 як раса, етнічне походження, каста, колір шкіри, вік, фізичні особливості,
@@ -73,7 +73,7 @@ pf-cli-managed: yes
 
 Цей Кодекс поведінки діє в усіх просторах спільноти — у тікетах, запитах на
 злиття, чатах, списках розсилки та на очних заходах — а також тоді, коли
-особа офіційно представляє Projectfile CI Resolver у публічному просторі.
+особа офіційно представляє [Projectfile CI Resolver](README.md) у публічному просторі.
 
 ## Джерело
 
@@ -86,4 +86,6 @@ Contributor Covenant поширюється на умовах ліцензії
 
 [homepage]: https://www.contributor-covenant.org
 [CC-BY-SA]: https://creativecommons.org/licenses/by-sa/4.0/
+
+*Згенеровано з projectfile ([дізнатися як](https://projectfile.org/how-to/code-of-conduct))*
 <!-- textlint-enable -->
