@@ -75,7 +75,7 @@ env:
 jobs:
 {{- range .Jobs }}
   {{ .Name }}:
-    runs-on: {{ $.Platform.RunsOn }}
+    runs-on: {{ with .RunsOn }}{{ . }}{{ else }}{{ $.Platform.RunsOn }}{{ end }}
 {{- if $.Platform.TimeoutMinutes }}
     timeout-minutes: {{ $.Platform.TimeoutMinutes }}
 {{- end }}

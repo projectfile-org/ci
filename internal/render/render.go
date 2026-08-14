@@ -1523,6 +1523,11 @@ type JobView struct {
 	Steps  []StepView `json:"steps,omitempty"`
 	Needs  []string   `json:"needs"`            // upstream NODE names (the authored DAG), sorted
 	Matrix AxisMap    `json:"matrix,omitempty"` // axes when this node is a CELL (shared by every step)
+	// RunsOn overrides the workflow-wide runner for THIS job — set only by archRunners,
+	// to the matrix expression that reads the per-cell runner an include row carries.
+	// Empty => the job renders the target's `runs-on`, which is every job on a project
+	// whose target declares no arch→runner map.
+	RunsOn string `json:"runs-on,omitempty"`
 	// MaxParallel caps concurrent matrix cells (strategy.max-parallel). 0 => omit (the
 	// forge default). Lifted from the owning node; rendered ONLY inside the strategy
 	// block, so it is inert on a non-matrix job.
@@ -1993,12 +1998,10 @@ type ConcurrencyView struct {
 // (no overlay) keep emitting `runs-on: <target default>`.
 func buildPlatform(target Target, p ci.Platform) PlatformView {
 	pv := PlatformView{
-		RunsOn:         target.RunsOn,
+		RunsOn:         defaultRunner(target, p),
 		TimeoutMinutes: p.TimeoutMinutes,
 	}
-	if len(p.RunsOn) == 1 {
-		pv.RunsOn = p.RunsOn[0]
-	} else if len(p.RunsOn) > 1 {
+	if len(p.RunsOn) > 1 {
 		pv.RunsOn = funcs["yamlList"].(func([]string) string)(p.RunsOn)
 	}
 	for _, k := range sortedKeys(p.Permissions) {
@@ -2008,6 +2011,17 @@ func buildPlatform(target Target, p ci.Platform) PlatformView {
 		pv.Concurrency = &ConcurrencyView{Group: c.Group, CancelInProgress: c.CancelInProgress}
 	}
 	return pv
+}
+
+// defaultRunner is the ONE label an unmapped arch cell falls back to: the overlay's
+// `default` when it names one, the adapter default otherwise. The multi-label list
+// form can never reach here — it is a different JSON shape of the same key than the
+// object form arch routing needs, so the two spellings cannot coexist on one target.
+func defaultRunner(target Target, p ci.Platform) string {
+	if len(p.RunsOn) == 1 {
+		return p.RunsOn[0]
+	}
+	return target.RunsOn
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -3087,6 +3101,10 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		// downstream reads it — but a job whose matrix grows must do so before its
 		// view is handed to the template.
 		jobs[i] = publishCells(jobs[i], target.Key)
+		// Route this job's arch cells to their runners, after publishCells so the two
+		// include lowerings compose on one final matrix rather than one overwriting the
+		// other's rows.
+		jobs[i] = archRunners(jobs[i], plat.RunsOnByArch, defaultRunner(target, plat))
 		// Bind the audit re-scan target to what THIS lowering's route pulls from, before
 		// valOf is taken: the step's `env:` input is read back from the job env below, so
 		// the two spellings of the ref stay one value.
@@ -3232,6 +3250,54 @@ func publishCells(j JobView, targetKey string) JobView {
 	j.Class = string(resolve.ClassCell)
 	return j
 }
+
+// archRunners routes each arch CELL of a job to the runner its target declares for
+// that arch. Per target, beside publishCells, because which arches a forge serves
+// natively is a fact about the forge: GitHub hosts arm64 and riscv64 machines, a
+// single-host Forgejo emulates everything foreign.
+//
+// `runs-on` is one value per JOB and the arch cells share a job, so the choice cannot
+// be made by writing three jobs. It rides a matrix include row keyed by the arch axis
+// — the same lowering publishCells already uses for the per-destination release
+// coordinates — and the job's runs-on reads that row's variable. EVERY arch in the
+// axis gets a row, mapped or not: an unmapped one carries the default label
+// explicitly, because a cell whose M6E_RUNNER resolved to empty would render an
+// invalid `runs-on` rather than falling back.
+func archRunners(j JobView, byArch map[string]string, def string) JobView {
+	if len(byArch) == 0 {
+		return j
+	}
+	var arches []string
+	for _, a := range j.Matrix {
+		if a.Key == ci.ArchAxis {
+			arches = a.Values
+			break
+		}
+	}
+	if len(arches) == 0 {
+		return j
+	}
+	rows := make([]MatrixRowView, 0, len(arches))
+	for _, arch := range arches {
+		label, native := byArch[arch]
+		source := "runs-on." + arch
+		if !native {
+			label, source = def, "runs-on."+ci.RunsOnDefaultKey+" (emulated: arch unmapped)"
+		}
+		genlog.Decision("arch_runner", j.Name+" "+arch+" -> "+label, source, "runs-on."+arch)
+		rows = append(rows, MatrixRowView{Fields: []KVView{
+			{Key: ci.ArchAxis, Value: arch},
+			{Key: runnerVar, Value: label},
+		}})
+	}
+	j.Include = append(append([]MatrixRowView{}, j.Include...), rows...)
+	j.RunsOn = matrixVarExpr(runnerVar, nil, nil)
+	return j
+}
+
+// runnerVar carries one cell's chosen runner label, bound beside the arch axis on a
+// matrix include row.
+const runnerVar = "M6E_RUNNER"
 
 // releaseURLVar / releaseRepoVar are the per-cell release coordinates, carried as
 // matrix include fields beside the destination axis.

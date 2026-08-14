@@ -481,7 +481,16 @@ func (m Manifest) EnabledFor(target string) bool {
 // litmus (general-plan): changes what a gate means => core DAG; changes only
 // where/how it runs => here.
 type Platform struct {
-	RunsOn         []string          // default runner label(s); overrides the adapter default
+	RunsOn []string // default runner label(s); overrides the adapter default
+	// RunsOnByArch routes one matrix CELL to a runner by its ArchAxis value — the
+	// arch→label map an author writes as the object form of `runs-on`, beside the
+	// `default` key that fills RunsOn. Which arches a forge serves NATIVELY is a
+	// property of the forge, never of a project, so it is declared per target and
+	// ONCE in a shared include rather than copied into every projectfile that
+	// declares an architecture. An arch with no entry falls back to the default and
+	// runs under emulation, so a target naming no map renders today's workflow
+	// byte-for-byte (graceful degradation; native is opt-in per target+arch).
+	RunsOnByArch   map[string]string
 	TimeoutMinutes int               // per-job timeout applied to every job (0 => unset)
 	Permissions    map[string]string // workflow-level GITHUB_TOKEN scopes (scope -> level)
 	Concurrency    *Concurrency      // workflow-level concurrency group (nil => unset)
@@ -692,7 +701,7 @@ type rawInput struct {
 // the vendor's own spelling (kebab-case GHA YAML) so an author reads one mental
 // model whether the field lands in the projectfile or the workflow.
 type rawPlatform struct {
-	RunsOn         json.RawMessage   `json:"runs-on"` // string OR []string (both legal in GHA)
+	RunsOn         json.RawMessage   `json:"runs-on"` // string OR []string (both legal in GHA) OR {default,<arch>: label}
 	TimeoutMinutes int               `json:"timeout-minutes"`
 	Permissions    map[string]string `json:"permissions"`
 	Concurrency    *rawConcurrency   `json:"concurrency"`
@@ -1582,14 +1591,15 @@ func Parse(data []byte) (*Subtree, error) {
 }
 
 // normalise lowers a raw platform overlay to the typed model, resolving the
-// scalar-or-list `runs-on` shape GHA permits.
+// scalar-or-list `runs-on` shape GHA permits and our arch-keyed object form.
 func (rp *rawPlatform) normalise() (Platform, error) {
-	runsOn, err := decodeStringOrList(rp.RunsOn)
+	runsOn, byArch, err := decodeRunsOn(rp.RunsOn)
 	if err != nil {
 		return Platform{}, fmt.Errorf("runs-on: %w", err)
 	}
 	p := Platform{
 		RunsOn:         runsOn,
+		RunsOnByArch:   byArch,
 		TimeoutMinutes: rp.TimeoutMinutes,
 		Permissions:    rp.Permissions,
 		Builder:        rp.Builder,
@@ -1601,6 +1611,47 @@ func (rp *rawPlatform) normalise() (Platform, error) {
 		p.Concurrency = &Concurrency{Group: c.Group, CancelInProgress: c.CancelInProgress}
 	}
 	return p, nil
+}
+
+// RunsOnDefaultKey is the object-form `runs-on` key holding the label every arch
+// the map does not name falls back to. Reserved: no CPU architecture is spelled
+// "default", so the key can never collide with a real arch entry.
+const RunsOnDefaultKey = "default"
+
+// decodeRunsOn resolves the three `runs-on` spellings: GHA's bare label and label
+// list, plus the OBJECT form {default: …, <arch>: …} that routes each ArchAxis cell
+// to its own runner. It returns the default label(s) and the arch map — the caller
+// gets one shape per concern and neither is required.
+//
+// Object values are SCALAR labels only. A cell's runner rides a matrix include row,
+// which carries one string per field, so a per-arch label LIST would need a fromJSON
+// hop on every cell of every job. The multi-label spelling stays available as the
+// list form, where it is workflow-wide — the two shapes of one key cannot collide.
+func decodeRunsOn(raw json.RawMessage) ([]string, map[string]string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		list, err := decodeStringOrList(raw)
+		return list, nil, err
+	}
+	var obj map[string]string
+	if err := json.Unmarshal(trimmed, &obj); err != nil {
+		return nil, nil, fmt.Errorf("object form takes scalar labels, e.g. {%s: ubuntu-latest, arm64: ubuntu-24.04-arm}: %w", RunsOnDefaultKey, err)
+	}
+	var def []string
+	byArch := make(map[string]string, len(obj))
+	for k, v := range obj {
+		if k == RunsOnDefaultKey {
+			def = []string{v}
+			continue
+		}
+		byArch[k] = v
+	}
+	genlog.Info("runs-on: arch-routed runner map declared",
+		"default", def, "arches", sortedKeys(byArch))
+	if len(byArch) == 0 {
+		return def, nil, nil
+	}
+	return def, byArch, nil
 }
 
 // decodeStringOrList accepts GHA's two `runs-on` spellings — a bare label

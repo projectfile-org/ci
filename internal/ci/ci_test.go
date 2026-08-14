@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"kiota.ch/projectfile/core/v2/pkg/projectfile"
@@ -498,6 +499,78 @@ func TestCredentialsOverlayDecode(t *testing.T) {
 	}
 	if _, leaked := st.Platforms["forgejo"]; leaked {
 		t.Error("forgejo overlay must stay absent — credentials are keyed per target")
+	}
+}
+
+// TestRunsOnObjectFormDecode pins the third `runs-on` spelling: the arch-keyed object
+// that routes each ArchAxis cell to its own runner. `default` is lifted OUT of the map
+// into RunsOn — it is the label an unmapped arch falls back to, not an arch of its own,
+// and leaving it in would mint a cell for an architecture nobody declares.
+func TestRunsOnObjectFormDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "gha": {"runs-on": {"default": "ubuntu-latest", "arm64": "ubuntu-24.04-arm", "riscv64": "ubuntu-26.04-riscv"}},
+	  "tools": {"shellcheck": {"run": "shellcheck"}},
+	  "nodes": {"linted": {"goal": true, "needs": {"shellcheck": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	p := st.Platforms["gha"]
+	if len(p.RunsOn) != 1 || p.RunsOn[0] != "ubuntu-latest" {
+		t.Errorf("runs-on default: want [ubuntu-latest], got %v", p.RunsOn)
+	}
+	if got := p.RunsOnByArch["arm64"]; got != "ubuntu-24.04-arm" {
+		t.Errorf("runs-on[arm64]: want the hosted arm label, got %q", got)
+	}
+	if _, leaked := p.RunsOnByArch[RunsOnDefaultKey]; leaked {
+		t.Error("the default key must not survive as an arch entry")
+	}
+}
+
+// TestRunsOnScalarAndListFormsSurvive is the compatibility half: the two GHA spellings
+// still decode to RunsOn and mint no arch map, so every target declaring one of them
+// routes nothing and renders as it did before arch routing existed.
+func TestRunsOnScalarAndListFormsSurvive(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      []string
+	}{
+		{"scalar", `"docker"`, []string{"docker"}},
+		{"list", `["self-hosted", "linux"]`, []string{"self-hosted", "linux"}},
+	} {
+		st, err := Parse([]byte(`{
+		  "forgejo": {"runs-on": ` + tc.raw + `},
+		  "tools": {"shellcheck": {"run": "shellcheck"}},
+		  "nodes": {"linted": {"goal": true, "needs": {"shellcheck": true}}}
+		}`))
+		if err != nil {
+			t.Fatalf("%s parse: %v", tc.name, err)
+		}
+		p := st.Platforms["forgejo"]
+		if strings.Join(p.RunsOn, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s runs-on: want %v, got %v", tc.name, tc.want, p.RunsOn)
+		}
+		if p.RunsOnByArch != nil {
+			t.Errorf("%s must mint no arch map, got %v", tc.name, p.RunsOnByArch)
+		}
+	}
+}
+
+// TestRunsOnObjectFormRejectsListValues states the boundary in the one place an author
+// meets it: a cell's runner rides a matrix include FIELD, which carries a single string,
+// so a per-arch label list has nowhere to go. The multi-label spelling stays available
+// as the list form, where it is workflow-wide.
+func TestRunsOnObjectFormRejectsListValues(t *testing.T) {
+	_, err := Parse([]byte(`{
+	  "gha": {"runs-on": {"arm64": ["self-hosted", "arm64"]}},
+	  "tools": {"shellcheck": {"run": "shellcheck"}},
+	  "nodes": {"linted": {"goal": true, "needs": {"shellcheck": true}}}
+	}`))
+	if err == nil {
+		t.Fatal("a per-arch label LIST must be refused, not silently dropped")
+	}
+	if !strings.Contains(err.Error(), "runs-on") {
+		t.Errorf("error must name the offending key, got %v", err)
 	}
 }
 

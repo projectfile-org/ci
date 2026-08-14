@@ -4324,3 +4324,75 @@ func TestNoArchAxisRendersNoArchInputs(t *testing.T) {
 		}
 	}
 }
+
+// archRunnerPlatform routes two of the three arches natively and leaves amd64 unmapped,
+// which is exactly the GitHub row of the fleet map: hosted arm64 and riscv64 machines,
+// amd64 on the ordinary default.
+var archRunnerPlatform = ci.Platform{RunsOnByArch: map[string]string{
+	"arm64":   "ubuntu-24.04-arm",
+	"riscv64": "ubuntu-26.04-riscv",
+}}
+
+// TestArchRunnersRouteEachCell pins the whole routing contract on one workflow: a
+// fanning job reads its runner from the matrix, EVERY arch of the axis gets a row
+// (an unmapped one carrying the default, since an empty M6E_RUNNER would render an
+// invalid runs-on), and a job that dropped the axis keeps the workflow default.
+func TestArchRunnersRouteEachCell(t *testing.T) {
+	st, err := ci.Parse([]byte(manifestSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	out, err := Workflow(m, Targets[TargetGHA], archRunnerPlatform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"runs-on: ${{ matrix.M6E_RUNNER }}",
+		`- M6E_ARCH: "amd64"` + "\n            " + `M6E_RUNNER: "ubuntu-latest"`,
+		`- M6E_ARCH: "arm64"` + "\n            " + `M6E_RUNNER: "ubuntu-24.04-arm"`,
+		`- M6E_ARCH: "riscv64"` + "\n            " + `M6E_RUNNER: "ubuntu-26.04-riscv"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("arch-routed workflow missing %q\n---\n%s", want, s)
+		}
+	}
+	// The assembly job dropped the axis, so it has no cell to route: it must keep the
+	// plain runner rather than reading a variable no include row of its own defines.
+	if !strings.Contains(s, "publish-manifest:\n    runs-on: ubuntu-latest") {
+		t.Errorf("axis-dropping job must keep the workflow default runner:\n%s", s)
+	}
+}
+
+// TestArchRunnersAbsentMapChangesNothing is the zero-diff half: a target that declares
+// no map must render the SAME bytes as before the routing existed, on a project that
+// fans over arch — otherwise the whole fleet's forgejo lowering churns.
+func TestArchRunnersAbsentMapChangesNothing(t *testing.T) {
+	st, err := ci.Parse([]byte(manifestSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, absent := range []string{"M6E_RUNNER", "matrix.M6E_RUNNER"} {
+		if strings.Contains(s, absent) {
+			t.Errorf("no runner map declared but workflow carries %q:\n%s", absent, s)
+		}
+	}
+	if !strings.Contains(s, "runs-on: ubuntu-latest") {
+		t.Errorf("unmapped target must render the adapter default runner:\n%s", s)
+	}
+}
