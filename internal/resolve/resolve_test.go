@@ -182,10 +182,10 @@ func withoutSubtree(t *testing.T, axes, drop string) *Model {
 	t.Helper()
 	st, err := ci.Parse([]byte(`{
 	  "matrix": {"axes": ` + axes + `},
-	  "tools": {"container-build": {"action": "container-build"}, "oci-manifest": {"action": "oci-manifest"}},
+	  "tools": {"container-build": {"action": "container-build"}, "assembler": {"action": "oci-push"}},
 	  "nodes": {
 	    "image-built": {"matrix": true, "needs": {"container-build": true}},
-	    "manifest":    {"matrix": {"without": ` + drop + `}, "needs": {"oci-manifest": true, "image-built": true}},
+	    "manifest":    {"matrix": {"without": ` + drop + `}, "needs": {"assembler": true, "image-built": true}},
 	    "ready":       {"goal": true, "needs": {"manifest": true}}
 	  }
 	}`))
@@ -218,12 +218,12 @@ func TestMatrixWithoutDropsOneAxis(t *testing.T) {
 	if got := by["container-build"].Cells(); got != 6 {
 		t.Errorf("container-build: want 6 cells (2 SERIES × 3 ARCH), got %d (axes %v)", got, by["container-build"].Axes)
 	}
-	man := by["oci-manifest"]
+	man := by["assembler"]
 	if got := man.Cells(); got != 2 {
-		t.Errorf("oci-manifest: want 2 cells (SERIES only), got %d (axes %v)", got, man.Axes)
+		t.Errorf("assembler: want 2 cells (SERIES only), got %d (axes %v)", got, man.Axes)
 	}
 	if len(man.Axes) != 1 || man.Axes[0].Key != axisSeries {
-		t.Errorf("oci-manifest: want the SERIES axis alone, got %v", man.Axes)
+		t.Errorf("assembler: want the SERIES axis alone, got %v", man.Axes)
 	}
 }
 
@@ -233,12 +233,12 @@ func TestMatrixWithoutDropsOneAxis(t *testing.T) {
 func TestMatrixWithoutAbsentAxisIsNoOp(t *testing.T) {
 	by := jobsByName(withoutSubtree(t, `{"SERIES": ["resolute", "noble"]}`, `["M6E_ARCH"]`))
 
-	man := by["oci-manifest"]
+	man := by["assembler"]
 	if got := man.Cells(); got != 2 {
-		t.Errorf("oci-manifest: want the untouched 2 SERIES cells, got %d (axes %v)", got, man.Axes)
+		t.Errorf("assembler: want the untouched 2 SERIES cells, got %d (axes %v)", got, man.Axes)
 	}
 	if len(man.Axes) != 1 || man.Axes[0].Key != axisSeries {
-		t.Errorf("oci-manifest: want SERIES kept, got %v", man.Axes)
+		t.Errorf("assembler: want SERIES kept, got %v", man.Axes)
 	}
 }
 
@@ -248,12 +248,12 @@ func TestMatrixWithoutAbsentAxisIsNoOp(t *testing.T) {
 func TestMatrixWithoutEveryAxisLeavesOneJob(t *testing.T) {
 	by := jobsByName(withoutSubtree(t, `{"SERIES": ["resolute", "noble"]}`, `["SERIES"]`))
 
-	man := by["oci-manifest"]
+	man := by["assembler"]
 	if len(man.Axes) != 0 {
-		t.Errorf("oci-manifest: want no axes left, got %v", man.Axes)
+		t.Errorf("assembler: want no axes left, got %v", man.Axes)
 	}
 	if got := man.Cells(); got != 1 {
-		t.Errorf("oci-manifest: want a single un-fanned job, got %d cells", got)
+		t.Errorf("assembler: want a single un-fanned job, got %d cells", got)
 	}
 }
 
@@ -266,10 +266,10 @@ func TestMatrixWithoutDropsDependentExclusions(t *testing.T) {
 	    "axes": {"SERIES": ["resolute", "noble"], "M6E_ARCH": ["amd64", "riscv64"]},
 	    "exclude": [{"SERIES": "noble", "M6E_ARCH": "riscv64"}]
 	  },
-	  "tools": {"container-build": {"action": "container-build"}, "oci-manifest": {"action": "oci-manifest"}},
+	  "tools": {"container-build": {"action": "container-build"}, "assembler": {"action": "oci-push"}},
 	  "nodes": {
 	    "image-built": {"matrix": true, "needs": {"container-build": true}},
-	    "manifest":    {"matrix": {"without": ["M6E_ARCH"]}, "needs": {"oci-manifest": true, "image-built": true}},
+	    "manifest":    {"matrix": {"without": ["M6E_ARCH"]}, "needs": {"assembler": true, "image-built": true}},
 	    "ready":       {"goal": true, "needs": {"manifest": true}}
 	  }
 	}`))
@@ -285,8 +285,8 @@ func TestMatrixWithoutDropsDependentExclusions(t *testing.T) {
 	if got := by["container-build"].Cells(); got != 3 {
 		t.Errorf("container-build: want 3 cells (4 minus the excluded one), got %d", got)
 	}
-	if got := by["oci-manifest"].Cells(); got != 2 {
-		t.Errorf("oci-manifest: want both SERIES to keep a manifest job, got %d cells", got)
+	if got := by["assembler"].Cells(); got != 2 {
+		t.Errorf("assembler: want both SERIES to keep a manifest job, got %d cells", got)
 	}
 }
 

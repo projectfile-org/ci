@@ -221,7 +221,17 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
       - name: {{ .Step.Name }}
         uses: {{ actionRef .Target .Step.Action }}
         with:
+{{- if .Step.Archives }}
+          # One tar per DECLARED architecture, published together as a manifest list at
+          # each cascade tag. Per-arch TAGS are deliberately not published: they are
+          # scaffolding, and a registry that cannot delete a tag keeps them forever.
+          archives: |
+{{- range .Step.Archives }}
+            {{ .Arch }} {{ .Name }}
+{{- end }}
+{{- else }}
           artifact-name: {{ .Step.Stem }}
+{{- end }}
           image: {{ composeImage "" .Step.ImageBasename .Step.Arch }}
 {{- if .Step.PublishVersion }}
           version: {{ .Step.PublishVersion }}
@@ -245,46 +255,6 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
           # This CELL's destination, off the publish axis: the job runs one cell per
           # place the archive goes, so a registry refusing a push fails only its own.
           sink: {{ . }}
-{{- end }}
-{{- with .Step.Arch }}
-          # This CELL's architecture: every cascade tag takes a -<arch> suffix, so the
-          # arch cells publish separate refs instead of overwriting one another.
-          arch: {{ . }}
-{{- end }}
-{{- end }}
-
-{{- /*
-providers/oci-manifest — the ASSEMBLY step: it indexes the per-arch tags oci-push
-published into a manifest list at the unsuffixed ref, for every tag of the same semver
-cascade. It takes the identical destination inputs as oci-push (the list must land where
-the per-arch tags went) and NO artifact: the images are already at the registry, so the
-node carries no download and no `docker load`. `arches` is the whole declared set rather
-than a cell value — this node dropped the arch axis so it runs once, which is the only
-shape that can index the cells.
-*/ -}}
-{{- define "providers/oci-manifest" }}
-      - name: {{ .Step.Name }}
-        uses: {{ actionRef .Target .Step.Action }}
-        with:
-          image: {{ composeImage "" .Step.ImageBasename .Step.Arch }}
-{{- if .Step.PublishVersion }}
-          version: {{ .Step.PublishVersion }}
-{{- end }}
-          registry: {{ outputRegistryExpr }}
-{{- with publishRefsFor .Target .Step.PublishRefs }}
-          refs: |
-{{- range . }}
-            {{ .Sink }} {{ .Ref }}
-{{- end }}
-{{- end }}
-{{- with .Step.PublishSink }}
-          sink: {{ . }}
-{{- end }}
-{{- with .Step.Arches }}
-          # Every architecture the build cells fanned over, so the index names them all.
-          # Absent on a project declaring none: no per-arch tags exist and the action
-          # no-ops rather than wrapping one image in a pointless index.
-          arches: {{ spaceList . }}
 {{- end }}
 {{- end }}
 

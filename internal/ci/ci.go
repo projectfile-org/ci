@@ -280,7 +280,6 @@ const (
 const (
 	ActionContainerBuild   = "container-build"   // PRODUCES the cell-keyed OCI archive
 	ActionOciPush          = "oci-push"          // CONSUMES it and pushes to a registry
-	ActionOciManifest      = "oci-manifest"      // INDEXES the per-arch pushes into a manifest list at the unsuffixed tag
 	ActionContainerExec    = "container-exec"    // execs `run` INSIDE a running compose container (the fused live test)
 	ActionSecretsProvision = "secrets-provision" // SYNTHETIC pre-dc-up-d step: materialise the .secrets/ tree (cloud half of org.projectfile.ci.secrets)
 	ActionForgejoRelease   = "forgejo-release"   // CONSUMES the cell-keyed binary artifact and attaches it to a Forgejo release (create-then-attach across matrix cells)

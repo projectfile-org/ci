@@ -21,7 +21,6 @@ const (
 	testCell            = "cell"
 	testContainerBuild  = "container-build"
 	testOCIPush         = "oci-push"
-	testOCIManifest     = "oci-manifest"
 	testImageBuilt      = "image-built"
 	testImageMatrixStem = "image-${{ matrix.B19_UBUNTU_SERIES }}" + artifactScopeSuffix
 	testUploadArtifact  = "upload-artifact"
@@ -4153,26 +4152,26 @@ func TestReleaseWithoutRouteKeepsAmbientForge(t *testing.T) {
 	}
 }
 
-// archSubtree fans a container build and its push over M6E_ARCH. The axis is AUTHORED
+// archSubtree is the real publish shape: the BUILD fans over M6E_ARCH (one single-image
+// archive per architecture) while the PUBLISH node drops the axis, so one cell holds every
+// architecture's tar and publishes them together as a manifest list. The axis is AUTHORED
 // here rather than minted because ci.Parse takes a subtree, not a projectfile — the
-// minting from org.projectfile.architecture is pinned in internal/ci. What this fixture
-// exists for is the pair of bindings the axis is useless without.
+// minting from org.projectfile.architecture is pinned in internal/ci.
 const archSubtree = `{
   "image": "b19/ubuntu",
   "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},
   "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
   "nodes": {
     "image-built": {"matrix": true, "needs": {"container-build": true}},
-    "published": {"matrix": true, "goal": true, "needs": {"image-built": true, "oci-push": true}}
+    "published": {"matrix": {"without": ["M6E_ARCH"]}, "goal": true, "needs": {"image-built": true, "oci-push": true}}
   }
 }`
 
-// TestArchAxisBindsBuildAndPush pins BOTH ends of an arch cell, which only work as a
-// pair: container-build's `platform:` decides WHAT is built and oci-push's `arch:`
-// decides which ref it lands on. With only the first, three cells overwrite one tag;
-// with only the second, three tags carry the same host-arch image. Neither failure is
-// caught downstream — every per-arch artifact is individually well-formed.
-func TestArchAxisBindsBuildAndPush(t *testing.T) {
+// TestArchAxisBindsBuildPlatform pins the producer end: each cell must actually BUILD its
+// architecture. Without `platform:` every cell emits the host arch and the index that
+// follows is a well-formed list of three identical images — a failure nothing downstream
+// can see, because each artifact is individually correct.
+func TestArchAxisBindsBuildPlatform(t *testing.T) {
 	st, err := ci.Parse([]byte(archSubtree))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4182,48 +4181,27 @@ func TestArchAxisBindsBuildAndPush(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	m := Build(rm, st, nil)
-	step := steps(m)
 	want := "${{ matrix." + ci.ArchAxis + " }}"
-	for _, name := range []string{testContainerBuild, testOCIPush} {
-		if got := step[name].Arch; got != want {
-			t.Errorf("%s Arch: want %q, got %q", name, want, got)
-		}
+	if got := steps(m)[testContainerBuild].Arch; got != want {
+		t.Errorf("%s Arch: want %q, got %q", testContainerBuild, want, got)
 	}
 	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range []string{"          platform: " + want, "          arch: " + want} {
-		if !strings.Contains(string(out), line) {
-			t.Errorf("rendered workflow missing %q:\n%s", line, out)
-		}
+	if !strings.Contains(string(out), "          platform: "+want) {
+		t.Errorf("rendered workflow missing the per-cell build platform:\n%s", out)
 	}
 }
 
-// manifestSubtree adds the ASSEMBLY node to the arch fixture: a node that drops the arch
-// axis so it runs once, carrying the tool that indexes what the arch cells published.
-const manifestSubtree = `{
-  "image": "b19/ubuntu",
-  "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},
-  "tools": {
-    "container-build": {"action": "container-build"},
-    "oci-push": {"action": "oci-push"},
-    "oci-manifest": {"action": "oci-manifest"}
-  },
-  "nodes": {
-    "image-built": {"matrix": true, "needs": {"container-build": true}},
-    "publish-image": {"matrix": true, "needs": {"image-built": true, "oci-push": true}},
-    "publish-manifest": {"matrix": {"without": ["M6E_ARCH"]}, "needs": {"publish-image": true, "oci-manifest": true}},
-    "published": {"goal": true, "needs": {"publish-image": true, "publish-manifest": true}}
-  }
-}`
-
-// TestOciManifestTakesTheDeclaredArchSet pins the complement of the per-cell binding: the
-// assembly node dropped the arch axis to run ONCE, so it has no cell value to read and
-// must instead name every arch it is indexing. Reading the set off the job's own axes
-// would yield nothing — the drop is exactly what removed them.
-func TestOciManifestTakesTheDeclaredArchSet(t *testing.T) {
-	st, err := ci.Parse([]byte(manifestSubtree))
+// TestPublishNodeTakesEveryArchArchive pins the consumer end and the reason this design
+// exists. The publish node dropped the arch axis, so its own cell-keyed stem names an
+// artifact nobody uploaded; it must instead name each producer cell's tar and hand all of
+// them to oci-push at once. The tags it publishes carry NO architecture suffix — that is
+// the whole point, because a registry that cannot delete a tag keeps such scaffolding
+// forever.
+func TestPublishNodeTakesEveryArchArchive(t *testing.T) {
+	st, err := ci.Parse([]byte(archSubtree))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -4232,48 +4210,55 @@ func TestOciManifestTakesTheDeclaredArchSet(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	m := Build(rm, st, nil)
-	step := steps(m)
-	if got := strings.Join(step[testOCIManifest].Arches, " "); got != "amd64 arm64 riscv64" {
-		t.Errorf("%s Arches: want the declared set, got %q", testOCIManifest, got)
+	got := steps(m)[testOCIPush].Archives
+	if len(got) != 3 {
+		t.Fatalf("%s Archives: want one per declared arch, got %v", testOCIPush, got)
 	}
-	// The per-cell binding must stay OFF here: an index over one cell indexes nothing.
-	if got := step[testOCIManifest].Arch; got != "" {
-		t.Errorf("%s Arch: the assembly node dropped the axis, got %q", testOCIManifest, got)
+	for i, arch := range []string{"amd64", "arm64", "riscv64"} {
+		if got[i].Arch != arch {
+			t.Errorf("%s Archives[%d].Arch: want %q, got %q", testOCIPush, i, arch, got[i].Arch)
+		}
+		// The name binds the arch as a LITERAL: this job does not fan over the axis, so a
+		// ${{ matrix.M6E_ARCH }} here would resolve to empty and 404 the download.
+		if !strings.Contains(got[i].Name, "-"+arch+"-") {
+			t.Errorf("%s Archives[%d].Name %q must bind arch %q literally", testOCIPush, i, got[i].Name, arch)
+		}
+		if strings.Contains(got[i].Name, ci.ArchAxis) {
+			t.Errorf("%s Archives[%d].Name %q still carries the dropped axis", testOCIPush, i, got[i].Name)
+		}
 	}
-	// It publishes to the same route as the push, or the index lands somewhere else.
-	if got := step[testOCIManifest].ImageBasename; got != step[testOCIPush].ImageBasename {
-		t.Errorf("%s ImageBasename %q must match the push's %q", testOCIManifest, got, step[testOCIPush].ImageBasename)
-	}
-	if step[testOCIManifest].PublishVersion == "" {
-		t.Errorf("%s must carry the git tag: the index has to reach every cascade tag", testOCIManifest)
-	}
-	// The assembly job fans over everything EXCEPT arch, and pulls no artifact: the
-	// per-arch images are at the registry already.
+	// Every named archive must actually be downloaded, or the publish reads a missing file.
 	for _, j := range m.Jobs {
-		if j.Name != "publish-manifest" {
+		if j.Name != "published" {
 			continue
 		}
-		if len(j.Matrix) != 0 {
-			t.Errorf("publish-manifest matrix: want none left after the drop, got %v", j.Matrix)
+		if len(j.Downloads) != 3 {
+			t.Errorf("published downloads: want one per arch, got %v", j.Downloads)
 		}
-		if len(j.Downloads) != 0 {
-			t.Errorf("publish-manifest downloads %v — the assembly node handles no tar", j.Downloads)
+		for i, d := range j.Downloads {
+			if d.Name != got[i].Name {
+				t.Errorf("published download %d %q != archive %q", i, d.Name, got[i].Name)
+			}
 		}
 	}
 	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "          arches: amd64 arm64 riscv64") {
-		t.Errorf("rendered workflow missing the declared arch set:\n%s", out)
+	if !strings.Contains(string(out), "          archives: |") {
+		t.Errorf("rendered workflow missing the archives input:\n%s", out)
+	}
+	// The superseded spelling must be gone: an `arch:` input would suffix every tag.
+	if strings.Contains(string(out), "          arch: ") {
+		t.Errorf("rendered workflow still carries a per-arch tag suffix:\n%s", out)
 	}
 }
 
-// TestOciManifestWithoutArchDeclarationRendersNoArches pins the fleet default: on a
-// project declaring no architecture there are no per-arch tags, so the input is absent
-// and the action no-ops rather than wrapping one image in a pointless index.
-func TestOciManifestWithoutArchDeclarationRendersNoArches(t *testing.T) {
-	st, err := ci.Parse([]byte(strings.Replace(manifestSubtree,
+// TestPublishWithoutArchDeclarationIsUnchanged pins the fleet default. ~110 projects
+// declare no architecture, and for them the drop is a no-op: one artifact, the single
+// -image path, and not one byte of multi-arch machinery in the rendered workflow.
+func TestPublishWithoutArchDeclarationIsUnchanged(t *testing.T) {
+	st, err := ci.Parse([]byte(strings.Replace(archSubtree,
 		`"matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},`, "", 1)))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4283,15 +4268,18 @@ func TestOciManifestWithoutArchDeclarationRendersNoArches(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	m := Build(rm, st, nil)
-	if got := steps(m)[testOCIManifest].Arches; len(got) != 0 {
-		t.Errorf("%s Arches: want none without a declaration, got %v", testOCIManifest, got)
+	if got := steps(m)[testOCIPush].Archives; len(got) != 0 {
+		t.Errorf("%s Archives: want none without a declaration, got %v", testOCIPush, got)
 	}
 	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(out), "          arches: ") {
-		t.Errorf("rendered workflow must not carry an arches input without a declaration:\n%s", out)
+	if strings.Contains(string(out), "archives:") {
+		t.Errorf("rendered workflow must not carry archives without a declaration:\n%s", out)
+	}
+	if !strings.Contains(string(out), "          artifact-name: ") {
+		t.Errorf("rendered workflow lost the single-image artifact-name:\n%s", out)
 	}
 }
 
@@ -4446,7 +4434,7 @@ var archRunnerPlatform = ci.Platform{RunsOnByArch: map[string]string{
 // (an unmapped one carrying the default, since an empty M6E_RUNNER would render an
 // invalid runs-on), and a job that dropped the axis keeps the workflow default.
 func TestArchRunnersRouteEachCell(t *testing.T) {
-	st, err := ci.Parse([]byte(manifestSubtree))
+	st, err := ci.Parse([]byte(archSubtree))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -4472,7 +4460,7 @@ func TestArchRunnersRouteEachCell(t *testing.T) {
 	}
 	// The assembly job dropped the axis, so it has no cell to route: it must keep the
 	// plain runner rather than reading a variable no include row of its own defines.
-	if !strings.Contains(s, "publish-manifest:\n    runs-on: ubuntu-latest") {
+	if !strings.Contains(s, "published:\n    runs-on: ubuntu-latest") {
 		t.Errorf("axis-dropping job must keep the workflow default runner:\n%s", s)
 	}
 }
@@ -4481,7 +4469,7 @@ func TestArchRunnersRouteEachCell(t *testing.T) {
 // no map must render the SAME bytes as before the routing existed, on a project that
 // fans over arch — otherwise the whole fleet's forgejo lowering churns.
 func TestArchRunnersAbsentMapChangesNothing(t *testing.T) {
-	st, err := ci.Parse([]byte(manifestSubtree))
+	st, err := ci.Parse([]byte(archSubtree))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

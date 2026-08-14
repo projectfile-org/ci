@@ -171,17 +171,6 @@ const ActionContainerBuild = ci.ActionContainerBuild
 // credentials map binds those NAMES to secret refs (Task-1 surface, no new design).
 const ActionOciPush = ci.ActionOciPush
 
-// ActionOciManifest is the action path that indexes the per-arch pushes of ONE build
-// into a manifest list at the unsuffixed ref. It is the only image-plane action that
-// consumes no artifact at all: the per-arch images are already at the registry, so the
-// index is assembled from remote references. Its leaf runs on a node that DROPS the
-// arch axis (matrix.without), which is why it takes the whole declared set as `arches:`
-// rather than one cell's ${{ matrix.M6E_ARCH }} — an index over a single cell would be
-// an index over nothing. It shares oci-push's destination inputs (image/version/
-// registry/refs/sink) because the list MUST land in the repository the per-arch tags
-// went to, and the credentials overlay binds the same REGISTRY_* names.
-const ActionOciManifest = ci.ActionOciManifest
-
 // ActionContainerExec is the action path that execs a tool's `run` command INSIDE
 // an already-running compose container — the fused live job's test step. It does
 // NOT start a container (run-tool's `docker run`) nor consume a tar: it `docker
@@ -1436,13 +1425,13 @@ type StepView struct {
 	// no route still fans over arch, and would otherwise publish every cell to one ref.
 	// Empty when nothing minted the axis, which renders today's workflow unchanged.
 	Arch string `json:"arch,omitempty"`
-	// Arches is the whole DECLARED architecture set — oci-manifest's `arches:` input, and
-	// the exact complement of Arch: the assembly node dropped the arch axis, so it has no
-	// cell value to bind and needs the set the per-arch cells fanned over in order to
-	// index them. Read off the SUBTREE's axes rather than the job's, which is what makes
-	// it survive the drop. Empty on a project that declares no architecture, where there
-	// are no per-arch tags and the action no-ops.
-	Arches []string `json:"arches,omitempty"`
+	// Archives pairs each declared architecture with the artifact its build cell uploaded
+	// — oci-push's `archives:` input, and the exact complement of Arch: the publish node
+	// dropped the arch axis, so it has no cell value to bind and instead publishes every
+	// cell's tar at once, as one manifest list per cascade tag. Derived from the PRODUCER's
+	// axes when this node consumes an axis it does not fan over. Empty on a project that
+	// declares no architecture, where oci-push takes its single-image path unchanged.
+	Archives []ArchiveView `json:"archives,omitempty"`
 	// ReleaseAssetPath is the forgejo-release `release-asset-path:` input — the
 	// UNSUFFIXED binary path resolved from org.projectfile.artifacts (the single
 	// kind=binary entry's .path, e.g. dist/pf-cli). The action suffixes it with
@@ -1516,6 +1505,15 @@ type Cache struct {
 type DownloadView struct {
 	Name string
 	Path string
+}
+
+// ArchiveView is one architecture's build output: the arch as the projectfile declared
+// it, and the artifact its build cell uploaded. One line of oci-push's `archives:` input,
+// which is what lets a single publish cell index every architecture into one manifest
+// list instead of publishing each under a tag of its own.
+type ArchiveView struct {
+	Arch string
+	Name string
 }
 
 // FileRead is one per-cell `file:` build-arg: the build-arg NAME and the repo Path
@@ -1942,6 +1940,33 @@ func declaredArches(st *ci.Subtree) []string {
 	return nil
 }
 
+// archAxis reports whether these axes fan over architecture.
+func archAxis(axes []ci.Axis) bool {
+	for _, a := range axes {
+		if a.Key == ci.ArchAxis {
+			return true
+		}
+	}
+	return false
+}
+
+// archArtifactStem is artifactStem with the arch axis bound to a LITERAL value rather
+// than a matrix expression. A node that dropped the axis still has to name the artifact
+// each producer cell uploaded, and the producer named it by fanning over the axis this
+// node no longer has — so the name is built from the PRODUCER's axes, in the producer's
+// own (key-sorted) order, which is what keeps the two ends from drifting.
+func archArtifactStem(base string, producer []ci.Axis, arch string) string {
+	s := base
+	for _, a := range producer {
+		if a.Key == ci.ArchAxis {
+			s += "-" + arch
+			continue
+		}
+		s += "-${{ matrix." + a.Key + " }}"
+	}
+	return s + artifactScopeSuffix
+}
+
 // stepCtx is the data a JOB partial (steps/node or steps/gate) renders against: the
 // per-vendor adapter tokens plus the one node-job being lowered.
 type stepCtx struct {
@@ -2334,10 +2359,9 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 			}
 		}
 	}
-	// The publish plane: the two actions that put THIS build on a registry. They take the
-	// same destination inputs because the index oci-manifest assembles must land in the
-	// repository oci-push's per-arch tags went to — one route, read once.
-	publishes := man.Action == ActionOciPush || man.Action == ActionOciManifest
+	// The publish plane: the action that puts THIS build on a registry, whether that is
+	// one image or a manifest list over every declared architecture.
+	publishes := man.Action == ActionOciPush
 	// Both ends of the image lifecycle need the project basename (per-cell ref): the
 	// build PRODUCER stamps it into the OCI archive, the publish CONSUMER re-tags to it.
 	if man.Action == ActionContainerBuild || publishes {
@@ -2371,12 +2395,6 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 				}
 			}
 		}
-	}
-	// The assembly action indexes the per-arch tags, so it needs the SET those cells
-	// fanned over. Read off the subtree, not the job: this node dropped the arch axis
-	// (that is what makes it run once), so its own axes no longer carry it.
-	if man.Action == ActionOciManifest {
-		step.Arches = declaredArches(st)
 	}
 	// The tool-level fact emission, opted into TWICE: the tool names the event, and the
 	// project declares org.projectfile.events (the block holding the webhook var). Either
@@ -2799,13 +2817,33 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			// its own step. A generic build-artifact consumer pulls the producer's upload.
 			for _, need := range j.Needs {
 				if builds[need] {
-					if !dlSeen[step.Stem] {
-						dlSeen[step.Stem] = true
-						job.Downloads = append(job.Downloads, DownloadView{Name: step.Stem})
+					// The producer may fan over an axis this node DROPPED, in which case one
+					// cell-keyed stem cannot name what it has to consume: the arch cells each
+					// uploaded their own tar and this job must take all of them. Bind the
+					// axis to each declared value instead of to a matrix expression, off the
+					// PRODUCER's axes so the two ends cannot drift.
+					stems := []string{step.Stem}
+					if archAxis(byName[need].Axes) && !archAxis(j.Axes) {
+						stems = nil
+						for _, arch := range declaredArches(st) {
+							name := archArtifactStem("image", byName[need].Axes, arch)
+							stems = append(stems, name)
+							step.Archives = append(step.Archives, ArchiveView{Arch: arch, Name: name})
+						}
+					}
+					for _, stem := range stems {
+						if !dlSeen[stem] {
+							dlSeen[stem] = true
+							job.Downloads = append(job.Downloads, DownloadView{Name: stem})
+						}
 					}
 					if man.Fuse != "" {
 						job.Load = true
-						job.Stem = step.Stem
+						// The FIRST declared architecture stands in when the node consumes
+						// several: a daemon ref names one image, and the arch set is written
+						// host-arch-first (amd64 everywhere in this fleet), which is the only
+						// member a runner can actually run without emulation.
+						job.Stem = stems[0]
 						// build→live contract, all DERIVED from the per-cell basename so the
 						// loaded image, the compose `name:`, and a local `make` agree with no
 						// per-include hardcode: M6E_IMAGE_FULLNAME = the ref container-build
@@ -3499,10 +3537,6 @@ var funcs = template.FuncMap{
 		pad := strings.Repeat(" ", n)
 		return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
 	},
-	// spaceList renders a string slice as ONE whitespace-separated scalar — the shape a
-	// shell action reads back with `read -ra`. Used for oci-manifest's `arches:`, whose
-	// items are bare arch tokens (no spaces, no quoting to get wrong).
-	"spaceList": func(items []string) string { return strings.Join(items, " ") },
 	// yamlList renders a string slice as a YAML flow sequence with each item
 	// double-quoted: ["a", "b"]. Quoting keeps version-like values ("8.5") and
 	// label strings unambiguous.
