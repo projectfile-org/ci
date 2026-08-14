@@ -13,6 +13,14 @@ import (
 	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 )
 
+// archNamespace / archKey address the declared CPU architecture set. The field is
+// a plain list one level inside the shared org.projectfile namespace, so it is
+// addressed as namespace + key rather than as a subtree of its own.
+const (
+	archNamespace = "org.projectfile"
+	archKey       = "architecture"
+)
+
 // Reader is the library seam onto core. It holds ONE includes-merged projectfile
 // document and serves the extension subtrees the resolver needs — replacing the
 // former `pf-cli get … --format json` subprocess dance (six execs per run). Read
@@ -66,6 +74,44 @@ func (r *Reader) subtree(path string) ([]byte, error) {
 		return nil, fmt.Errorf("marshal %s: %w", path, err)
 	}
 	return raw, nil
+}
+
+// architectures returns the CPU architectures the project DECLARES
+// (org.projectfile.architecture). Absent or empty yields nil, which is the whole
+// opt-in: spec §4.8a reads an absent set as unconstrained (a consumer assumes the
+// build host), so a project that names none mints no arch axis and renders the
+// workflow it rendered before the field existed.
+//
+// The values are read VERBATIM — bare arch names (`amd64`), never platform refs
+// (`linux/amd64`). The same token is a matrix value, an image-tag segment and a
+// deps-file stem, so composing `linux/` is the caller's job at the one place a
+// platform ref is actually needed.
+// It cannot go through subtree: that helper ends at core's Extension, which only
+// yields MAP-valued subtrees (org.projectfile.ci, …build). `architecture` is a
+// LIST, so the same call would fail its type assertion and report the field as
+// absent — a silent miss, not an error. Read the enclosing namespace and index it.
+func (r *Reader) architectures() ([]string, error) {
+	m, ok := projectfile.Extension(r.doc, archNamespace)
+	if !ok {
+		return nil, nil
+	}
+	raw, ok := m[archKey]
+	if !ok {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s.%s: expected a list of architectures, got %T", archNamespace, archKey, raw)
+	}
+	arches := make([]string, 0, len(list))
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s.%s: expected string entries, got %T", archNamespace, archKey, v)
+		}
+		arches = append(arches, s)
+	}
+	return arches, nil
 }
 
 // imageBasename returns the container-image basename the project DECLARES, as

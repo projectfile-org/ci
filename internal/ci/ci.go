@@ -132,6 +132,49 @@ type Axis struct {
 	Values []string
 }
 
+// ArchAxis is the matrix variable carrying the target CPU architecture. It is the
+// one axis the resolver MINTS rather than reads from matrix.axes: the source of
+// truth is org.projectfile.architecture, so nobody authors an arch axis by hand
+// and no project can declare an arch set its matrix then contradicts.
+//
+// Values are BARE arch names (`amd64`, never `linux/amd64`) — see
+// Reader.architectures for why the platform prefix is composed at use, not stored.
+const ArchAxis = "M6E_ARCH"
+
+// buildsContainer reports whether any tool is a container-build action — the
+// producer of the per-cell OCI tar the arch axis exists to fan.
+//
+// It gates the minting so the DECLARATION alone is not enough: a project that
+// declares architectures but builds no container (a Go CLI already fanning its
+// own {GOOS,GOARCH} for binaries) keeps its pipeline unfanned, instead of
+// doubling every job over a dimension none of its steps read.
+func (st *Subtree) buildsContainer() bool {
+	for _, man := range st.Tools {
+		if man.Action == ActionContainerBuild {
+			return true
+		}
+	}
+	return false
+}
+
+// addAxis inserts a DERIVED axis, keeping Axes key-sorted — the order both the
+// matrix lowering and artifactStem depend on for byte-stable output.
+//
+// An axis the author already declared under the same key WINS and the derived one
+// is dropped: an explicit declaration is never silently overridden, and the axis
+// cannot be minted twice into one matrix.
+func (st *Subtree) addAxis(a Axis) {
+	for _, ex := range st.Axes {
+		if ex.Key == a.Key {
+			genlog.Info("arch axis: axis already declared, keeping the authored one",
+				"key", a.Key, "values", ex.Values)
+			return
+		}
+	}
+	st.Axes = append(st.Axes, a)
+	sort.Slice(st.Axes, func(i, j int) bool { return st.Axes[i].Key < st.Axes[j].Key })
+}
+
 // KV is one key→value pair of a matrix.overrides row — used in both the MATCH
 // (axis KEY → value) and the VARS (extra-var NAME → value) halves, key-sorted
 // for byte-stable output.
@@ -1234,6 +1277,19 @@ func Load(pfPath string) (*Subtree, error) {
 	// >1 kind=binary artifact is an ambiguous attach target, not a silent miss.
 	if err := r.resolveReleaseAssetPaths(st); err != nil {
 		return nil, fmt.Errorf("org.projectfile.ci: %w", err)
+	}
+	// Mint the arch axis from org.projectfile.architecture. It is DERIVED, never
+	// authored, so the declared arch set and what CI actually builds cannot drift
+	// apart. Done before ValidateImage so the minted key counts as a declared axis
+	// for the image ref's {placeholder} check.
+	arches, err := r.architectures()
+	if err != nil {
+		return nil, err
+	}
+	if len(arches) > 0 && st.buildsContainer() {
+		genlog.Info("arch axis: minting from the declared architecture set",
+			"axis", ArchAxis, "arches", arches, "image", st.Image)
+		st.addAxis(Axis{Key: ArchAxis, Values: arches})
 	}
 	// Fail fast on an image ref a matrix could not satisfy (unknown axis / push
 	// collision) — once the basename is finalized (explicit OR identity-derived),
