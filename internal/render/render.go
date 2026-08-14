@@ -457,6 +457,19 @@ func jobIf(events []string) string {
 	return strings.Join(parts, " || ")
 }
 
+// andIf conjoins two job `if:` conditions, either of which may be empty. Each side is
+// parenthesised because jobIf OR-es a multi-event set, and an un-parenthesised `||`
+// would swallow whatever gate is appended after it.
+func andIf(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return "(" + a + ") && (" + b + ")"
+}
+
 // OnView is the resolved workflow `on:` trigger block — the union of every job's
 // trigger surface, narrowed to exactly what the reachable jobs need. The default
 // (any un-gated job present) is the broad `push:{} / pull_request:{}` the workflow
@@ -3268,6 +3281,26 @@ func bindEnv(j JobView, creds map[string]string) []EnvVar {
 // a project's own axis.
 const PublishSinkAxis = "M6E_PUBLISH_SINK"
 
+// PublishSinksVar is the forge-level variable that narrows the sink axis at RUN time: a
+// comma list of the sink names this forge may publish to. UNSET publishes to every
+// declared sink, so a project that sets nothing keeps the behaviour it has today — the
+// only default a fleet-wide regeneration can safely carry.
+//
+// The gate is at JOB level, so a withheld destination is skipped before checkout and
+// costs a scheduling slot rather than an artifact download. Deriving the matrix itself
+// from the variable would be cheaper still and is deliberately not done: a misspelt or
+// unset value would yield an EMPTY matrix, and a publish job with zero cells passes
+// green having published nothing.
+const PublishSinksVar = "CI_PUBLISH_SINKS"
+
+// sinkGate is the run-time narrowing expression for one publish cell. Both operands are
+// comma-wrapped so the match is on a WHOLE name: a bare `contains` would let a sink
+// named `ghcr` ride a list that names only `ghcr-mirror`.
+func sinkGate() string {
+	list := "vars." + PublishSinksVar
+	return list + " == '' || contains(format(',{0},', " + list + "), format(',{0},', matrix." + PublishSinkAxis + "))"
+}
+
 // publishCells makes the destination an AXIS of a publish job, so the fan-out over
 // registries happens in the MATRIX rather than inside one action's loop. Three things
 // follow, and none of them is coded for: a destination that fails fails ITS cell
@@ -3321,9 +3354,10 @@ func publishCells(j JobView, targetKey string) JobView {
 		return j
 	}
 	genlog.Decision("publish_cells", j.Name+" -> "+strings.Join(sinks, ","),
-		"org.projectfile.publish (lowering "+targetKey+")", "org.projectfile.sinks")
+		"org.projectfile.publish (lowering "+targetKey+")", "org.projectfile.sinks · vars."+PublishSinksVar)
 	j.Matrix = append(append(AxisMap{}, j.Matrix...), ci.Axis{Key: PublishSinkAxis, Values: sinks})
 	j.Include = append(append([]MatrixRowView{}, j.Include...), rows...)
+	j.If = andIf(j.If, sinkGate())
 	j.Class = string(resolve.ClassCell)
 	return j
 }

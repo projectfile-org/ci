@@ -4084,6 +4084,62 @@ func TestPublishCellsAreScopedToTheirLowering(t *testing.T) {
 	}
 }
 
+// TestAndIfParenthesisesBothSides pins the composition the sink gate rides on. An
+// OR-ed event set is the case that matters: `a || b && gate` binds && tighter than ||,
+// so an un-parenthesised conjunction would let the job run on event `a` with no gate
+// at all — a withheld destination publishing anyway.
+func TestAndIfParenthesisesBothSides(t *testing.T) {
+	const g = "sink-gate"
+	for _, c := range []struct{ a, b, want string }{
+		{"", g, g},
+		{"evt", "", "evt"},
+		{"a || b", g, "(a || b) && (" + g + ")"},
+	} {
+		if got := andIf(c.a, c.b); got != c.want {
+			t.Errorf("andIf(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestPublishCellsCarryTheRunTimeSinkGate pins the forge-side switch: a publish cell
+// gates on CI_PUBLISH_SINKS, conjoined with — never replacing — the event condition, so
+// withholding a destination stays a per-cell skip and cannot widen when the job runs. A
+// lowering that declares no route gains no gate, because it has no cell to withhold.
+func TestPublishCellsCarryTheRunTimeSinkGate(t *testing.T) {
+	st, err := ci.Parse([]byte(publishSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	const sink = "ghcr"
+	m := Build(rm, st, &ci.Build{PublishRefs: map[string][]ci.SinkRef{
+		ci.LoweringGHA: {{Sink: sink, Ref: "ghcr.io/damian-buho/p:latest"}},
+	}})
+	gha, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatalf("gha: %v", err)
+	}
+	// Comma-wrapped on both sides: the whole-name match is the point of the gate, so a
+	// bare contains() regressing here must fail the test rather than the fleet.
+	want := "contains(format(',{0},', vars.CI_PUBLISH_SINKS), format(',{0},', matrix.M6E_PUBLISH_SINK))"
+	if !strings.Contains(string(gha), want) {
+		t.Errorf("publish cell missing the run-time sink gate\n---\n%s", gha)
+	}
+	if !strings.Contains(string(gha), "vars.CI_PUBLISH_SINKS == ''") {
+		t.Errorf("unset CI_PUBLISH_SINKS must publish everywhere\n---\n%s", gha)
+	}
+	forgejo, err := Workflow(m, Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatalf("forgejo: %v", err)
+	}
+	if strings.Contains(string(forgejo), PublishSinksVar) {
+		t.Errorf("forgejo declares no route but carries the sink gate\n---\n%s", forgejo)
+	}
+}
+
 // TestReleaseFansOutOverForges pins the binaries half of the destination axis: a
 // route naming two forges renders one release CELL per forge, each carrying that
 // forge's own URL and its own repository path — the two differ per forge, which is
