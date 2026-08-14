@@ -171,6 +171,17 @@ const ActionContainerBuild = ci.ActionContainerBuild
 // credentials map binds those NAMES to secret refs (Task-1 surface, no new design).
 const ActionOciPush = ci.ActionOciPush
 
+// ActionOciManifest is the action path that indexes the per-arch pushes of ONE build
+// into a manifest list at the unsuffixed ref. It is the only image-plane action that
+// consumes no artifact at all: the per-arch images are already at the registry, so the
+// index is assembled from remote references. Its leaf runs on a node that DROPS the
+// arch axis (matrix.without), which is why it takes the whole declared set as `arches:`
+// rather than one cell's ${{ matrix.M6E_ARCH }} — an index over a single cell would be
+// an index over nothing. It shares oci-push's destination inputs (image/version/
+// registry/refs/sink) because the list MUST land in the repository the per-arch tags
+// went to, and the credentials overlay binds the same REGISTRY_* names.
+const ActionOciManifest = ci.ActionOciManifest
+
 // ActionContainerExec is the action path that execs a tool's `run` command INSIDE
 // an already-running compose container — the fused live job's test step. It does
 // NOT start a container (run-tool's `docker run`) nor consume a tar: it `docker
@@ -1408,6 +1419,13 @@ type StepView struct {
 	// no route still fans over arch, and would otherwise publish every cell to one ref.
 	// Empty when nothing minted the axis, which renders today's workflow unchanged.
 	Arch string `json:"arch,omitempty"`
+	// Arches is the whole DECLARED architecture set — oci-manifest's `arches:` input, and
+	// the exact complement of Arch: the assembly node dropped the arch axis, so it has no
+	// cell value to bind and needs the set the per-arch cells fanned over in order to
+	// index them. Read off the SUBTREE's axes rather than the job's, which is what makes
+	// it survive the drop. Empty on a project that declares no architecture, where there
+	// are no per-arch tags and the action no-ops.
+	Arches []string `json:"arches,omitempty"`
 	// ReleaseAssetPath is the forgejo-release `release-asset-path:` input — the
 	// UNSUFFIXED binary path resolved from org.projectfile.artifacts (the single
 	// kind=binary entry's .path, e.g. dist/pf-cli). The action suffixes it with
@@ -1889,6 +1907,19 @@ func archVarExpr(axes []ci.Axis) string {
 	return ""
 }
 
+// declaredArches returns the architecture set ci.Load minted the arch axis from, or nil
+// when the project declared none. It reads the SUBTREE's axes, which is the complement
+// of archVarExpr above: a node that drops the axis to run once still has to name every
+// arch it is indexing, and its own axes no longer carry them.
+func declaredArches(st *ci.Subtree) []string {
+	for _, a := range st.Axes {
+		if a.Key == ci.ArchAxis {
+			return a.Values
+		}
+	}
+	return nil
+}
+
 // stepCtx is the data a JOB partial (steps/node or steps/gate) renders against: the
 // per-vendor adapter tokens plus the one node-job being lowered.
 type stepCtx struct {
@@ -2272,9 +2303,13 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 			}
 		}
 	}
+	// The publish plane: the two actions that put THIS build on a registry. They take the
+	// same destination inputs because the index oci-manifest assembles must land in the
+	// repository oci-push's per-arch tags went to — one route, read once.
+	publishes := man.Action == ActionOciPush || man.Action == ActionOciManifest
 	// Both ends of the image lifecycle need the project basename (per-cell ref): the
-	// build PRODUCER stamps it into the OCI archive, the oci-push CONSUMER re-tags to it.
-	if man.Action == ActionContainerBuild || man.Action == ActionOciPush {
+	// build PRODUCER stamps it into the OCI archive, the publish CONSUMER re-tags to it.
+	if man.Action == ActionContainerBuild || publishes {
 		step.ImageBasename = substAxes(st.Image, subst)
 	}
 	// container-build reads the projectfile for its labels via pf-cli; a hostexecutor
@@ -2287,10 +2322,11 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 			step.BuildTarget = b.BuildTarget
 		}
 	}
-	// oci-push also gets the git tag (ci:version) so the action can lower it into the
-	// semver tag cascade (latest / major / minor / patch). Same expr as the M6E_VERSION
-	// build-arg — the version lives in ONE place (ciContextExpr).
-	if man.Action == ActionOciPush {
+	// Both publish actions get the git tag (ci:version) so each can lower it into the
+	// SAME semver tag cascade (latest / major / minor / patch) — the index has to reach
+	// every tag the per-arch images took, or `latest` stays a single-arch image. Same
+	// expr as the M6E_VERSION build-arg — the version lives in ONE place (ciContextExpr).
+	if publishes {
 		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
 		// Per-cell: a composed ref carries `{AXIS}` verbatim, because composition
 		// never touches a token with no `$`. The same substitution the basename
@@ -2304,6 +2340,12 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 				}
 			}
 		}
+	}
+	// The assembly action indexes the per-arch tags, so it needs the SET those cells
+	// fanned over. Read off the subtree, not the job: this node dropped the arch axis
+	// (that is what makes it run once), so its own axes no longer carry it.
+	if man.Action == ActionOciManifest {
+		step.Arches = declaredArches(st)
 	}
 	// The tool-level fact emission, opted into TWICE: the tool names the event, and the
 	// project declares org.projectfile.events (the block holding the webhook var). Either
@@ -3370,6 +3412,10 @@ var funcs = template.FuncMap{
 		pad := strings.Repeat(" ", n)
 		return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
 	},
+	// spaceList renders a string slice as ONE whitespace-separated scalar — the shape a
+	// shell action reads back with `read -ra`. Used for oci-manifest's `arches:`, whose
+	// items are bare arch tokens (no spaces, no quoting to get wrong).
+	"spaceList": func(items []string) string { return strings.Join(items, " ") },
 	// yamlList renders a string slice as a YAML flow sequence with each item
 	// double-quoted: ["a", "b"]. Quoting keeps version-like values ("8.5") and
 	// label strings unambiguous.

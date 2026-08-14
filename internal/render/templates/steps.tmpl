@@ -253,6 +253,41 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- end }}
 {{- end }}
 
+{{- /*
+providers/oci-manifest — the ASSEMBLY step: it indexes the per-arch tags oci-push
+published into a manifest list at the unsuffixed ref, for every tag of the same semver
+cascade. It takes the identical destination inputs as oci-push (the list must land where
+the per-arch tags went) and NO artifact: the images are already at the registry, so the
+node carries no download and no `docker load`. `arches` is the whole declared set rather
+than a cell value — this node dropped the arch axis so it runs once, which is the only
+shape that can index the cells.
+*/ -}}
+{{- define "providers/oci-manifest" }}
+      - name: {{ .Step.Name }}
+        uses: {{ actionRef .Target .Step.Action }}
+        with:
+          image: {{ composeImage "" .Step.ImageBasename }}
+{{- if .Step.PublishVersion }}
+          version: {{ .Step.PublishVersion }}
+{{- end }}
+          registry: {{ outputRegistryExpr }}
+{{- with publishRefsFor .Target .Step.PublishRefs }}
+          refs: |
+{{- range . }}
+            {{ .Sink }} {{ .Ref }}
+{{- end }}
+{{- end }}
+{{- with .Step.PublishSink }}
+          sink: {{ . }}
+{{- end }}
+{{- with .Step.Arches }}
+          # Every architecture the build cells fanned over, so the index names them all.
+          # Absent on a project declaring none: no per-arch tags exist and the action
+          # no-ops rather than wrapping one image in a pointless index.
+          arches: {{ spaceList . }}
+{{- end }}
+{{- end }}
+
 {{- define "providers/forgejo-release" }}
       - name: {{ .Step.Name }}
         uses: {{ actionRef .Target .Step.Action }}

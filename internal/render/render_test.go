@@ -21,6 +21,7 @@ const (
 	testCell            = "cell"
 	testContainerBuild  = "container-build"
 	testOCIPush         = "oci-push"
+	testOCIManifest     = "oci-manifest"
 	testImageBuilt      = "image-built"
 	testImageMatrixStem = "image-${{ matrix.B19_UBUNTU_SERIES }}" + artifactScopeSuffix
 	testUploadArtifact  = "upload-artifact"
@@ -4196,6 +4197,101 @@ func TestArchAxisBindsBuildAndPush(t *testing.T) {
 		if !strings.Contains(string(out), line) {
 			t.Errorf("rendered workflow missing %q:\n%s", line, out)
 		}
+	}
+}
+
+// manifestSubtree adds the ASSEMBLY node to the arch fixture: a node that drops the arch
+// axis so it runs once, carrying the tool that indexes what the arch cells published.
+const manifestSubtree = `{
+  "image": "b19/ubuntu",
+  "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "oci-push": {"action": "oci-push"},
+    "oci-manifest": {"action": "oci-manifest"}
+  },
+  "nodes": {
+    "image-built": {"matrix": true, "needs": {"container-build": true}},
+    "publish-image": {"matrix": true, "needs": {"image-built": true, "oci-push": true}},
+    "publish-manifest": {"matrix": {"without": ["M6E_ARCH"]}, "needs": {"publish-image": true, "oci-manifest": true}},
+    "published": {"goal": true, "needs": {"publish-image": true, "publish-manifest": true}}
+  }
+}`
+
+// TestOciManifestTakesTheDeclaredArchSet pins the complement of the per-cell binding: the
+// assembly node dropped the arch axis to run ONCE, so it has no cell value to read and
+// must instead name every arch it is indexing. Reading the set off the job's own axes
+// would yield nothing — the drop is exactly what removed them.
+func TestOciManifestTakesTheDeclaredArchSet(t *testing.T) {
+	st, err := ci.Parse([]byte(manifestSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	step := steps(m)
+	if got := strings.Join(step[testOCIManifest].Arches, " "); got != "amd64 arm64 riscv64" {
+		t.Errorf("%s Arches: want the declared set, got %q", testOCIManifest, got)
+	}
+	// The per-cell binding must stay OFF here: an index over one cell indexes nothing.
+	if got := step[testOCIManifest].Arch; got != "" {
+		t.Errorf("%s Arch: the assembly node dropped the axis, got %q", testOCIManifest, got)
+	}
+	// It publishes to the same route as the push, or the index lands somewhere else.
+	if got := step[testOCIManifest].ImageBasename; got != step[testOCIPush].ImageBasename {
+		t.Errorf("%s ImageBasename %q must match the push's %q", testOCIManifest, got, step[testOCIPush].ImageBasename)
+	}
+	if step[testOCIManifest].PublishVersion == "" {
+		t.Errorf("%s must carry the git tag: the index has to reach every cascade tag", testOCIManifest)
+	}
+	// The assembly job fans over everything EXCEPT arch, and pulls no artifact: the
+	// per-arch images are at the registry already.
+	for _, j := range m.Jobs {
+		if j.Name != "publish-manifest" {
+			continue
+		}
+		if len(j.Matrix) != 0 {
+			t.Errorf("publish-manifest matrix: want none left after the drop, got %v", j.Matrix)
+		}
+		if len(j.Downloads) != 0 {
+			t.Errorf("publish-manifest downloads %v — the assembly node handles no tar", j.Downloads)
+		}
+	}
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "          arches: amd64 arm64 riscv64") {
+		t.Errorf("rendered workflow missing the declared arch set:\n%s", out)
+	}
+}
+
+// TestOciManifestWithoutArchDeclarationRendersNoArches pins the fleet default: on a
+// project declaring no architecture there are no per-arch tags, so the input is absent
+// and the action no-ops rather than wrapping one image in a pointless index.
+func TestOciManifestWithoutArchDeclarationRendersNoArches(t *testing.T) {
+	st, err := ci.Parse([]byte(strings.Replace(manifestSubtree,
+		`"matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},`, "", 1)))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	if got := steps(m)[testOCIManifest].Arches; len(got) != 0 {
+		t.Errorf("%s Arches: want none without a declaration, got %v", testOCIManifest, got)
+	}
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "          arches: ") {
+		t.Errorf("rendered workflow must not carry an arches input without a declaration:\n%s", out)
 	}
 }
 
