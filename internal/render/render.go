@@ -2524,7 +2524,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 //     a non-empty image with no `self` decl (it is only REQUIRED when one exists), so this
 //     is always emitted when the project has a built image — matching m6e, which always
 //     exports M6E_IMAGE_FULLNAME.
-func secretsStep(b *ci.Build, st *ci.Subtree, axes []ci.Axis) StepView {
+func secretsStep(b *ci.Build, st *ci.Subtree, axes []ci.Axis, arch string) StepView {
 	s := StepView{
 		Name:                ActionSecretsProvision,
 		Action:              ActionSecretsProvision,
@@ -2532,7 +2532,7 @@ func secretsStep(b *ci.Build, st *ci.Subtree, axes []ci.Axis) StepView {
 		SecretsDefaultImage: miscToolsImageRef(b),
 	}
 	if st.Image != "" {
-		s.SecretsImage = composeImage("", substAxes(st.Image, substKeys(axes, st)), archVarExpr(axes))
+		s.SecretsImage = composeImage("", substAxes(st.Image, substKeys(axes, st)), arch)
 	}
 	return s
 }
@@ -2786,6 +2786,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		envSeen := map[string]bool{}
 		credSeen := map[string]bool{}
 		dlSeen := map[string]bool{}
+		// The daemon-side arch this job's loaded image is named under, resolved where the
+		// build hand-off is (empty until then, and on a job that consumes no build).
+		jobLoadArch := ""
 		hasReports := false
 		var axes []ci.Axis
 		var excludes []ci.Exclusion
@@ -2823,12 +2826,21 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					// axis to each declared value instead of to a matrix expression, off the
 					// PRODUCER's axes so the two ends cannot drift.
 					stems := []string{step.Stem}
+					// loadArch is the value the DAEMON-side names bind to. It follows the
+					// cell while the job fans over arch, and pins to one declared value when
+					// the job stopped fanning but its producer did not — the build stamped
+					// its tar with an arch-suffixed ref, so a ref composed without one names
+					// an image the load never created (nothing to run, nothing to reap).
+					loadArch := archVarExpr(j.Axes)
 					if archAxis(byName[need].Axes) && !archAxis(j.Axes) {
 						stems = nil
 						for _, arch := range declaredArches(st) {
 							name := archArtifactStem("image", byName[need].Axes, arch)
 							stems = append(stems, name)
 							step.Archives = append(step.Archives, ArchiveView{Arch: arch, Name: name})
+						}
+						if arches := declaredArches(st); len(arches) > 0 {
+							loadArch = arches[0]
 						}
 					}
 					for _, stem := range stems {
@@ -2842,7 +2854,8 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						// The FIRST declared architecture stands in when the node consumes
 						// several: a daemon ref names one image, and the arch set is written
 						// host-arch-first (amd64 everywhere in this fleet), which is the only
-						// member a runner can actually run without emulation.
+						// member a runner can actually run without emulation. Stem and
+						// loadArch move together — they name the same tar.
 						job.Stem = stems[0]
 						// build→live contract, all DERIVED from the per-cell basename so the
 						// loaded image, the compose `name:`, and a local `make` agree with no
@@ -2851,7 +2864,8 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						// M6E_COMPOSE_PROJECT_NAME / M6E_CONTAINER_INSTANCE = the `ci-<basename>`
 						// stem m6e's make plane uses (no `app` placeholder).
 						img := substAxes(st.Image, substKeys(j.Axes, st))
-						arch := archVarExpr(j.Axes)
+						arch := loadArch
+						jobLoadArch = loadArch
 						loadedRef := composeImage("", img, arch)
 						// run-scoped (not just cell-scoped) so two runs of the same
 						// pipeline never name one stack; image ref stays unscoped.
@@ -2910,7 +2924,11 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		if b != nil && len(b.Secrets) > 0 {
 			for _, t := range memberTools {
 				if st.Tools[t].Fuse != "" {
-					job.Steps = append([]StepView{secretsStep(b, st, axes)}, job.Steps...)
+					secretsArch := jobLoadArch
+					if secretsArch == "" {
+						secretsArch = archVarExpr(axes)
+					}
+					job.Steps = append([]StepView{secretsStep(b, st, axes, secretsArch)}, job.Steps...)
 					break
 				}
 			}
