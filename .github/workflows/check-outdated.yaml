@@ -34,7 +34,7 @@ jobs:
       - name: check-outdated-go
         uses: projectfile/ci-actions/run-tool@v1
         with:
-          image: ${{ vars.GO_TOOL_IMAGE }}
+          image: ${{ vars.B19_DOCKER_REGISTRY }}/b19/go
           version: ${{ env.M6E_TAG }}
           run: go list -u -m all
           env: |-
