@@ -885,13 +885,72 @@ type rawBuild struct {
 	Args json.RawMessage `json:"args"`
 }
 
-// LoadBuild reads the optional subtrees the resolver needs: the run-image map
-// (org.projectfile.ci.images) and the container-build args (org.projectfile.build
-// .args). If neither is present, returns (nil, nil) and the renderer falls back to
-// single-tier expressions with no auto-forwarding. Reads through the library seam
-// (core's includes-merged document), not a subprocess.
+// imagesNS is where a FOREIGN image — one this project pulls, to build FROM or to
+// run a tool inside — is declared as PARTS (org, name, path, tag, registry, ref)
+// rather than glued into one string, so a registry that refuses nested paths can
+// compose its own reference. m6e's 123-image-refs.mk reads the same subtree.
+const imagesNS = "org.projectfile.images"
+
+// declaredImages composes every entry of imagesNS into the flat
+// `<registry>/<path>:<tag>` ref the render plane already reads, so the parts form
+// reaches the forge as today's concatenation and no consumer of Build.Images changes.
+//
+// The address is the entry's OWN `ref` template and the scope is the entry's OWN
+// subtree — the pair m6e's image-refs-read.sh binds, and binding the scope per entry
+// is required rather than stylistic: one global scope composes every entry against
+// the first subject that answers, yielding a well-formed reference to the WRONG image.
+// Expansion goes through core's interp, the engine that already resolves a sink `ref`,
+// so one template cannot mean two things across the two planes.
+//
+// The sink route m6e takes when a `registry` var names a declared sink is deliberately
+// NOT taken here: on the forge the registry stays a `vars.<NAME>` the operator sets, so
+// the entry's own `ref` reproduces the reference this plane published before the parts
+// migration, byte for byte.
+func (r *Reader) declaredImages() (map[string]string, error) {
+	raw, err := r.subtree(imagesNS)
+	if err != nil || len(raw) == 0 {
+		return nil, err
+	}
+	var parts map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return nil, fmt.Errorf("%s: parse: %w", imagesNS, err)
+	}
+	images := make(map[string]string, len(parts))
+	for name := range parts {
+		scope := imagesNS + "." + name
+		ref, ok := interp.ExpandIn(r.doc, "${"+scope+".ref}", scope)
+		// A part the document cannot answer comes back as the VERBATIM template, so an
+		// unspent `$${` escape or a surviving lower-case `${…}` (every make variable in
+		// this fleet is upper case) marks a reference with a hole in it. Dropping is the
+		// honest answer — a half-composed ref pulls the wrong image, and the render's
+		// bare `${{ vars.<NAME> }}` fallback fails loudly instead.
+		if !ok || strings.Contains(ref, "$${") || lowerRefRe.MatchString(ref) {
+			genlog.Warn("declared image dropped — its ref names a part nothing declares",
+				"image", name, "ref", ref,
+				"remedy", "declare the missing part under "+scope)
+			continue
+		}
+		genlog.Decision("run_image", name+" -> "+ref, scope+".ref", "")
+		images[name] = ref
+	}
+	return images, nil
+}
+
+// lowerRefRe matches a `${lowercase…}` reference left unresolved in a composed image
+// ref — the naming convention that tells an undeclared PART from a make variable.
+var lowerRefRe = regexp.MustCompile(`\$\{[a-z]`)
+
+// LoadBuild reads the optional subtrees the resolver needs: the run-image maps
+// (org.projectfile.images, org.projectfile.ci.images) and the container-build args
+// (org.projectfile.build.args). If none is present, returns (nil, nil) and the
+// renderer falls back to single-tier expressions with no auto-forwarding. Reads
+// through the library seam (core's includes-merged document), not a subprocess.
 func LoadBuild(pfPath string) (*Build, error) {
 	r, err := newReader(pfPath)
+	if err != nil {
+		return nil, err
+	}
+	images, err := r.declaredImages()
 	if err != nil {
 		return nil, err
 	}
@@ -899,10 +958,19 @@ func LoadBuild(pfPath string) (*Build, error) {
 	if err != nil {
 		return nil, err
 	}
-	var images map[string]string
 	if len(imgRaw) > 0 {
-		if err := json.Unmarshal(imgRaw, &images); err != nil {
+		// ci.images is the CI-plane escape hatch for an image no parts describe (a
+		// self-pinned vendor ref), so it overlays the composed set.
+		var flat map[string]string
+		if err := json.Unmarshal(imgRaw, &flat); err != nil {
 			return nil, fmt.Errorf("org.projectfile.ci.images: parse: %w", err)
+		}
+		if images == nil {
+			images = make(map[string]string, len(flat))
+		}
+		for name, ref := range flat {
+			genlog.Decision("run_image", name+" -> "+ref, "org.projectfile.ci.images."+name, "")
+			images[name] = ref
 		}
 	}
 	// build-target: per-lowering Dockerfile stage selection (the forge keys feed the

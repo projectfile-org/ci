@@ -1131,6 +1131,92 @@ func TestReleaseTargetsAbsentWithoutRoute(t *testing.T) {
 	}
 }
 
+// declaredImagesDoc mirrors m6e's tools/images.yaml: two images declared as PARTS,
+// one of them reaching its registry through a `$${VAR}` escape (the parts form's
+// spelling for "defer this to the plane that reads the reference"), plus a third
+// entry whose `path` names a part nothing declares.
+func declaredImagesDoc(t *testing.T) *projectfile.Document {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: ubuntu
+org:
+  projectfile:
+    images:
+      D9T_JS_TOOLS_IMAGE:
+        org: d9t
+        name: js-tools
+        path: ${org}/${name}
+        tag: $${M6E_BASE_IMAGE_DEFAULT_VERSION}
+        registry: D9T_DOCKER_REGISTRY
+        ref: $${D9T_DOCKER_REGISTRY}/${path}:${tag}
+      B19_GO_IMAGE:
+        org: b19
+        name: go
+        path: ${org}/${name}
+        tag: dev
+        registry: B19_DOCKER_REGISTRY
+        ref: $${B19_DOCKER_REGISTRY}/${path}:${tag}
+      BROKEN_IMAGE:
+        org: d9t
+        path: ${org}/${undeclared}
+        tag: dev
+        registry: D9T_DOCKER_REGISTRY
+        ref: $${D9T_DOCKER_REGISTRY}/${path}:${tag}
+    ci:
+      images:
+        HADOLINT_IMAGE: hadolint/hadolint:v2.15.1
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestDeclaredImagesComposeFromParts pins the read that carries the parts migration
+// onto the forge plane:
+//   - an entry composes through its OWN `ref`, scoped to its OWN subtree, so `${path}`
+//     and `${tag}` resolve against that image and not against whichever entry answers
+//     first;
+//   - a `$${VAR}` escape survives as a single-`$` reference, which is what the render
+//     lowers to `${{ vars.VAR }}` — the reference this plane published before the
+//     migration, byte for byte;
+//   - an entry naming a part nothing declares is DROPPED rather than composed with a
+//     hole in it, because a half-composed ref pulls the wrong image.
+func TestDeclaredImagesComposeFromParts(t *testing.T) {
+	r := &Reader{doc: declaredImagesDoc(t)}
+	got, err := r.declaredImages()
+	if err != nil {
+		t.Fatalf("declaredImages: %v", err)
+	}
+	want := map[string]string{
+		"D9T_JS_TOOLS_IMAGE": "${D9T_DOCKER_REGISTRY}/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+		"B19_GO_IMAGE":       "${B19_DOCKER_REGISTRY}/b19/go:dev",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("declaredImages:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// TestDeclaredImagesAbsentIsNoOp pins the zero-diff property the ~110 projects
+// declaring no images depend on: no subtree, no map, and LoadBuild still reads the
+// ci-plane entries on their own.
+func TestDeclaredImagesAbsentIsNoOp(t *testing.T) {
+	r := &Reader{doc: publishDoc(t)}
+	got, err := r.declaredImages()
+	if err != nil {
+		t.Fatalf("declaredImages: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("declaredImages: got %#v, want none", got)
+	}
+}
+
 // TestSplitForgeURLReadsEveryTransport pins the decomposition against the transports a
 // link is really written in. A slug is the first domain label — the same rule the
 // origin's own forge is matched by — and a `.git` suffix or a port never reaches it.
