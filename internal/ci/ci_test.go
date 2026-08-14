@@ -363,8 +363,9 @@ func TestMatrixOverridesRejectsExcludedCell(t *testing.T) {
 // regenerate byte for byte identical.
 func TestNodeMatrixRejectsUnhonouredKeys(t *testing.T) {
 	for name, matrix := range map[string]string{
-		"overrides": `{"axes": {"GOOS": ["linux"]}, "overrides": [{"GOOS": "linux", "CGO_ENABLED": "1"}]}`,
-		"unknown":   `{"axess": {"GOOS": ["linux"]}}`,
+		"overrides":    `{"axes": {"GOOS": ["linux"]}, "overrides": [{"GOOS": "linux", "CGO_ENABLED": "1"}]}`,
+		"unknown":      `{"axess": {"GOOS": ["linux"]}}`,
+		"axes+without": `{"axes": {"GOOS": ["linux"]}, "without": ["SERIES"]}`,
 	} {
 		doc := `{"nodes": {"ready": {"goal": true, "matrix": ` + matrix + `, "needs": {"build-binaries": true}}}}`
 		if _, err := Parse([]byte(doc)); err == nil {
@@ -1132,5 +1133,17 @@ func TestArchitecturesAbsentMintsNothing(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("architectures: got %#v, want none", got)
+	}
+}
+
+// TestGlobalMatrixRejectsWithout pins that `without` is a per-node feature. On the
+// global matrix it would mean deleting the axis outright, which is what the axes map
+// is for — accepting it there would give one behaviour two spellings, and the wrong
+// one would be silent.
+func TestGlobalMatrixRejectsWithout(t *testing.T) {
+	doc := `{"matrix": {"axes": {"SERIES": ["noble"]}, "without": ["SERIES"]},
+	         "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"build-binaries": true}}}}`
+	if _, err := Parse([]byte(doc)); err == nil {
+		t.Error("global matrix.without: expected a parse error, got nil")
 	}
 }

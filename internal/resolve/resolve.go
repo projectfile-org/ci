@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 
+	"kiota.ch/projectfile/core/v2/pkg/genlog"
 	"projectfile.org/projectfile/ci-resolver/internal/ci"
 )
 
@@ -257,10 +258,59 @@ func (g *graph) classify() {
 // The two travel together because per-node axes are isolated: taking the global
 // exclusions against own axes would subtract cells that grid never minted.
 func (g *graph) effectiveMatrix(node string) ([]ci.Axis, []ci.Exclusion) {
-	if n := g.st.Nodes[node]; len(n.Axes) > 0 {
+	n := g.st.Nodes[node]
+	if len(n.Axes) > 0 {
 		return n.Axes, n.Excludes
 	}
+	if len(n.Without) > 0 {
+		return dropAxes(node, g.st.Axes, g.st.Excludes, n.Without)
+	}
 	return g.st.Axes, g.st.Excludes
+}
+
+// dropAxes subtracts the named GLOBAL axes from a node's fan-out (matrix.without).
+// An exclusion that constrains a dropped axis goes with it: the cells it named no
+// longer exist, and keeping it would subtract survivors that merely share the rest of
+// its coordinates. Dropping every axis is legal and leaves a single un-fanned job —
+// the assembly shape, one job joining all the cells.
+func dropAxes(node string, axes []ci.Axis, excludes []ci.Exclusion, without []string) ([]ci.Axis, []ci.Exclusion) {
+	drop := make(map[string]bool, len(without))
+	for _, k := range without {
+		drop[k] = true
+	}
+	kept := make([]ci.Axis, 0, len(axes))
+	for _, a := range axes {
+		if drop[a.Key] {
+			genlog.Info("matrix.without: node drops an axis", "node", node, "axis", a.Key, "values", a.Values)
+			continue
+		}
+		kept = append(kept, a)
+	}
+	// A `without` naming an axis this project does not declare is a no-op by design:
+	// M6E_ARCH exists only where org.projectfile.architecture does, and the same node
+	// declaration has to render byte-identically on the projects that declare nothing.
+	if len(kept) == len(axes) {
+		genlog.Info("matrix.without: no axis matched, node keeps the global fan-out",
+			"node", node, "without", without, "declared", len(axes))
+		return axes, excludes
+	}
+	keptEx := make([]ci.Exclusion, 0, len(excludes))
+	for _, ex := range excludes {
+		constrained := false
+		for _, kv := range ex {
+			if drop[kv.Key] {
+				constrained = true
+				break
+			}
+		}
+		if constrained {
+			genlog.Info("matrix.without: dropping an exclusion that constrains a dropped axis",
+				"node", node, "exclusion", ex)
+			continue
+		}
+		keptEx = append(keptEx, ex)
+	}
+	return kept, keptEx
 }
 
 func (g *graph) classOf(n string) Class {

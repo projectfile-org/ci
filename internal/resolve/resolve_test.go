@@ -10,6 +10,9 @@ import (
 	"projectfile.org/projectfile/ci-resolver/internal/ci"
 )
 
+// axisSeries is the global axis the matrix tests fan over (goconst).
+const axisSeries = "SERIES"
+
 // TestPerNodeMatrixIsolatesFanOut proves a per-node matrix fans a CELL job over the
 // NODE's own axes, independent of the global subtree matrix: in one pipeline the
 // binaries fan over {GOOS,GOARCH} (4 cells) while the image build fans over the
@@ -43,7 +46,7 @@ func TestPerNodeMatrixIsolatesFanOut(t *testing.T) {
 	if img.Cells() != 2 {
 		t.Errorf("container-build: want 2 cells (global SERIES), got %d (axes %v)", img.Cells(), img.Axes)
 	}
-	if len(img.Axes) != 1 || img.Axes[0].Key != "SERIES" {
+	if len(img.Axes) != 1 || img.Axes[0].Key != axisSeries {
 		t.Errorf("container-build: want global SERIES axis, got %v", img.Axes)
 	}
 
@@ -168,5 +171,121 @@ func TestNodeModelMaterialisesReachableNodes(t *testing.T) {
 	}
 	if got := nodes.ToolDeps["shellcheck"]; len(got) != 0 {
 		t.Errorf("shellcheck (root tool) ToolDeps = %v, want none", got)
+	}
+}
+
+// withoutSubtree builds the shape Wave 4 and Wave 6 both need: a global matrix of
+// SERIES × M6E_ARCH, a build cell fanning over both, and one node that subtracts the
+// arch axis. `drop` is spliced into that node's matrix so one helper covers the
+// present-axis, absent-axis and total-drop cases.
+func withoutSubtree(t *testing.T, axes, drop string) *Model {
+	t.Helper()
+	st, err := ci.Parse([]byte(`{
+	  "matrix": {"axes": ` + axes + `},
+	  "tools": {"container-build": {"action": "container-build"}, "oci-manifest": {"action": "oci-manifest"}},
+	  "nodes": {
+	    "image-built": {"matrix": true, "needs": {"container-build": true}},
+	    "manifest":    {"matrix": {"without": ` + drop + `}, "needs": {"oci-manifest": true, "image-built": true}},
+	    "ready":       {"goal": true, "needs": {"manifest": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	return rm
+}
+
+func jobsByName(rm *Model) map[string]Job {
+	by := map[string]Job{}
+	for _, j := range rm.Jobs {
+		by[j.Name] = j
+	}
+	return by
+}
+
+// TestMatrixWithoutDropsOneAxis is the primitive Wave 4's assembly node runs on: the
+// build fans over SERIES × ARCH while the manifest node fans over SERIES only, so one
+// manifest job indexes the per-arch pushes of its series instead of one per arch.
+func TestMatrixWithoutDropsOneAxis(t *testing.T) {
+	by := jobsByName(withoutSubtree(t,
+		`{"SERIES": ["resolute", "noble"], "M6E_ARCH": ["amd64", "arm64", "riscv64"]}`,
+		`["M6E_ARCH"]`))
+
+	if got := by["container-build"].Cells(); got != 6 {
+		t.Errorf("container-build: want 6 cells (2 SERIES × 3 ARCH), got %d (axes %v)", got, by["container-build"].Axes)
+	}
+	man := by["oci-manifest"]
+	if got := man.Cells(); got != 2 {
+		t.Errorf("oci-manifest: want 2 cells (SERIES only), got %d (axes %v)", got, man.Axes)
+	}
+	if len(man.Axes) != 1 || man.Axes[0].Key != axisSeries {
+		t.Errorf("oci-manifest: want the SERIES axis alone, got %v", man.Axes)
+	}
+}
+
+// TestMatrixWithoutAbsentAxisIsNoOp is the zero-diff property the fleet rollout rests
+// on. M6E_ARCH is DERIVED, so it is absent on the ~110 projects that declare no
+// architecture — the same node declaration must there render exactly as it does today.
+func TestMatrixWithoutAbsentAxisIsNoOp(t *testing.T) {
+	by := jobsByName(withoutSubtree(t, `{"SERIES": ["resolute", "noble"]}`, `["M6E_ARCH"]`))
+
+	man := by["oci-manifest"]
+	if got := man.Cells(); got != 2 {
+		t.Errorf("oci-manifest: want the untouched 2 SERIES cells, got %d (axes %v)", got, man.Axes)
+	}
+	if len(man.Axes) != 1 || man.Axes[0].Key != axisSeries {
+		t.Errorf("oci-manifest: want SERIES kept, got %v", man.Axes)
+	}
+}
+
+// TestMatrixWithoutEveryAxisLeavesOneJob covers the un-fanned assembly shape: with no
+// axis left the node stops being a cell, which is what makes the render omit the
+// strategy block entirely rather than emit an empty matrix the forge would reject.
+func TestMatrixWithoutEveryAxisLeavesOneJob(t *testing.T) {
+	by := jobsByName(withoutSubtree(t, `{"SERIES": ["resolute", "noble"]}`, `["SERIES"]`))
+
+	man := by["oci-manifest"]
+	if len(man.Axes) != 0 {
+		t.Errorf("oci-manifest: want no axes left, got %v", man.Axes)
+	}
+	if got := man.Cells(); got != 1 {
+		t.Errorf("oci-manifest: want a single un-fanned job, got %d cells", got)
+	}
+}
+
+// TestMatrixWithoutDropsDependentExclusions pins that an exclusion naming a dropped
+// axis goes with it. Kept, it would subtract a surviving cell that merely shares the
+// rest of its coordinates — here it would delete the whole noble manifest job.
+func TestMatrixWithoutDropsDependentExclusions(t *testing.T) {
+	st, err := ci.Parse([]byte(`{
+	  "matrix": {
+	    "axes": {"SERIES": ["resolute", "noble"], "M6E_ARCH": ["amd64", "riscv64"]},
+	    "exclude": [{"SERIES": "noble", "M6E_ARCH": "riscv64"}]
+	  },
+	  "tools": {"container-build": {"action": "container-build"}, "oci-manifest": {"action": "oci-manifest"}},
+	  "nodes": {
+	    "image-built": {"matrix": true, "needs": {"container-build": true}},
+	    "manifest":    {"matrix": {"without": ["M6E_ARCH"]}, "needs": {"oci-manifest": true, "image-built": true}},
+	    "ready":       {"goal": true, "needs": {"manifest": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	by := jobsByName(rm)
+
+	if got := by["container-build"].Cells(); got != 3 {
+		t.Errorf("container-build: want 3 cells (4 minus the excluded one), got %d", got)
+	}
+	if got := by["oci-manifest"].Cells(); got != 2 {
+		t.Errorf("oci-manifest: want both SERIES to keep a manifest job, got %d cells", got)
 	}
 }
