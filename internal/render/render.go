@@ -1398,6 +1398,16 @@ type StepView struct {
 	// binding is made per target beside `if:` and the credential refs. Empty on a target
 	// this step declares no route for, which is the historical single-job fan-out.
 	PublishSink string `json:"-"`
+	// Arch is this cell's target architecture, bound to the M6E_ARCH axis ci.Load mints
+	// from org.projectfile.architecture. It lowers to container-build's `platform:` (WHAT
+	// to build) and oci-push's `arch:` (WHERE to publish it), the producer and consumer
+	// ends of one arch cell. Both are needed together: the axis alone would fan three
+	// cells that each build the host arch and push it over one another's tag.
+	//
+	// Read off the JOB's own axes, never from the publish route — a project that declares
+	// no route still fans over arch, and would otherwise publish every cell to one ref.
+	// Empty when nothing minted the axis, which renders today's workflow unchanged.
+	Arch string `json:"arch,omitempty"`
 	// ReleaseAssetPath is the forgejo-release `release-asset-path:` input — the
 	// UNSUFFIXED binary path resolved from org.projectfile.artifacts (the single
 	// kind=binary entry's .path, e.g. dist/pf-cli). The action suffixes it with
@@ -1866,6 +1876,19 @@ func artifactStem(base string, m AxisMap) string {
 	return s
 }
 
+// archVarExpr binds a step to the M6E_ARCH axis when its JOB actually fans over it,
+// and to nothing otherwise. Read off the job's axes rather than the declaration so a
+// node that DROPS the axis (the host-arch live test) reports no arch by construction,
+// with no second rule to keep in step with the first.
+func archVarExpr(axes []ci.Axis) string {
+	for _, a := range axes {
+		if a.Key == ci.ArchAxis {
+			return matrixVarExpr(ci.ArchAxis, nil, nil)
+		}
+	}
+	return ""
+}
+
 // stepCtx is the data a JOB partial (steps/node or steps/gate) renders against: the
 // per-vendor adapter tokens plus the one node-job being lowered.
 type stepCtx struct {
@@ -2150,6 +2173,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		Action:    man.Action,
 		Network:   man.Network,
 		Stem:      artifactStem("image", AxisMap(j.Axes)),
+		Arch:      archVarExpr(j.Axes),
 	}
 	// A `when: always` tool is a teardown member (e.g. the fused live job's compose
 	// `down`): guard its step so it runs even when an earlier step in the same job

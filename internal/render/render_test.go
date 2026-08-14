@@ -20,6 +20,7 @@ const (
 	testShellcheck      = "shellcheck"
 	testCell            = "cell"
 	testContainerBuild  = "container-build"
+	testOCIPush         = "oci-push"
 	testImageBuilt      = "image-built"
 	testImageMatrixStem = "image-${{ matrix.B19_UBUNTU_SERIES }}" + artifactScopeSuffix
 	testUploadArtifact  = "upload-artifact"
@@ -146,7 +147,7 @@ func TestImageRefSubstitutesPerCell(t *testing.T) {
 	}
 	step := steps(Build(rm, st, nil))
 	want := "b19/ubuntu-${{ matrix.B19_UBUNTU_SERIES }}"
-	for _, name := range []string{testContainerBuild, "oci-push"} {
+	for _, name := range []string{testContainerBuild, testOCIPush} {
 		if got := step[name].ImageBasename; got != want {
 			t.Errorf("%s ImageBasename: want %q, got %q", name, want, got)
 		}
@@ -183,7 +184,7 @@ func TestContainerBuildPfCliImage(t *testing.T) {
 	if got := step[testContainerBuild].PfCliImage; got != want {
 		t.Errorf("container-build PfCliImage: want %q, got %q", want, got)
 	}
-	if got := step["oci-push"].PfCliImage; got != "" {
+	if got := step[testOCIPush].PfCliImage; got != "" {
 		t.Errorf("oci-push must not carry pf-cli-image, got %q", got)
 	}
 	// No PF_CLI_IMAGE var => empty input (the action degrades to host pf-cli / skip).
@@ -2221,8 +2222,8 @@ func TestOciPushLowers(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	m := Build(rm, st, nil)
-	pushStep := steps(m)["oci-push"]
-	pushJob := jobOf(m, "oci-push") // the publish-image node-job hosting it
+	pushStep := steps(m)[testOCIPush]
+	pushJob := jobOf(m, testOCIPush) // the publish-image node-job hosting it
 	// CONSUMER, not producer: it dispatches to the action AND its node pulls the build
 	// tar, but (unlike a portable scan) gets NO M6E_IMAGE_ARCHIVE env — the action reads
 	// the tar by artifact-name. The step carries the basename to compose the ref.
@@ -2973,7 +2974,7 @@ func TestWhenTriggerPredicate(t *testing.T) {
 
 	// Neutral model carries the event tokens, not the vendor spelling — on the NODE-job
 	// that hosts each tool (Decision 2: the node carries the predicate, the tool is a step).
-	if got := strings.Join(jobOf(m, "oci-push").Events, ","); got != "tag" {
+	if got := strings.Join(jobOf(m, testOCIPush).Events, ","); got != "tag" {
 		t.Errorf("publish-image (hosting oci-push) should carry its tag predicate, got %q", got)
 	}
 	if got := strings.Join(jobOf(m, "release").Events, ","); got != "push:main" {
@@ -3783,7 +3784,7 @@ func TestSupplyChainPublishFuse(t *testing.T) {
 	for _, s := range sink.Steps {
 		order = append(order, s.Name)
 	}
-	want := []string{"oci-push", "cosign-sign", "cosign-attest"}
+	want := []string{testOCIPush, "cosign-sign", "cosign-attest"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("fused publish steps must be %v (push→sign→attest), got %v", want, order)
 	}
@@ -3849,7 +3850,7 @@ func TestSupplyChainSingletonNoOp(t *testing.T) {
 
 	// oci-push must remain hosted by its own node (publish-image), NOT absorbed into some
 	// fused sink — the singleton group is skipped.
-	if host := jobOf(m, "oci-push").Name; host != "publish-image" {
+	if host := jobOf(m, testOCIPush).Name; host != "publish-image" {
 		t.Errorf("a lone fuse:publish oci-push must stay under publish-image (no fusing), got host %q", host)
 	}
 }
@@ -4147,6 +4148,83 @@ func TestReleaseWithoutRouteKeepsAmbientForge(t *testing.T) {
 	for _, gone := range []string{"M6E_PUBLISH_SINK", "server-url:", "repo:", "sink:"} {
 		if strings.Contains(string(out), gone) {
 			t.Errorf("no release route declared but workflow carries %q\n---\n%s", gone, out)
+		}
+	}
+}
+
+// archSubtree fans a container build and its push over M6E_ARCH. The axis is AUTHORED
+// here rather than minted because ci.Parse takes a subtree, not a projectfile — the
+// minting from org.projectfile.architecture is pinned in internal/ci. What this fixture
+// exists for is the pair of bindings the axis is useless without.
+const archSubtree = `{
+  "image": "b19/ubuntu",
+  "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},
+  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
+  "nodes": {
+    "image-built": {"matrix": true, "needs": {"container-build": true}},
+    "published": {"matrix": true, "goal": true, "needs": {"image-built": true, "oci-push": true}}
+  }
+}`
+
+// TestArchAxisBindsBuildAndPush pins BOTH ends of an arch cell, which only work as a
+// pair: container-build's `platform:` decides WHAT is built and oci-push's `arch:`
+// decides which ref it lands on. With only the first, three cells overwrite one tag;
+// with only the second, three tags carry the same host-arch image. Neither failure is
+// caught downstream — every per-arch artifact is individually well-formed.
+func TestArchAxisBindsBuildAndPush(t *testing.T) {
+	st, err := ci.Parse([]byte(archSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	step := steps(m)
+	want := "${{ matrix." + ci.ArchAxis + " }}"
+	for _, name := range []string{testContainerBuild, testOCIPush} {
+		if got := step[name].Arch; got != want {
+			t.Errorf("%s Arch: want %q, got %q", name, want, got)
+		}
+	}
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"          platform: " + want, "          arch: " + want} {
+		if !strings.Contains(string(out), line) {
+			t.Errorf("rendered workflow missing %q:\n%s", line, out)
+		}
+	}
+}
+
+// TestNoArchAxisRendersNoArchInputs pins the opt-in from the other side: the ~110
+// projects that declare no architecture must render byte-identically to before the axis
+// existed, so neither input may appear when nothing minted the axis.
+func TestNoArchAxisRendersNoArchInputs(t *testing.T) {
+	st, err := ci.Parse([]byte(strings.Replace(archSubtree,
+		`"matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},`, "", 1)))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	for _, name := range []string{testContainerBuild, testOCIPush} {
+		if got := steps(m)[name].Arch; got != "" {
+			t.Errorf("%s Arch: want empty without the axis, got %q", name, got)
+		}
+	}
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"          platform: ", "          arch: "} {
+		if strings.Contains(string(out), line) {
+			t.Errorf("rendered workflow must not carry %q without the axis:\n%s", line, out)
 		}
 	}
 }

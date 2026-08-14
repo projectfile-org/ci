@@ -290,7 +290,7 @@ func TestMatrixExcludeDecode(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	if len(st.Excludes) != 1 || len(st.Excludes[0]) != 2 ||
-		st.Excludes[0][0] != (KV{Key: "GOARCH", Value: "riscv64"}) ||
+		st.Excludes[0][0] != (KV{Key: "GOARCH", Value: archRISCV}) ||
 		st.Excludes[0][1] != (KV{Key: "GOOS", Value: "darwin"}) {
 		t.Fatalf("global exclude: want key-sorted {GOARCH=riscv64, GOOS=darwin}, got %+v", st.Excludes)
 	}
@@ -300,7 +300,7 @@ func TestMatrixExcludeDecode(t *testing.T) {
 	}
 	// The excluded cell is the one that is gone, not some neighbour.
 	for _, c := range Cells(st.Axes, st.Excludes) {
-		if c["GOOS"] == "darwin" && c["GOARCH"] == "riscv64" {
+		if c["GOOS"] == "darwin" && c["GOARCH"] == archRISCV {
 			t.Errorf("cell darwin/riscv64 survived the exclusion: %v", c)
 		}
 	}
@@ -974,6 +974,7 @@ func TestPullRefsAbsentWithoutRoutes(t *testing.T) {
 const (
 	sinkKiota = "kiota"
 	sinkGHCR  = "ghcr"
+	archRISCV = "riscv64"
 	// refGHCR is what publishDoc's ghcr template composes to: a NESTED path with the
 	// axis left verbatim for the cell to fill. Both route planes expect this one value,
 	// which is the point — push and pull compose a sink identically.
@@ -1071,5 +1072,65 @@ func TestSplitForgeURLReadsEveryTransport(t *testing.T) {
 			t.Errorf("splitForgeURL(%q) = %q,%q,%q; want %q,%q,%q",
 				tc.raw, slug, base, repo, tc.slug, tc.base, tc.repo)
 		}
+	}
+}
+
+// archDoc writes a projectfile declaring an architecture set, optionally with the
+// field omitted entirely — the two states the whole opt-in turns on.
+func archDoc(t *testing.T, arch string) *projectfile.Document {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	body := `$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: ubuntu
+org:
+  projectfile:
+` + arch
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestArchitecturesReadsTheDeclaredList pins the read the arch axis is minted from.
+// The LIST case is the one that matters: architecture cannot go through Reader.subtree,
+// which ends at core's Extension and yields MAP-valued subtrees only — a list there
+// fails its type assertion and reports the field as ABSENT rather than erroring, so a
+// wrong read mints nothing and still passes every other test.
+func TestArchitecturesReadsTheDeclaredList(t *testing.T) {
+	r := &Reader{doc: archDoc(t, "    architecture: [amd64, arm64, riscv64]\n")}
+	got, err := r.architectures()
+	if err != nil {
+		t.Fatalf("architectures: %v", err)
+	}
+	want := []string{"amd64", "arm64", archRISCV}
+	if len(got) != len(want) {
+		t.Fatalf("architectures: got %#v, want %#v", got, want)
+	}
+	for i := range want {
+		// BARE arch names: the same token is a matrix value, a tag segment and a
+		// deps-file stem, so `linux/` must never be baked in here.
+		if got[i] != want[i] {
+			t.Errorf("architectures[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestArchitecturesAbsentMintsNothing pins the opt-in: spec §4.8a reads an absent set
+// as unconstrained, so a project naming none must yield nil and render the workflow it
+// rendered before the field existed.
+func TestArchitecturesAbsentMintsNothing(t *testing.T) {
+	r := &Reader{doc: archDoc(t, "    image:\n      path: b19/ubuntu\n")}
+	got, err := r.architectures()
+	if err != nil {
+		t.Fatalf("architectures: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("architectures: got %#v, want none", got)
 	}
 }
