@@ -19,19 +19,47 @@ includes:
   - https://kiota.ch/projectfile/metadata/raw/branch/main/include.yaml
 kind: SoftwareSourceCode
 links:
-  - label: Projectfile CI Resolver on Codeberg
+  - label:
+      en: Projectfile CI Resolver on Codeberg
+      es: Projectfile CI Resolver en Codeberg
+      uk: Projectfile CI Resolver на Codeberg
+    tags:
+      - public
+      - badges
+      - badges-gitea
     type: source-code
     url: https://codeberg.org/projectfile/ci-resolver
-  - label: Projectfile CI Resolver on GitHub
+  - label:
+      en: Projectfile CI Resolver on GitHub
+      es: Projectfile CI Resolver en GitHub
+      uk: Projectfile CI Resolver на GitHub
+    tags:
+      - public
+      - badges
+      - badges-github
     type: source-code
     url: https://github.com/damian-buho/projectfile-ci-resolver
-  - label: Projectfile CI Resolver on kiota.ch
+  - label:
+      en: Projectfile CI Resolver on kiota.ch
+      es: Projectfile CI Resolver en kiota.ch
+      uk: Projectfile CI Resolver на kiota.ch
+    preferred: true
     type: source-code
     url: https://kiota.ch/projectfile/ci-resolver
-  - label: Issues on Codeberg
+  - label:
+      en: Issues on Codeberg
+      es: Incidencias en Codeberg
+      uk: Issues на Codeberg
+    tags:
+      - support
     type: bugs
     url: https://codeberg.org/projectfile/ci-resolver/issues
-  - label: Issues on GitHub
+  - label:
+      en: Issues on GitHub
+      es: Incidencias en GitHub
+      uk: Issues на GitHub
+    tags:
+      - support
     type: bugs
     url: https://github.com/damian-buho/projectfile-ci-resolver/issues
 org:
@@ -116,19 +144,20 @@ org:
           run: .scripts/install-binary.sh
     readme:
       usage:
-        - name: binary
-          prefix: "Lower the CI DAG to a forge’s workflow files:"
-          commands:
+        - commands:
             - pf-ci resolve
             - pf-ci generate -target forgejo
             - pf-ci generate -target gha -check
+          name: binary
+          prefix: 'Lower the CI DAG to a forge’s workflow files:'
 repositories:
-  - role: origin
+  - role: mirror
     type: git
     url: ssh://git@codeberg.org/projectfile/ci-resolver.git
   - role: mirror
     type: git
     url: git@github.com:damian-buho/projectfile-ci-resolver.git
-  - role: mirror
+  - branch: main
+    role: origin
     type: git
     url: ssh://git@kiota.ch/projectfile/ci-resolver.git
