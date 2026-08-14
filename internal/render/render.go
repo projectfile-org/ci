@@ -275,8 +275,25 @@ func imageTagExpr() string { return "${{ env." + TagEnvVar + " }}" }
 // registry pull of an image that exists in no registry. run_id alone already delivers
 // the run-uniqueness the suffix exists for; attempts of one run are strictly sequential
 // (a run must finish before it can be re-run), so they cannot collide in the store.
-func selfImageTagExpr() string {
-	return imageTagExpr() + artifactScopeSuffix
+// It takes the cell's ARCH for the same reason it takes the run: the tag has to be
+// unique among everything sharing a docker store, and a host-mode runner shares one
+// across concurrent jobs. Every other cell dimension is already in the image NAME (the
+// basename carries its {AXIS} placeholders), but the arch axis is derived and reaches
+// no basename — so without this, one series' arch cells all load different images under
+// one ref and the last `docker load` wins. Empty arch (no axis, or a node that pinned
+// it away) => today's tag exactly.
+func selfImageTagExpr(arch string) string {
+	return imageTagExpr() + artifactScopeSuffix + archSuffix(arch)
+}
+
+// archSuffix is the one spelling of "…and this cell's architecture", shared by the
+// self-image tag and the compose stack identity so the two can never disagree about
+// what makes a cell distinct.
+func archSuffix(arch string) string {
+	if arch == "" {
+		return ""
+	}
+	return "-" + arch
 }
 
 // PfCliImageVar is the ci.images var NAME carrying the projectfile/cli ref (registry +
@@ -2497,7 +2514,7 @@ func secretsStep(b *ci.Build, st *ci.Subtree, axes []ci.Axis) StepView {
 		SecretsDefaultImage: miscToolsImageRef(b),
 	}
 	if st.Image != "" {
-		s.SecretsImage = composeImage("", substAxes(st.Image, substKeys(axes, st)))
+		s.SecretsImage = composeImage("", substAxes(st.Image, substKeys(axes, st)), archVarExpr(axes))
 	}
 	return s
 }
@@ -2796,10 +2813,14 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						// M6E_COMPOSE_PROJECT_NAME / M6E_CONTAINER_INSTANCE = the `ci-<basename>`
 						// stem m6e's make plane uses (no `app` placeholder).
 						img := substAxes(st.Image, substKeys(j.Axes, st))
-						loadedRef := composeImage("", img)
+						arch := archVarExpr(j.Axes)
+						loadedRef := composeImage("", img, arch)
 						// run-scoped (not just cell-scoped) so two runs of the same
 						// pipeline never name one stack; image ref stays unscoped.
-						proj := composeProject(img) + runScopeSuffix
+						// Arch-scoped for the cell half of the same problem: the basename
+						// carries every axis but the derived one, so two arch cells of one
+						// series would otherwise share a pod and reap each other's stack.
+						proj := composeProject(img) + archSuffix(arch) + runScopeSuffix
 						step.Env = append(step.Env,
 							EnvVar{Key: ImageFullnameEnv, Value: loadedRef},
 							EnvVar{Key: ComposeProjectEnv, Value: proj},
@@ -3339,14 +3360,14 @@ func appendUnique(vals []string, v string) []string {
 // imageTagExpr (they never enter the docker store via load). oci-push's image: is also
 // routed here, but skopeo copies the tar DIRECTLY to the registry and ignores the tag
 // half, so the run scope is harmless there.
-func composeImage(registry, img string) string {
+func composeImage(registry, img, arch string) string {
 	if strings.Contains(img, ":") {
 		return img
 	}
 	if registry == "" {
-		return img + ":" + selfImageTagExpr()
+		return img + ":" + selfImageTagExpr(arch)
 	}
-	return VarRef(registry) + "/" + img + ":" + selfImageTagExpr()
+	return VarRef(registry) + "/" + img + ":" + selfImageTagExpr(arch)
 }
 
 // publishedImageRef renders the FALLBACK published ref of a project's per-cell image at the

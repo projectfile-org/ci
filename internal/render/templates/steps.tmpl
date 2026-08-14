@@ -188,7 +188,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
         with:
           artifact-name: {{ .Step.Stem }}
 {{- if .Step.ImageBasename }}
-          image: {{ composeImage "" .Step.ImageBasename }}
+          image: {{ composeImage "" .Step.ImageBasename .Step.Arch }}
 {{- end }}
 {{- if .Step.BuildArgs }}
           build-args: |-
@@ -222,7 +222,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
         uses: {{ actionRef .Target .Step.Action }}
         with:
           artifact-name: {{ .Step.Stem }}
-          image: {{ composeImage "" .Step.ImageBasename }}
+          image: {{ composeImage "" .Step.ImageBasename .Step.Arch }}
 {{- if .Step.PublishVersion }}
           version: {{ .Step.PublishVersion }}
 {{- end }}
@@ -266,7 +266,7 @@ shape that can index the cells.
       - name: {{ .Step.Name }}
         uses: {{ actionRef .Target .Step.Action }}
         with:
-          image: {{ composeImage "" .Step.ImageBasename }}
+          image: {{ composeImage "" .Step.ImageBasename .Step.Arch }}
 {{- if .Step.PublishVersion }}
           version: {{ .Step.PublishVersion }}
 {{- end }}

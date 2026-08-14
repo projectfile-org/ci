@@ -4354,6 +4354,55 @@ func TestLiveTestPinsOneArchAndStillNamesIt(t *testing.T) {
 	}
 }
 
+// TestSelfImageRefIsArchScoped pins the pairing that keeps a shared docker store honest.
+// Every cell dimension but the arch is already in the image NAME (the basename carries
+// its {AXIS} placeholders); the derived arch axis reaches no basename, so without a
+// suffix each of a series' arch cells docker-loads a DIFFERENT image under ONE ref and
+// the last load wins — on a host-mode runner, where concurrent jobs share one daemon.
+// The stamp and the load must move together or the load simply misses.
+func TestSelfImageRefIsArchScoped(t *testing.T) {
+	st, err := ci.Parse([]byte(livePinSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+
+	archExpr := "${{ matrix." + ci.ArchAxis + " }}"
+	live := jobOf(m, testDCDown)
+	env := map[string]string{}
+	for _, e := range live.Env {
+		env[e.Key] = e.Value
+	}
+	loaded := env[ImageFullnameEnv]
+	if !strings.HasSuffix(loaded, "-"+archExpr) {
+		t.Errorf("%s = %q, want the cell arch appended", ImageFullnameEnv, loaded)
+	}
+	if !strings.Contains(env[ComposeProjectEnv], "-"+archExpr+"-") {
+		t.Errorf("%s = %q, want the cell arch in the stack identity", ComposeProjectEnv, env[ComposeProjectEnv])
+	}
+	// The reap targets the ref this job actually loaded, never a sibling cell's.
+	if live.RmiImage != loaded {
+		t.Errorf("RmiImage %q must be the loaded ref %q", live.RmiImage, loaded)
+	}
+
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := "b19/ubuntu:" + selfImageTagExpr(archExpr)
+	if !strings.Contains(string(out), "          image: "+stamp) {
+		t.Fatalf("container-build must stamp the arch-scoped ref %q:\n%s", stamp, out)
+	}
+	// Stamp and load differ only in the tag hoist, which the env block inlines.
+	if inlineHoists(stamp) != inlineHoists(loaded) {
+		t.Errorf("stamp %q and load %q must be one ref", inlineHoists(stamp), inlineHoists(loaded))
+	}
+}
+
 // TestNoArchAxisRendersNoArchInputs pins the opt-in from the other side: the ~110
 // projects that declare no architecture must render byte-identically to before the axis
 // existed, so neither input may appear when nothing minted the axis.
