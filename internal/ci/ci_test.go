@@ -367,6 +367,7 @@ func TestNodeMatrixRejectsUnhonouredKeys(t *testing.T) {
 		"overrides":    `{"axes": {"GOOS": ["linux"]}, "overrides": [{"GOOS": "linux", "CGO_ENABLED": "1"}]}`,
 		"unknown":      `{"axess": {"GOOS": ["linux"]}}`,
 		"axes+without": `{"axes": {"GOOS": ["linux"]}, "without": ["SERIES"]}`,
+		"axes+pin":     `{"axes": {"GOOS": ["linux"]}, "pin": {"SERIES": "noble"}}`,
 	} {
 		doc := `{"nodes": {"ready": {"goal": true, "matrix": ` + matrix + `, "needs": {"build-binaries": true}}}}`
 		if _, err := Parse([]byte(doc)); err == nil {
@@ -1218,5 +1219,36 @@ func TestGlobalMatrixRejectsWithout(t *testing.T) {
 	         "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"build-binaries": true}}}}`
 	if _, err := Parse([]byte(doc)); err == nil {
 		t.Error("global matrix.without: expected a parse error, got nil")
+	}
+}
+
+// TestGlobalMatrixRejectsPin is the same rule for `pin`: narrowing an axis globally is
+// just declaring it with one value, so the second spelling would only ever be the
+// mistaken one.
+func TestGlobalMatrixRejectsPin(t *testing.T) {
+	doc := `{"matrix": {"axes": {"SERIES": ["noble", "resolute"]}, "pin": {"SERIES": "noble"}},
+	         "nodes": {"ready": {"goal": true, "matrix": true, "needs": {"build-binaries": true}}}}`
+	if _, err := Parse([]byte(doc)); err == nil {
+		t.Error("global matrix.pin: expected a parse error, got nil")
+	}
+}
+
+// TestNodeMatrixPinDecodes pins the object form onto the node: a `pin` block makes the
+// node a CELL (like every other matrix object) and survives Parse, which is what the
+// make-plane reader mirrors when it treats any `matrix.*` subkey as a cell flag.
+func TestNodeMatrixPinDecodes(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64"]}},
+	  "nodes": {"verified": {"goal": true, "matrix": {"pin": {"M6E_ARCH": "amd64"}}, "needs": {"container-test": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	n := st.Nodes["verified"]
+	if !n.Matrix {
+		t.Error("a node carrying matrix.pin must be a cell")
+	}
+	if got := n.Pin[ArchAxis]; got != "amd64" {
+		t.Errorf("pin[%s]: want amd64, got %q", ArchAxis, got)
 	}
 }

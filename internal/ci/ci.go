@@ -62,6 +62,15 @@ type Node struct {
 	// Naming an axis that does not exist is a NO-OP, not an error — the arch axis is
 	// absent on ~110 projects, and those must render byte-identically.
 	Without []string
+	// Pin narrows a GLOBAL axis to ONE value on this node (matrix.pin), the complement
+	// of Without: the node still fans over the axis, but over a single cell of it. It is
+	// what a node needs when it must run once AND still name the axis — the live test
+	// runs on one architecture, yet its build artifact is named per arch, so removing
+	// the axis would leave it asking for a tar nobody uploaded.
+	// Naming an axis this project does not declare is a NO-OP (as with Without), and so
+	// is naming a value the axis does not carry: the node keeps its full fan-out rather
+	// than pinning to a cell that was never minted.
+	Pin map[string]string
 	// MaxParallel caps how many of this node's matrix cells run at once
 	// (strategy.max-parallel). 0 => unset (the forge's full-parallel default). Set on
 	// a matrix node whose cells are individually resource-hungry — e.g. an image build
@@ -721,6 +730,7 @@ type rawMatrix struct {
 	Overrides []map[string]json.RawMessage `json:"overrides"`
 	Exclude   []map[string]json.RawMessage `json:"exclude"`
 	Without   []string                     `json:"without"`
+	Pin       map[string]string            `json:"pin"`
 }
 
 type rawNode struct {
@@ -1459,6 +1469,10 @@ func Parse(data []byte) (*Subtree, error) {
 			return nil, fmt.Errorf("matrix.without is a per-node feature — " +
 				"the global matrix IS the axis set, so subtracting from it here means deleting the axis")
 		}
+		if len(m.Pin) > 0 {
+			return nil, fmt.Errorf("matrix.pin is a per-node feature — " +
+				"the global matrix IS the axis set, so narrowing one here means declaring it with one value")
+		}
 		axes, err := buildAxes(m.Axes)
 		if err != nil {
 			return nil, err
@@ -1490,7 +1504,7 @@ func Parse(data []byte) (*Subtree, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode needs of node %q: %w", name, err)
 		}
-		isCell, axes, excludes, without, err := decodeNodeMatrix(rn.Matrix)
+		isCell, axes, excludes, without, pin, err := decodeNodeMatrix(rn.Matrix)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", name, err)
 		}
@@ -1522,7 +1536,7 @@ func Parse(data []byte) (*Subtree, error) {
 			}
 			concurrency = &Concurrency{Group: rn.Concurrency.Group, CancelInProgress: rn.Concurrency.CancelInProgress}
 		}
-		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, Excludes: excludes, Without: without, MaxParallel: rn.MaxParallel, Concurrency: concurrency, Needs: needs, When: when, Schedule: schedule, Dispatch: dispatch}
+		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, Excludes: excludes, Without: without, Pin: pin, MaxParallel: rn.MaxParallel, Concurrency: concurrency, Needs: needs, When: when, Schedule: schedule, Dispatch: dispatch}
 		st.NodeOrder = append(st.NodeOrder, name)
 	}
 	sort.Strings(st.NodeOrder)
@@ -2391,37 +2405,46 @@ func decodeMatrix(raw json.RawMessage) (*rawMatrix, error) {
 //     assembly node indexes the per-arch pushes, so it must fan over every other axis
 //     and NOT over arch, without ever naming the arch values it is avoiding.
 //
+//   - an OBJECT `{pin: {KEY: VALUE}}`: the node is a CELL over the GLOBAL axes with the
+//     named one narrowed to a single value — the live test runs on one architecture but
+//     still reads that architecture's artifact, which dropping the axis would rename.
+//
 // `overrides` is refused here: extra per-cell VARS are a global-matrix feature (the
 // render emits them as strategy.matrix.include only for a job whose axes ARE the
-// global ones), so a node-level block would decorate nothing. `axes` + `without`
-// together is refused as contradictory.
+// global ones), so a node-level block would decorate nothing. `axes` + `without` and
+// `axes` + `pin` are refused as contradictory; `without` + `pin` compose (drop first,
+// then narrow), because they name different axes by construction.
 //
-// Empty input => (false, nil, nil, nil): not a matrix node.
-func decodeNodeMatrix(raw json.RawMessage) (isCell bool, axes []Axis, excludes []Exclusion, without []string, err error) {
+// Empty input => (false, nil, nil, nil, nil): not a matrix node.
+func decodeNodeMatrix(raw json.RawMessage) (isCell bool, axes []Axis, excludes []Exclusion, without []string, pin map[string]string, err error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return false, nil, nil, nil, nil
+		return false, nil, nil, nil, nil, nil
 	}
 	var b bool
 	if json.Unmarshal(raw, &b) == nil {
-		return b, nil, nil, nil, nil // bare bool => global-axes cell (true) or not a cell (false)
+		return b, nil, nil, nil, nil, nil // bare bool => global-axes cell (true) or not a cell (false)
 	}
 	m, err := decodeMatrix(raw)
 	if err != nil {
-		return false, nil, nil, nil, fmt.Errorf("matrix: want a bool or {axes: {...}} / {without: [...]}: %w", err)
+		return false, nil, nil, nil, nil, fmt.Errorf("matrix: want a bool or {axes: {...}} / {without: [...]} / {pin: {...}}: %w", err)
 	}
 	if len(m.Overrides) > 0 {
-		return false, nil, nil, nil, fmt.Errorf("matrix.overrides is a global-matrix feature — " +
+		return false, nil, nil, nil, nil, fmt.Errorf("matrix.overrides is a global-matrix feature — " +
 			"move the rows to the top-level matrix (a per-node matrix has no cell of the global product to decorate)")
 	}
 	if len(m.Axes) > 0 && len(m.Without) > 0 {
-		return false, nil, nil, nil, fmt.Errorf("matrix.axes and matrix.without are exclusive — " +
+		return false, nil, nil, nil, nil, fmt.Errorf("matrix.axes and matrix.without are exclusive — " +
 			"own axes are already the complete set this node fans over, so there is nothing to subtract")
 	}
+	if len(m.Axes) > 0 && len(m.Pin) > 0 {
+		return false, nil, nil, nil, nil, fmt.Errorf("matrix.axes and matrix.pin are exclusive — " +
+			"own axes already state every value this node fans over, so declare the pinned one there")
+	}
 	if axes, err = buildAxes(m.Axes); err != nil {
-		return false, nil, nil, nil, err
+		return false, nil, nil, nil, nil, err
 	}
 	if excludes, err = buildExcludes(m.Exclude, axes); err != nil {
-		return false, nil, nil, nil, err
+		return false, nil, nil, nil, nil, err
 	}
-	return true, axes, excludes, m.Without, nil
+	return true, axes, excludes, m.Without, m.Pin, nil
 }

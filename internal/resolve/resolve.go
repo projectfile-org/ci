@@ -20,7 +20,9 @@ package resolve
 
 import (
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
 	"projectfile.org/projectfile/ci-resolver/internal/ci"
@@ -262,10 +264,14 @@ func (g *graph) effectiveMatrix(node string) ([]ci.Axis, []ci.Exclusion) {
 	if len(n.Axes) > 0 {
 		return n.Axes, n.Excludes
 	}
+	axes, excludes := g.st.Axes, g.st.Excludes
 	if len(n.Without) > 0 {
-		return dropAxes(node, g.st.Axes, g.st.Excludes, n.Without)
+		axes, excludes = dropAxes(node, axes, excludes, n.Without)
 	}
-	return g.st.Axes, g.st.Excludes
+	if len(n.Pin) > 0 {
+		axes, excludes = pinAxes(node, axes, excludes, n.Pin)
+	}
+	return axes, excludes
 }
 
 // dropAxes subtracts the named GLOBAL axes from a node's fan-out (matrix.without).
@@ -305,6 +311,71 @@ func dropAxes(node string, axes []ci.Axis, excludes []ci.Exclusion, without []st
 		}
 		if constrained {
 			genlog.Info("matrix.without: dropping an exclusion that constrains a dropped axis",
+				"node", node, "exclusion", ex)
+			continue
+		}
+		keptEx = append(keptEx, ex)
+	}
+	return kept, keptEx
+}
+
+// pinAxes narrows the named GLOBAL axes to one value each (matrix.pin), the
+// complement of dropAxes: the node runs once over that dimension yet still carries it,
+// which is what a node needs when its artifacts are named per cell. An exclusion
+// constraining a pinned axis to a DIFFERENT value can never match the surviving cells,
+// so it goes; one naming the pinned value keeps working unchanged.
+// A pin naming an axis this project does not declare, or a value that axis does not
+// carry, leaves the fan-out ALONE — a pinned cell the grid never minted would send the
+// node looking for an artifact no sibling produced, so the miss fails towards full
+// coverage instead.
+func pinAxes(node string, axes []ci.Axis, excludes []ci.Exclusion, pin map[string]string) ([]ci.Axis, []ci.Exclusion) {
+	pinned := make(map[string]string, len(pin))
+	kept := make([]ci.Axis, 0, len(axes))
+	for _, a := range axes {
+		v, ok := pin[a.Key]
+		if !ok {
+			kept = append(kept, a)
+			continue
+		}
+		if !slices.Contains(a.Values, v) {
+			genlog.Warn("matrix.pin: value is not among the axis values, node keeps the full fan-out",
+				"node", node, "axis", a.Key, "value", v, "values", a.Values)
+			kept = append(kept, a)
+			continue
+		}
+		// A Decision row, not an Info line: this is where cells a reader expected to see
+		// stop existing, so it must be visible in an ordinary generate — naming the
+		// values it skipped and the node knob that brings them back.
+		skipped := make([]string, 0, len(a.Values)-1)
+		for _, s := range a.Values {
+			if s != v {
+				skipped = append(skipped, s)
+			}
+		}
+		value := node + " " + a.Key + " -> " + v
+		if len(skipped) > 0 {
+			value += " (skipped " + strings.Join(skipped, ", ") + ")"
+		}
+		genlog.Decision("matrix_pin", value, "matrix.pin."+a.Key, "nodes."+node+".matrix")
+		pinned[a.Key] = v
+		kept = append(kept, ci.Axis{Key: a.Key, Values: []string{v}})
+	}
+	if len(pinned) == 0 {
+		genlog.Info("matrix.pin: no axis matched, node keeps the global fan-out",
+			"node", node, "pin", pin, "declared", len(axes))
+		return axes, excludes
+	}
+	keptEx := make([]ci.Exclusion, 0, len(excludes))
+	for _, ex := range excludes {
+		unreachable := false
+		for _, kv := range ex {
+			if v, ok := pinned[kv.Key]; ok && v != kv.Value {
+				unreachable = true
+				break
+			}
+		}
+		if unreachable {
+			genlog.Info("matrix.pin: dropping an exclusion no surviving cell can match",
 				"node", node, "exclusion", ex)
 			continue
 		}

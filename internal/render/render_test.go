@@ -4295,6 +4295,65 @@ func TestOciManifestWithoutArchDeclarationRendersNoArches(t *testing.T) {
 	}
 }
 
+// livePinSubtree is Wave 6's shape: a build fanning over every declared arch feeding a
+// live fuse that PINS the axis to one. The pin is what a node needs when it must run
+// once yet still read a per-cell artifact — the complement of the manifest node's drop.
+const livePinSubtree = `{
+  "image": "b19/ubuntu",
+  "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "dc-up-d": {"fuse": "live", "run": "docker compose up --detach"},
+    "container-test": {"fuse": "live", "run": "test"},
+    "dc-down": {"fuse": "live", "when": "always", "run": "docker compose down --volumes"}
+  },
+  "nodes": {
+    "image-built": {"matrix": true, "needs": {"container-build": true}},
+    "container-is-ready": {"matrix": {"pin": {"M6E_ARCH": "amd64"}}, "needs": {"image-built": true, "dc-up-d": true}},
+    "container-is-verified": {"goal": true, "matrix": {"pin": {"M6E_ARCH": "amd64"}},
+      "needs": {"container-is-ready": true, "container-test": true, "dc-down": true}}
+  }
+}`
+
+// TestLiveTestPinsOneArchAndStillNamesIt is the property the whole policy rests on: the
+// live job runs on ONE arch, and the artifact it downloads is that arch's. Dropping the
+// axis would have shortened the stem to a name no build cell ever uploaded, so the skip
+// has to narrow the axis rather than remove it.
+func TestLiveTestPinsOneArchAndStillNamesIt(t *testing.T) {
+	st, err := ci.Parse([]byte(livePinSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+
+	live := jobOf(m, testDCDown)
+	if len(live.Matrix) != 1 || live.Matrix[0].Key != ci.ArchAxis {
+		t.Fatalf("live job matrix: want the arch axis kept, got %v", live.Matrix)
+	}
+	if got := strings.Join(live.Matrix[0].Values, " "); got != "amd64" {
+		t.Errorf("live job arch values: want amd64 alone, got %q", got)
+	}
+	if len(live.Downloads) != 1 || !strings.Contains(live.Downloads[0].Name, "${{ matrix."+ci.ArchAxis+" }}") {
+		t.Fatalf("live job downloads %v — the stem must still bind the arch axis", live.Downloads)
+	}
+	// The build keeps every arch: only the live test is narrowed.
+	if got := jobOf(m, testContainerBuild).Matrix[0].Values; len(got) != 3 {
+		t.Errorf("container-build arch values: want all three built, got %v", got)
+	}
+
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `        `+ci.ArchAxis+`: ["amd64"]`) {
+		t.Errorf("rendered workflow missing the pinned single-value axis:\n%s", out)
+	}
+}
+
 // TestNoArchAxisRendersNoArchInputs pins the opt-in from the other side: the ~110
 // projects that declare no architecture must render byte-identically to before the axis
 // existed, so neither input may appear when nothing minted the axis.

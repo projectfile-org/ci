@@ -289,3 +289,119 @@ func TestMatrixWithoutDropsDependentExclusions(t *testing.T) {
 		t.Errorf("oci-manifest: want both SERIES to keep a manifest job, got %d cells", got)
 	}
 }
+
+// pinSubtree is withoutSubtree's twin for matrix.pin: the same SERIES × M6E_ARCH grid,
+// with the live-test node narrowing the arch axis instead of dropping it. `pin` is
+// spliced in so one helper covers the hit, absent-axis and absent-value cases.
+func pinSubtree(t *testing.T, axes, pin string) *Model {
+	t.Helper()
+	st, err := ci.Parse([]byte(`{
+	  "matrix": {"axes": ` + axes + `},
+	  "tools": {"container-build": {"action": "container-build"}, "container-test": {"run": "test.d"}},
+	  "nodes": {
+	    "image-built": {"matrix": true, "needs": {"container-build": true}},
+	    "verified":    {"matrix": {"pin": ` + pin + `}, "needs": {"container-test": true, "image-built": true}},
+	    "ready":       {"goal": true, "needs": {"verified": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	return rm
+}
+
+// TestMatrixPinNarrowsOneAxis is Wave 6's policy: the image builds on every arch while
+// the live test runs on one. The axis SURVIVES with a single value — that is what keeps
+// the per-arch artifact name computable in a job that fans over one arch.
+func TestMatrixPinNarrowsOneAxis(t *testing.T) {
+	by := jobsByName(pinSubtree(t,
+		`{"SERIES": ["resolute", "noble"], "M6E_ARCH": ["amd64", "arm64", "riscv64"]}`,
+		`{"M6E_ARCH": "amd64"}`))
+
+	if got := by["container-build"].Cells(); got != 6 {
+		t.Errorf("container-build: want 6 cells (2 SERIES × 3 ARCH), got %d (axes %v)", got, by["container-build"].Axes)
+	}
+	test := by["container-test"]
+	if got := test.Cells(); got != 2 {
+		t.Errorf("container-test: want 2 cells (SERIES × the pinned arch), got %d (axes %v)", got, test.Axes)
+	}
+	var arch *ci.Axis
+	for i, a := range test.Axes {
+		if a.Key == ci.ArchAxis {
+			arch = &test.Axes[i]
+		}
+	}
+	if arch == nil {
+		t.Fatalf("container-test: the pinned axis must survive so the artifact stem keeps naming it, got %v", test.Axes)
+	}
+	if len(arch.Values) != 1 || arch.Values[0] != "amd64" {
+		t.Errorf("container-test: want the arch axis narrowed to [amd64], got %v", arch.Values)
+	}
+}
+
+// TestMatrixPinAbsentAxisIsNoOp is the zero-diff property, same as its `without` twin:
+// M6E_ARCH is DERIVED, so the ~110 projects declaring no architecture must render the
+// identical live-test job they render today.
+func TestMatrixPinAbsentAxisIsNoOp(t *testing.T) {
+	by := jobsByName(pinSubtree(t, `{"SERIES": ["resolute", "noble"]}`, `{"M6E_ARCH": "amd64"}`))
+
+	test := by["container-test"]
+	if got := test.Cells(); got != 2 {
+		t.Errorf("container-test: want the untouched 2 SERIES cells, got %d (axes %v)", got, test.Axes)
+	}
+	if len(test.Axes) != 1 || test.Axes[0].Key != axisSeries {
+		t.Errorf("container-test: want SERIES kept, got %v", test.Axes)
+	}
+}
+
+// TestMatrixPinUnknownValueKeepsFanOut pins the fail-open rule. A project declaring no
+// amd64 would otherwise get a live-test cell the build grid never minted, and the job
+// would ask for an artifact no sibling uploaded — a 404, not a skipped test.
+func TestMatrixPinUnknownValueKeepsFanOut(t *testing.T) {
+	by := jobsByName(pinSubtree(t,
+		`{"SERIES": ["resolute"], "M6E_ARCH": ["arm64", "riscv64"]}`,
+		`{"M6E_ARCH": "amd64"}`))
+
+	if got := by["container-test"].Cells(); got != 2 {
+		t.Errorf("container-test: want the full 2-arch fan-out kept, got %d (axes %v)", got, by["container-test"].Axes)
+	}
+}
+
+// TestMatrixPinDropsUnreachableExclusions covers the exclusion half: one naming a
+// non-pinned value can never match a surviving cell, and keeping it would subtract
+// nothing — but one naming the pinned value still has to bite.
+func TestMatrixPinDropsUnreachableExclusions(t *testing.T) {
+	st, err := ci.Parse([]byte(`{
+	  "matrix": {
+	    "axes": {"SERIES": ["resolute", "noble"], "M6E_ARCH": ["amd64", "riscv64"]},
+	    "exclude": [{"SERIES": "noble", "M6E_ARCH": "riscv64"}, {"SERIES": "resolute", "M6E_ARCH": "amd64"}]
+	  },
+	  "tools": {"container-build": {"action": "container-build"}, "container-test": {"run": "test.d"}},
+	  "nodes": {
+	    "image-built": {"matrix": true, "needs": {"container-build": true}},
+	    "verified":    {"matrix": {"pin": {"M6E_ARCH": "amd64"}}, "needs": {"container-test": true, "image-built": true}},
+	    "ready":       {"goal": true, "needs": {"verified": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	by := jobsByName(rm)
+
+	if got := by["container-build"].Cells(); got != 2 {
+		t.Errorf("container-build: want 2 cells (4 minus the two excluded), got %d", got)
+	}
+	// resolute/amd64 is excluded and noble/riscv64 cannot be reached from a pinned
+	// amd64, so exactly the noble cell survives.
+	if got := by["container-test"].Cells(); got != 1 {
+		t.Errorf("container-test: want only the noble/amd64 cell, got %d (axes %v)", got, by["container-test"].Axes)
+	}
+}
