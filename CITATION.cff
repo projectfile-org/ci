@@ -10,7 +10,7 @@ cff-version: 1.2.0
 message: Please cite this software using the metadata from this file.
 type: software
 title: Projectfile CI Resolver
-abstract: Lowers org.projectfile.ci DAG to CI workflows
+abstract: Lowers the org.projectfile.ci DAG to CI workflows
 authors:
   - family-names: Búho
     given-names: Damián
@@ -25,3 +25,11 @@ contact:
     website: https://dbuho.me
 license: MIT
 repository-code: https://kiota.ch/projectfile/ci-resolver
+keywords:
+  - pf-ci
+  - ci-resolver
+  - projectfile
+  - dag
+  - workflow
+  - forgejo
+  - go
