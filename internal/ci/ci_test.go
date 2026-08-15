@@ -665,6 +665,25 @@ func TestValidateImageAccepts(t *testing.T) {
 		            "image-built": {"matrix": true, "needs": {"container-build": true}},
 		            "publish-image": {"matrix": true, "needs": {"image-built": true, "oci-push": true}},
 		            "published": {"goal": true, "needs": {"bins-built": true, "publish-image": true}}}}`,
+		// multiarch shape: the ONLY axis is the derived arch one, and the publish node
+		// DROPS it to index every arch's archive into one manifest list. That push is a
+		// single ref, so the bare basename is right — a placeholder here would demand a
+		// per-arch tag the fleet deliberately never publishes.
+		"arch-only-matrix-dropped-at-push": `{
+		  "image": "o9s/traefik",
+		  "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64"]}},
+		  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
+		  "nodes": {"image-built": {"matrix": true, "needs": {"container-build": true}},
+		            "publish-image": {"matrix": {"without": ["M6E_ARCH"]}, "goal": true,
+		                              "needs": {"image-built": true, "oci-push": true}}}}`,
+		// The same drop, expressed as a pin: one cell of the axis is still one ref.
+		"arch-only-matrix-pinned-at-push": `{
+		  "image": "o9s/traefik",
+		  "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64"]}},
+		  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
+		  "nodes": {"image-built": {"matrix": true, "needs": {"container-build": true}},
+		            "publish-image": {"matrix": {"pin": {"M6E_ARCH": "amd64"}}, "goal": true,
+		                              "needs": {"image-built": true, "oci-push": true}}}}`,
 	} {
 		st, err := Parse([]byte(doc))
 		if err != nil {
@@ -698,6 +717,15 @@ func TestValidateImageRejects(t *testing.T) {
 		  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
 		  "nodes": {"image-built": {"matrix": true, "needs": {"container-build": true}},
 		            "published": {"matrix": true, "goal": true, "needs": {"image-built": true, "oci-push": true}}}}`,
+		// Dropping arch does NOT excuse the series axis: the push still fans one cell
+		// per series, and each needs its own ref.
+		"collision-survives-the-arch-drop": `{
+		  "image": "b19/ubuntu",
+		  "matrix": {"axes": {"B19_UBUNTU_SERIES": ["noble", "resolute"], "M6E_ARCH": ["amd64", "arm64"]}},
+		  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
+		  "nodes": {"image-built": {"matrix": true, "needs": {"container-build": true}},
+		            "published": {"matrix": {"without": ["M6E_ARCH"]}, "goal": true,
+		                          "needs": {"image-built": true, "oci-push": true}}}}`,
 	} {
 		st, err := Parse([]byte(doc))
 		if err != nil {

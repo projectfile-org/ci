@@ -1468,6 +1468,14 @@ func (st *Subtree) axisKeys() map[string]bool {
 // is one ref, not a collision, so the coarse "any matrix anywhere" would wrongly
 // reject it. Keyed only off DATA (the oci-push ACTION token + each node's matrix
 // shape + its needs edges), never a node name (Law 1).
+//
+// The axes are counted as the node ACTUALLY fans them — less `matrix.without` and
+// less `matrix.pin`, each of which leaves that axis at no more than one cell. This
+// is what a multiarch project turns on: its publish node drops the DERIVED M6E_ARCH
+// (it indexes every arch's archive into ONE manifest list at one ref), so a project
+// whose only axis is arch pushes a single ref and needs no template. Counting the
+// dropped axis would demand a per-arch placeholder for a per-arch tag that is never
+// published — see .agents/MULTIARCH.md.
 func (st *Subtree) imagePushFans() bool {
 	pushTools := make(map[string]bool)
 	for name, man := range st.Tools {
@@ -1489,11 +1497,18 @@ func (st *Subtree) imagePushFans() bool {
 		if !needsPush {
 			continue
 		}
-		if len(n.Axes) > 0 { // per-node matrix: fans its own axes
-			return true
+		axes := n.Axes // per-node matrix fans its own axes
+		if len(axes) == 0 && n.Matrix {
+			axes = st.Axes // bare matrix:true fans the global set
 		}
-		if n.Matrix && len(st.Axes) > 0 { // bare matrix:true over the global axes
-			return true
+		dropped := make(map[string]bool, len(n.Without))
+		for _, key := range n.Without {
+			dropped[key] = true
+		}
+		for _, a := range axes {
+			if !dropped[a.Key] && n.Pin[a.Key] == "" {
+				return true
+			}
 		}
 	}
 	return false
