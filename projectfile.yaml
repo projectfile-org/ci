@@ -8,8 +8,9 @@ copyright:
 identity:
   created: "2026-06-01"
   name: ci-resolver
-  summary: Lowers org.projectfile.ci DAG to CI workflows
+  summary: Lowers the org.projectfile.ci DAG to CI workflows
   title: Projectfile CI Resolver
+  description: pf-ci lowers the vendor-neutral org.projectfile.ci signal DAG to concrete CI workflow files for Forgejo Actions and GitHub Actions, dispatching each provider leaf to its recipe in projectfile/ci-actions. Companion binary to pf-cli for the projectfile.org tooling.
 includes:
   - .makefile/b19/ci.yaml
   - .makefile/b19/images/go.yaml
@@ -161,3 +162,16 @@ repositories:
     role: origin
     type: git
     url: ssh://git@kiota.ch/projectfile/ci-resolver.git
+keywords:
+  - pf-ci
+  - ci-resolver
+  - projectfile
+  - dag
+  - workflow
+  - forgejo
+  - go
+technologies:
+  - go
+license:
+  covers: project
+  spdx: "MIT"
