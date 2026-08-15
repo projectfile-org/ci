@@ -457,19 +457,6 @@ func jobIf(events []string) string {
 	return strings.Join(parts, " || ")
 }
 
-// andIf conjoins two job `if:` conditions, either of which may be empty. Each side is
-// parenthesised because jobIf OR-es a multi-event set, and an un-parenthesised `||`
-// would swallow whatever gate is appended after it.
-func andIf(a, b string) string {
-	switch {
-	case a == "":
-		return b
-	case b == "":
-		return a
-	}
-	return "(" + a + ") && (" + b + ")"
-}
-
 // OnView is the resolved workflow `on:` trigger block — the union of every job's
 // trigger surface, narrowed to exactly what the reachable jobs need. The default
 // (any un-gated job present) is the broad `push:{} / pull_request:{}` the workflow
@@ -1428,6 +1415,13 @@ type StepView struct {
 	// binding is made per target beside `if:` and the credential refs. Empty on a target
 	// this step declares no route for, which is the historical single-job fan-out.
 	PublishSink string `json:"-"`
+	// PublishIf is this cell's run-time destination gate (sinkGate), rendered as the
+	// publish step's own `if:`. It rides the STEP because a JOB-level `if:` may not read
+	// the `matrix` context: both forges validate `if:` against a whitelist of github /
+	// needs / vars / inputs, and a job gate naming an axis makes the WHOLE workflow file
+	// unusable — every job in it, not just the publish. Same per-target lifetime as
+	// PublishSink, and reset beside it.
+	PublishIf string `json:"-"`
 	// Arch is this cell's target architecture, bound to the M6E_ARCH axis ci.Load mints
 	// from org.projectfile.architecture. It lowers to container-build's `platform:` (WHAT
 	// to build) and oci-push's `arch:` (WHERE to publish it), the producer and consumer
@@ -1700,9 +1694,15 @@ type StepEmitView struct {
 
 // If gates the step on the webhook var AND on everything before it having succeeded —
 // an image that failed to push is not a published image. success() is spelled out rather
-// than left implicit, so this gate reads next to the notify job's always() one.
-func (e StepEmitView) If() string {
-	return "${{ success() && vars." + e.WebhookVar + " != '' }}"
+// than left implicit, so this gate reads next to the notify job's always() one. The cell
+// gate (StepView.PublishIf, empty off a publish cell) is conjoined because a SKIPPED
+// publish leaves success() true: without it, a withheld destination announces an image
+// nothing ever pushed.
+func (e StepEmitView) If(gate string) string {
+	if gate != "" {
+		gate = " && (" + gate + ")"
+	}
+	return "${{ success() && vars." + e.WebhookVar + " != ''" + gate + " }}"
 }
 
 // Cell is the matrix context as JSON — WHICH cell published. A matrixed publish runs this
@@ -3286,11 +3286,13 @@ const PublishSinkAxis = "M6E_PUBLISH_SINK"
 // declared sink, so a project that sets nothing keeps the behaviour it has today — the
 // only default a fleet-wide regeneration can safely carry.
 //
-// The gate is at JOB level, so a withheld destination is skipped before checkout and
-// costs a scheduling slot rather than an artifact download. Deriving the matrix itself
-// from the variable would be cheaper still and is deliberately not done: a misspelt or
-// unset value would yield an EMPTY matrix, and a publish job with zero cells passes
-// green having published nothing.
+// The gate is at STEP level: it names a matrix axis, and neither forge admits the
+// `matrix` context in a job-level `if:` — Forgejo rejects the whole workflow file for
+// it. A withheld destination therefore costs its cell's checkout and artifact download
+// before skipping the push, which is the price of a per-cell gate. Deriving the matrix
+// itself from the variable would skip even that and is deliberately not done: a
+// misspelt or unset value would yield an EMPTY matrix, and a publish job with zero
+// cells passes green having published nothing.
 const PublishSinksVar = "CI_PUBLISH_SINKS"
 
 // sinkGate is the run-time narrowing expression for one publish cell. Both operands are
@@ -3323,12 +3325,12 @@ func publishCells(j JobView, targetKey string) JobView {
 		// Assigned unconditionally: StepViews are shared across the per-target
 		// renders, so a step left untouched here would keep the PREVIOUS target's
 		// binding and publish a cell this target never declared.
-		st.PublishSink, st.ReleaseURL, st.ReleaseRepo = "", "", ""
+		st.PublishSink, st.PublishIf, st.ReleaseURL, st.ReleaseRepo = "", "", "", ""
 		refs, targets := st.PublishRefs[targetKey], st.ReleaseTargets[targetKey]
 		if len(refs) == 0 && len(targets) == 0 {
 			continue
 		}
-		st.PublishSink = matrixVarExpr(PublishSinkAxis, nil, nil)
+		st.PublishSink, st.PublishIf = matrixVarExpr(PublishSinkAxis, nil, nil), sinkGate()
 		for _, r := range refs {
 			sinks = appendUnique(sinks, r.Sink)
 		}
@@ -3357,7 +3359,6 @@ func publishCells(j JobView, targetKey string) JobView {
 		"org.projectfile.publish (lowering "+targetKey+")", "org.projectfile.sinks · vars."+PublishSinksVar)
 	j.Matrix = append(append(AxisMap{}, j.Matrix...), ci.Axis{Key: PublishSinkAxis, Values: sinks})
 	j.Include = append(append([]MatrixRowView{}, j.Include...), rows...)
-	j.If = andIf(j.If, sinkGate())
 	j.Class = string(resolve.ClassCell)
 	return j
 }

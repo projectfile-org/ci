@@ -4084,27 +4084,44 @@ func TestPublishCellsAreScopedToTheirLowering(t *testing.T) {
 	}
 }
 
-// TestAndIfParenthesisesBothSides pins the composition the sink gate rides on. An
-// OR-ed event set is the case that matters: `a || b && gate` binds && tighter than ||,
-// so an un-parenthesised conjunction would let the job run on event `a` with no gate
-// at all — a withheld destination publishing anyway.
-func TestAndIfParenthesisesBothSides(t *testing.T) {
-	const g = "sink-gate"
-	for _, c := range []struct{ a, b, want string }{
-		{"", g, g},
-		{"evt", "", "evt"},
-		{"a || b", g, "(a || b) && (" + g + ")"},
-	} {
-		if got := andIf(c.a, c.b); got != c.want {
-			t.Errorf("andIf(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+// TestJobIfNeverReadsTheMatrixContext pins the forge rule that broke the whole fleet
+// once: a JOB-level `if:` may read only github / needs / vars / inputs, and Forgejo
+// rejects the ENTIRE workflow file — every job in it — when one names a matrix axis.
+// Any per-cell gate therefore belongs on a step. Asserted on the rendered YAML rather
+// than on a helper, because the hazard is what reaches the forge.
+func TestJobIfNeverReadsTheMatrixContext(t *testing.T) {
+	st, err := ci.Parse([]byte(publishSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// Both lowerings route, so both render the publish cell whose gate is the hazard.
+	m := Build(rm, st, &ci.Build{PublishRefs: map[string][]ci.SinkRef{
+		ci.LoweringGHA:     {{Sink: "one", Ref: "one.example/p:latest"}},
+		ci.LoweringForgejo: {{Sink: "two", Ref: "two.example/p:latest"}},
+	}})
+	for _, key := range []string{TargetGHA, TargetForgejo} {
+		out, err := Workflow(m, Targets[key], ci.Platform{})
+		if err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		// Job keys sit at 4 spaces, step keys at 8 — indentation is what separates the
+		// two `if:` scopes in the rendered file.
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "    if:") && strings.Contains(line, "matrix.") {
+				t.Errorf("%s: job-level if reads matrix: %s", key, line)
+			}
 		}
 	}
 }
 
 // TestPublishCellsCarryTheRunTimeSinkGate pins the forge-side switch: a publish cell
-// gates on CI_PUBLISH_SINKS, conjoined with — never replacing — the event condition, so
-// withholding a destination stays a per-cell skip and cannot widen when the job runs. A
-// lowering that declares no route gains no gate, because it has no cell to withhold.
+// gates on CI_PUBLISH_SINKS, so withholding a destination stays a per-cell skip and
+// never widens what the job itself runs on. A lowering that declares no route gains no
+// gate, because it has no cell to withhold.
 func TestPublishCellsCarryTheRunTimeSinkGate(t *testing.T) {
 	st, err := ci.Parse([]byte(publishSubtree))
 	if err != nil {

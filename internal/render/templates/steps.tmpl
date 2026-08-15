@@ -219,6 +219,11 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "providers/oci-push" }}
       - name: {{ .Step.Name }}
+{{- with .Step.PublishIf }}
+        # This cell's destination gate — on the STEP because a job `if:` may not read
+        # the matrix context, and a forge rejects the whole file when one does.
+        if: {{ . }}
+{{- end }}
         uses: {{ actionRef .Target .Step.Action }}
         with:
 {{- if .Step.Archives }}
@@ -260,6 +265,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "providers/forgejo-release" }}
       - name: {{ .Step.Name }}
+{{- with .Step.PublishIf }}
+        if: {{ . }}
+{{- end }}
         uses: {{ actionRef .Target .Step.Action }}
         with:
 {{- if .Step.PublishVersion }}
@@ -308,7 +316,7 @@ step env because toJSON renders multi-line JSON; the run text is built in Go
 */ -}}
 {{- define "frag/emit" }}
       - name: emit {{ .Step.Emit.Event }}
-        if: {{ .Step.Emit.If }}
+        if: {{ .Step.Emit.If .Step.PublishIf }}
         env:
           {{ cellEnv }}: {{ .Step.Emit.Cell }}
         run: |

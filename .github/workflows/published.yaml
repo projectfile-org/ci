@@ -462,6 +462,9 @@ jobs:
           name: image-${{ github.run_id }}
       - run: docker load --input image-${{ github.run_id }}.tar
       - name: oci-push
+        # This cell's destination gate — on the STEP because a job `if:` may not read
+        # the matrix context, and a forge rejects the whole file when one does.
+        if: vars.CI_PUBLISH_SINKS == '' || contains(format(',{0},', vars.CI_PUBLISH_SINKS), format(',{0},', matrix.M6E_PUBLISH_SINK))
         uses: projectfile/ci-actions/oci-push@v1
         with:
           artifact-name: image-${{ github.run_id }}
