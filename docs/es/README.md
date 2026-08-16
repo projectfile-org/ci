@@ -4,13 +4,13 @@ SPDX-License-Identifier: MIT
 pf-cli-managed: yes
 -->
 
-<!-- textlint-disable terminology -->
+<!-- textlint-disable terminology,common-misspellings -->
 
-[English](README.md) · [Українська](docs/uk/README.md)
+[English](../../README.md) · [Українська](../uk/README.md)
 
 # Projectfile CI Resolver
 
-Lowers org.projectfile.ci DAG to CI workflows
+Convierte el DAG de org.projectfile.ci en flujos de trabajo de CI
 
 [![Stand with Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://damian-buho.github.io/support-ukraine/) [![License](https://img.shields.io/static/v1?label=license&message=MIT&color=4c1&style=flat-square)](LICENSE) ![Commit style](https://img.shields.io/static/v1?label=commits&message=conventional&color=blue&style=flat-square) ![Workflow](https://img.shields.io/static/v1?label=workflow&message=git-flow&color=blue&style=flat-square) ![Versioning](https://img.shields.io/static/v1?label=versioning&message=semantic&color=blue&style=flat-square) [![PRs welcome](https://img.shields.io/static/v1?label=PRs&message=welcome&color=4c1&style=flat-square)](CONTRIBUTING.md) [![Citation](https://img.shields.io/static/v1?label=citation&message=cff&color=blue&style=flat-square)](CITATION.cff) [![REUSE compliance](https://api.reuse.software/badge/codeberg.org/projectfile/ci-resolver)](https://api.reuse.software/info/codeberg.org/projectfile/ci-resolver)
 
@@ -20,18 +20,26 @@ Lowers org.projectfile.ci DAG to CI workflows
 
 ## Características
 
-- CI DAG to workflow lowering
+- Reducción del DAG de CI a flujos de trabajo
 
-Consulta [Características](FEATURES.md) para ver la lista completa.
+Consulta [FEATURES.md](FEATURES.md) para ver la lista completa.
 
 ## Qué entrega este proyecto
 
 - **Ejecutable** `pf-ci`
-- **Imagen de contenedor** `kiota.ch/projectfile/ci-resolver:latest`
+- **Imagen de contenedor** `ghcr.io/damian-buho/projectfile/ci-resolver:latest`
+- **Imagen de contenedor** `docker.io/damianbuho/projectfile-ci-resolver:latest`
 
 ## Instalación
 
-Pull the published container image:
+Descarga la imagen de contenedor publicada:
+
+```sh
+docker pull ghcr.io/damian-buho/projectfile/ci-resolver:latest
+docker pull docker.io/damianbuho/projectfile-ci-resolver:latest
+```
+
+Si los registros anteriores no están disponibles, descarga desde el origen:
 
 ```sh
 docker pull kiota.ch/projectfile/ci-resolver:latest
@@ -49,7 +57,7 @@ pf-ci generate -target gha -check
 
 ## Compilación
 
-- [Referencia del Makefile](docs/MAKEFILE.md)
+- [Referencia del Makefile](../MAKEFILE.md)
 
 Puntos de entrada de la canalización:
 
@@ -64,22 +72,29 @@ Para el bucle de desarrollo local, `make dev-container` levanta el dev-container
 
 ## Políticas
 
-- [Cómo contribuir](docs/es/CONTRIBUTING.md)
-- [Política de seguridad](docs/es/SECURITY.md)
-- [Cómo obtener ayuda](docs/es/SUPPORT.md)
-- [Código de conducta](docs/es/CODE_OF_CONDUCT.md)
+- [Cómo contribuir](CONTRIBUTING.md)
+- [Política de seguridad](SECURITY.md)
+- [Cómo obtener ayuda](SUPPORT.md)
+- [Código de conducta](CODE_OF_CONDUCT.md)
 
 ## Enlaces
 
-- [especificación de projectfile](https://projectfile.org)
-- [Projectfile CI Resolver on Codeberg](https://codeberg.org/projectfile/ci-resolver)
-- [Projectfile CI Resolver on GitHub](https://github.com/damian-buho/projectfile-ci-resolver)
-- [Projectfile CI Resolver on kiota.ch](https://kiota.ch/projectfile/ci-resolver)
-- [Issues on Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
-- [Issues on GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
+### Proyecto
+
+- [Especificación de Projectfile](https://projectfile.org)
+- [Projectfile CI Resolver en Codeberg](https://codeberg.org/projectfile/ci-resolver)
+- [Projectfile CI Resolver en GitHub](https://github.com/damian-buho/projectfile-ci-resolver)
+- [Projectfile CI Resolver en kiota.ch](https://kiota.ch/projectfile/ci-resolver)
+- [Incidencias en Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
+- [Incidencias en GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
+
+### Otros
+
+- [Del autor](https://dbuho.me)
 
 ## Licencia
 
 Este proyecto se publica bajo la licencia MIT — consulta el archivo [LICENSE](LICENSE) para más detalles.
 
+*Generado desde projectfile ([saber cómo](https://projectfile.org/how-to/readme))*
 <!-- textlint-enable -->
