@@ -760,12 +760,25 @@ type rawWhen struct {
 // --build-args). A nil Build is valid — the renderer falls back to a bare
 // ${{ vars.<VAR> }} image and skips auto-forwarding.
 type Build struct {
-	// Images is the org.projectfile.ci.images map: var NAME → fully-formed run-image
-	// value (e.g. "B19_GO_IMAGE" → "${B19_DOCKER_REGISTRY}/b19/go:${B19_GO_VERSION}").
-	// Used to derive the parent image var and the path-only registry path a tool image
-	// lowers to. A run-image is a `docker run` concern, so it is NEVER auto-forwarded
-	// as a build-arg.
+	// Images is the foreign-image map: var NAME → composed reference. When the
+	// target's pull route exists the value is SINK-COMPOSED (the pull sink's own
+	// grammar under the entry's own parts — `kiota.ch/b19/ubuntu/${…}`, or the
+	// flat Docker Hub form), so nested and flat registries alike are correct by
+	// construction; without a route it is the entry's own `ref` (make-plane refs
+	// the render lowers piecewise). The org.projectfile.ci.images flat overlay
+	// still wins per name. A run-image is a `docker run` concern, so it is NEVER
+	// auto-forwarded as a build-arg.
 	Images map[string]string
+	// ImageHeads records, per images var NAME, the LITERAL repository head the
+	// pull sink contributed to the composed value (`kiota.ch`,
+	// `docker.io/damianbuho`) — present only when the sink template was
+	// prefix-shaped, i.e. everything after the head is the image's own identity.
+	// Render turns it into the one pull-side redirect,
+	// `vars.SOURCE_DOCKER_REGISTRY || '<head>'`, with the per-image
+	// `vars.<NAME>` full-ref override in front. An absent entry (no route, a
+	// non-prefix sink grammar, or a flat ci.images overlay) lowers piecewise as
+	// before — nothing to redirect.
+	ImageHeads map[string]string
 	// Args is the org.projectfile.build.args list: the Dockerfile ARGs (FROM refs,
 	// versions) container-build needs, auto-forwarded as --build-args (see
 	// render.toolStep). Mirrors the make reader's --build-arg auto-emit.
@@ -890,9 +903,9 @@ type rawBuild struct {
 // compose its own reference. m6e's 123-image-refs.mk reads the same subtree.
 const imagesNS = "org.projectfile.images"
 
-// declaredImages composes every entry of imagesNS into the flat
-// `<registry>/<path>:<tag>` ref the render plane already reads, so the parts form
-// reaches the forge as today's concatenation and no consumer of Build.Images changes.
+// declaredImages composes every entry of imagesNS into the flat reference the
+// render plane reads, so the parts form reaches the forge as one string and no
+// consumer of Build.Images changes.
 //
 // The address is the entry's OWN `ref` template and the scope is the entry's OWN
 // subtree — the pair m6e's image-refs-read.sh binds, and binding the scope per entry
@@ -901,38 +914,125 @@ const imagesNS = "org.projectfile.images"
 // Expansion goes through core's interp, the engine that already resolves a sink `ref`,
 // so one template cannot mean two things across the two planes.
 //
-// The sink route m6e takes when a `registry` var names a declared sink is deliberately
-// NOT taken here: on the forge the registry stays a `vars.<NAME>` the operator sets, so
-// the entry's own `ref` reproduces the reference this plane published before the parts
-// migration, byte for byte.
-func (r *Reader) declaredImages() (map[string]string, error) {
+// When the TARGET's pull route exists (`org.projectfile.publish.<forge>.pull` → a
+// sink), that sink's own template replaces the entry's `ref` as the address — the
+// same route publishRefs/pullRefs compose the project's own image from, expanded
+// under the ENTRY's parts instead. This is what makes a registry that refuses
+// nested paths (Docker Hub, reached through `${flatpath}`) correct on the forge
+// with no per-image variable: the layout is sink data, composed at render time.
+// A prefix-shaped template (`<literal head>/${path}:${tag}` or
+// `…/${flatpath}:${tag}`) additionally records its head in ImageHeads, the one
+// part a `vars.SOURCE_DOCKER_REGISTRY` redirect may replace; any other grammar
+// composes whole and bakes (no redirect can express it).
+func (r *Reader) declaredImages(lowering string) (map[string]string, map[string]string, error) {
 	raw, err := r.subtree(imagesNS)
 	if err != nil || len(raw) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	var parts map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return nil, fmt.Errorf("%s: parse: %w", imagesNS, err)
+		return nil, nil, fmt.Errorf("%s: parse: %w", imagesNS, err)
 	}
+	sink := r.pullSinkTemplate(lowering)
+	head, tailTmpl := splitSinkPrefix(sink)
 	images := make(map[string]string, len(parts))
+	heads := make(map[string]string, len(parts))
 	for name := range parts {
 		scope := imagesNS + "." + name
-		ref, ok := interp.ExpandIn(r.doc, "${"+scope+".ref}", scope)
+		ref := ""
+		if sink != "" {
+			// The pull sink's grammar, under this entry's own parts. The tail
+			// (prefix shape) or the whole template (any other grammar) — either
+			// way a `${part}` the document cannot answer comes back VERBATIM,
+			// which the shared hole checks below catch.
+			tmpl := sink
+			if tailTmpl != "" {
+				tmpl = tailTmpl
+			}
+			if out, ok := interp.ExpandIn(r.doc, tmpl, scope); ok {
+				if tailTmpl != "" {
+					ref = head + out
+				} else {
+					ref = out
+				}
+			}
+		}
+		if ref == "" {
+			var ok bool
+			ref, ok = interp.ExpandIn(r.doc, "${"+scope+".ref}", scope)
+			if !ok {
+				genlog.Warn("declared image dropped — its ref resolves to nothing",
+					"image", name, "remedy", "declare the missing part under "+scope)
+				continue
+			}
+		}
 		// A part the document cannot answer comes back as the VERBATIM template, so an
 		// unspent `$${` escape or a surviving lower-case `${…}` (every make variable in
 		// this fleet is upper case) marks a reference with a hole in it. Dropping is the
 		// honest answer — a half-composed ref pulls the wrong image, and the render's
 		// bare `${{ vars.<NAME> }}` fallback fails loudly instead.
-		if !ok || strings.Contains(ref, "$${") || lowerRefRe.MatchString(ref) {
+		if strings.Contains(ref, "$${") || lowerRefRe.MatchString(ref) {
 			genlog.Warn("declared image dropped — its ref names a part nothing declares",
 				"image", name, "ref", ref,
 				"remedy", "declare the missing part under "+scope)
 			continue
 		}
+		if tailTmpl != "" {
+			heads[name] = head
+		}
 		genlog.Decision("run_image", name+" -> "+ref, scope+".ref", "")
 		images[name] = ref
 	}
-	return images, nil
+	return images, heads, nil
+}
+
+// splitSinkPrefix splits a prefix-shaped sink template (`<literal
+// head>/${path}:${tag}` or `<literal head>/${flatpath}:${tag}`) into its head and
+// tail. head "" (and tail "") means the template is NOT prefix-shaped — the head
+// must be literal (a `${part}` in it names no registry the redirect could stand
+// for) and everything after it must be the image's own identity alone.
+func splitSinkPrefix(tmpl string) (head, tail string) {
+	if tmpl == "" {
+		return "", ""
+	}
+	m := sinkPrefixRe.FindStringSubmatch(tmpl)
+	if m == nil {
+		return "", ""
+	}
+	return m[1], strings.TrimPrefix(m[0], m[1])
+}
+
+// sinkPrefixRe recognizes the prefix shape splitSinkPrefix describes.
+var sinkPrefixRe = regexp.MustCompile(`^([^$]*)/\$\{(?:path|flatpath)\}:\$\{tag\}$`)
+
+// pullSinkTemplate resolves the lowering's pull route to its sink's raw `ref`
+// template — the grammar every foreign image composes against for files of this
+// lowering. "" when the project declares no publish route, no pull on the route
+// that applies, or a pull naming no declared sink (warned, mirroring composeSink).
+func (r *Reader) pullSinkTemplate(lowering string) string {
+	routes, err := r.publishRoutes()
+	if err != nil || len(routes) == 0 {
+		return ""
+	}
+	forge, ok := r.publishForges(routes)[lowering]
+	if !ok {
+		return ""
+	}
+	sink := routes[forge].Pull
+	if sink == "" {
+		return ""
+	}
+	sinks, err := r.sinkTemplates()
+	if err != nil {
+		return ""
+	}
+	tmpl := sinks[sink]
+	if tmpl == "" {
+		genlog.Warn("pull sink dropped — declares no ref template",
+			"forge", forge, "sink", sink,
+			"remedy", "declare ref on org.projectfile.sinks."+sink)
+	}
+	return tmpl
 }
 
 // lowerRefRe matches a `${lowercase…}` reference left unresolved in a composed image
@@ -944,12 +1044,17 @@ var lowerRefRe = regexp.MustCompile(`\$\{[a-z]`)
 // (org.projectfile.build.args). If none is present, returns (nil, nil) and the
 // renderer falls back to single-tier expressions with no auto-forwarding. Reads
 // through the library seam (core's includes-merged document), not a subprocess.
-func LoadBuild(pfPath string) (*Build, error) {
+//
+// lowering is the render TARGET key ("gha"|"forgejo"): the pull route that decides
+// which sink's grammar foreign images compose against is a per-lowering fact (a
+// forgejo file pulls from the origin forge's route, a gha file from github's).
+// "" composes no route — entries keep their own `ref` (the vendor-neutral model).
+func LoadBuild(pfPath, lowering string) (*Build, error) {
 	r, err := newReader(pfPath)
 	if err != nil {
 		return nil, err
 	}
-	images, err := r.declaredImages()
+	images, heads, err := r.declaredImages(lowering)
 	if err != nil {
 		return nil, err
 	}
@@ -970,6 +1075,7 @@ func LoadBuild(pfPath string) (*Build, error) {
 		for name, ref := range flat {
 			genlog.Decision("run_image", name+" -> "+ref, "org.projectfile.ci.images."+name, "")
 			images[name] = ref
+			delete(heads, name) // a flat overlay is a whole ref — no sink head to redirect
 		}
 	}
 	// build-target: per-lowering Dockerfile stage selection (the forge keys feed the
@@ -1038,7 +1144,7 @@ func LoadBuild(pfPath string) (*Build, error) {
 		return nil, nil
 	}
 	return &Build{
-		Images: images, Args: inputs, Events: events, Secrets: secRaw,
+		Images: images, ImageHeads: heads, Args: inputs, Events: events, Secrets: secRaw,
 		BuildTarget: buildTarget, PublishRefs: publishRefs, PullRefs: pullRefs,
 		ReleaseTargets: releaseTargets,
 	}, nil
@@ -1048,9 +1154,11 @@ func LoadBuild(pfPath string) (*Build, error) {
 // destination a consumer of this project READS from — the ref the readme prints and
 // the ref the `audited` re-scan pulls. It is declared rather than derived from
 // `priority`, because a pipeline reads from where it is cheapest to read (kiota builds
-// from kiota) and that is not the destination a reader is sent to. It does NOT answer
-// where a build sources its BASE images: those are foreign coordinates, resolved
-// through org.projectfile.images and the registry vars.
+// from kiota) and that is not the destination a reader is sent to. On the FORGE it
+// also composes foreign coordinates: files of this forge lower every
+// org.projectfile.images entry against this route's sink (declaredImages), so the
+// one route answers where a build's base images come FROM too; the MAKE plane keeps
+// resolving those through the registry vars, whose value may name the same sinks.
 //
 // `push` and `release` are the two PLANES, kept apart because they are: an image is a
 // ref composed from a sink template, a release is a tarball attached to a git tag by a

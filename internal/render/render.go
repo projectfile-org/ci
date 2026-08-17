@@ -25,6 +25,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -220,6 +221,16 @@ const ImageTagVar = "BASE_IMAGE_DEFAULT_VERSION"
 // plane (m6e) owns that name; only the forge surface is unprefixed.
 const imageTagMakeVar = "M6E_BASE_IMAGE_DEFAULT_VERSION"
 
+// SourceRegistryVar is the ONE pull-side redirect: set it and every sink-composed
+// image reference pulls from it instead of the sink's declared head — an instance
+// mirroring the whole fleet to one registry with a single variable. Same-LAYOUT
+// only (nested↔nested, flat↔flat): the path grammar is sink data the render bakes,
+// so a registry needing the other layout is a metadata edit + regenerate, not a
+// variable. Optional everywhere: unset falls to the head the sink declares, which
+// is correct by construction (the route names where the fleet publishes). The
+// per-image vars.<NAME> override (see sinkImageExpr) outranks it for exceptions.
+const SourceRegistryVar = "SOURCE_DOCKER_REGISTRY"
+
 // TagEnvVar (M6E_TAG) is the workflow-level env name the tag expression is hoisted to:
 // the full `${{ vars.BASE_IMAGE_DEFAULT_VERSION || 'latest' }}` form is defined ONCE in
 // the workflow `env:` block and referenced as `${{ env.M6E_TAG }}` at every image/version
@@ -300,7 +311,21 @@ func pfCliImageRef(b *ci.Build) string {
 	if b == nil || b.Images[PfCliImageVar] == "" {
 		return ""
 	}
+	if head, ok := b.ImageHeads[PfCliImageVar]; ok {
+		// Sink-composed, FULL ref (the entry's own tag part lowers inside the
+		// one expression); the per-image override is full-ref scoped.
+		return sinkImageExpr(PfCliImageVar, head, b.Images[PfCliImageVar], nil, nil, nil) + tagFallback(b.Images[PfCliImageVar])
+	}
 	return imageExpr(PfCliImageVar, b) + ":" + imageTagExpr()
+}
+
+// tagFallback appends the flip-var tag only when the composed value carries none,
+// so a sink template that builds the tag itself is not doubled.
+func tagFallback(val string) string {
+	if imageTag(val) == "" {
+		return ":" + imageTagExpr()
+	}
+	return ""
 }
 
 // MiscToolsImageVar is the ci.images var NAME carrying the misc-tools ref — where the
@@ -322,15 +347,17 @@ func miscToolsImageRef(b *ci.Build) string {
 	if b == nil || b.Images[MiscToolsImageVar] == "" {
 		return ""
 	}
+	if head, ok := b.ImageHeads[MiscToolsImageVar]; ok {
+		return sinkImageExpr(MiscToolsImageVar, head, b.Images[MiscToolsImageVar], nil, nil, nil) + tagFallback(b.Images[MiscToolsImageVar])
+	}
 	return imageExpr(MiscToolsImageVar, b) + ":" + imageTagExpr()
 }
 
 // OutputRegistryVar is the SINGLE forge variable supplying the PUSH (output) registry
-// for oci-push — DISTINCT from the per-namespace INPUT registries (B19_DOCKER_REGISTRY
-// etc.) that answer "where do base images come FROM". OUTPUT_REGISTRY answers "where
-// does THIS project publish TO", and is forge-DEPENDENT: each forge's vars store sets it
-// (a kiota.ch pipeline pushes to kiota.ch; a GitHub mirror to ghcr.io; a Codeberg
-// pipeline to Docker Hub). The value is the full push prefix (host + optional
+// for oci-push — DISTINCT from SourceRegistryVar, the pull-side redirect. OUTPUT_REGISTRY
+// answers "where does THIS project publish TO", and is forge-DEPENDENT: each forge's vars
+// store sets it (a kiota.ch pipeline pushes to kiota.ch; a GitHub mirror to ghcr.io; a
+// Codeberg pipeline to Docker Hub). The value is the full push prefix (host + optional
 // owner/path), appended with the project basename; empty => Docker Hub. Org-level var =
 // default, repo var = project-wise override (forge var precedence), so one name covers
 // both. The resolver stays forge-agnostic — the per-forge value lives in the forge vars
@@ -588,10 +615,11 @@ type InputView struct {
 // push/PR-only workflow).
 // buildInputs is the org.projectfile.build.args list; when the dispatch declares
 // `build-args: true` every EXPOSABLE arg (isExposableBuildArg) is appended as its own
-// string input pre-filled with its default (a composed/file arg is skipped, matching the
-// override wiring). An explicit `inputs:` entry of the same NAME wins (the author's typed
-// form). The merged list is name-sorted for a byte-stable, alphabetised run form.
-func buildTriggers(schedule []string, dispatch *ci.Dispatch, buildInputs []ci.BuildInput) *TriggersView {
+// string input pre-filled with its default (a composed/file arg, and a declared
+// foreign image, are skipped, matching the override wiring). An explicit `inputs:`
+// entry of the same NAME wins (the author's typed form). The merged list is
+// name-sorted for a byte-stable, alphabetised run form.
+func buildTriggers(schedule []string, dispatch *ci.Dispatch, buildInputs []ci.BuildInput, b *ci.Build) *TriggersView {
 	if len(schedule) == 0 && dispatch == nil {
 		return nil
 	}
@@ -612,7 +640,7 @@ func buildTriggers(schedule []string, dispatch *ci.Dispatch, buildInputs []ci.Bu
 		}
 		if dispatch.BuildArgs {
 			for _, bi := range buildInputs {
-				if declared[bi.Name] || !isExposableBuildArg(bi) {
+				if declared[bi.Name] || !isExposableBuildArg(bi, b) {
 					continue
 				}
 				iv := InputView{Name: bi.Name, Type: ci.InputString}
@@ -694,7 +722,16 @@ func lowerBuildArg(ba ci.BuildArg, axes []ci.Axis) (string, *FileRead) {
 // dispatch inputs.NAME is empty and the expression falls through unchanged (a non-exposed
 // arg, or any file, renders byte-identically to before). A composed `${...}` default is
 // never exposed (isExposableBuildArg), so its lowerMakeExpr form needs no prefix.
-func buildInputValue(bi ci.BuildInput, defaults map[string]string, matrix, partial, exposed map[string]bool) string {
+func buildInputValue(bi ci.BuildInput, b *ci.Build, defaults map[string]string, matrix, partial, exposed map[string]bool) string {
+	if b != nil {
+		if head, ok := b.ImageHeads[bi.Name]; ok {
+			// A declared foreign image: the sink-composed ref with the
+			// full-ref vars.<NAME> override in front — one expression, no
+			// per-image variable an operator must set. OVERRIDES the arg's own
+			// default shapes below (the declaration is the truth).
+			return sinkImageExpr(bi.Name, head, b.Images[bi.Name], defaults, matrix, partial)
+		}
+	}
 	if imageVarRefRe.MatchString(bi.Default) {
 		return lowerMakeExpr(bi.Default, defaults, matrix, partial)
 	}
@@ -710,12 +747,15 @@ func buildInputValue(bi ci.BuildInput, defaults map[string]string, matrix, parti
 
 // isExposableBuildArg reports whether a build.args input can round-trip as a plain
 // workflow_dispatch string input: a literal- or empty-default STRING arg. A `file:`
-// arg (a per-cell digest READ at build time) and a composed `${...}` default (make-plane
-// refs the forge cannot expand, so it cannot be pre-filled nor entered as a scalar) are
-// excluded — the SAME predicate gates both the input exposure (buildTriggers) and the
-// override wiring (buildInputValue via dispatchBuildArgs), so the form and the build agree.
-func isExposableBuildArg(bi ci.BuildInput) bool {
-	return bi.File == "" && !imageVarRefRe.MatchString(bi.Default)
+// arg (a per-cell digest READ at build time), a composed `${...}` default (make-plane
+// refs the forge cannot expand, so it cannot be pre-filled nor entered as a scalar),
+// and a DECLARED foreign image (sink-composed at render; its vars.<NAME> override is
+// a full ref, not an input) are excluded — the SAME predicate gates both the input
+// exposure (buildTriggers) and the override wiring (buildInputValue via
+// dispatchBuildArgs), so the form and the build agree.
+func isExposableBuildArg(bi ci.BuildInput, b *ci.Build) bool {
+	return bi.File == "" && !imageVarRefRe.MatchString(bi.Default) &&
+		(b == nil || b.ImageHeads[bi.Name] == "")
 }
 
 // dispatchBuildArgs returns the set of org.projectfile.build.args NAMES this file exposes
@@ -733,7 +773,7 @@ func dispatchBuildArgs(st *ci.Subtree, b *ci.Build) map[string]bool {
 	}
 	exposed := make(map[string]bool, len(b.Args))
 	for _, bi := range b.Args {
-		if isExposableBuildArg(bi) {
+		if isExposableBuildArg(bi, b) {
 			exposed[bi.Name] = true
 		}
 	}
@@ -835,13 +875,22 @@ func imageExpr(varName string, b *ci.Build) string {
 	if b == nil {
 		return VarRef(varName)
 	}
+	resolved := varName
 	val, ok := b.Images[varName]
 	if !ok {
 		if parent := parentImageVar(varName, b.Images); parent != "" {
 			val, ok = b.Images[parent]
+			resolved = parent
 		}
 	}
-	if lit := imagePath(val); ok && lit != "" {
+	lit := imagePath(val)
+	if head, sank := b.ImageHeads[resolved]; sank && strings.HasPrefix(lit, head+"/") {
+		// Sink-composed: the redirect + per-image override wrap, repository-scoped
+		// (run-tool appends the tag). Defaults/matrix are nil — a tool PATH has no
+		// build-arg refs to default (the series cases are build-args, not tools).
+		return sinkImageExpr(resolved, head, lit, nil, nil, nil)
+	}
+	if ok && lit != "" {
 		return imagePathExpr(lit)
 	}
 	return VarRef(varName)
@@ -869,19 +918,28 @@ func toolImageParts(varName string, b *ci.Build) (path, pinnedTag string) {
 	if b == nil {
 		return VarRef(varName), ""
 	}
+	resolved := varName
 	val, ok := b.Images[varName]
 	if !ok {
 		if parent := parentImageVar(varName, b.Images); parent != "" {
 			val, ok = b.Images[parent]
+			resolved = parent
 		}
 	}
 	lit := imagePath(val)
+	if head, sank := b.ImageHeads[resolved]; sank && strings.HasPrefix(lit, head+"/") {
+		// Sink-composed: the redirect + per-image override wrap replaces the
+		// external-literal wrap below (a sink-composed path is never a bare
+		// literal, so that guard could not fire for it anyway).
+		path = sinkImageExpr(resolved, head, lit, nil, nil, nil)
+	} else if ok && lit != "" {
+		path = imagePathExpr(lit)
+		if path == lit { // no ${VAR} lowered ⇒ external literal ⇒ instance override knob
+			path = "${{ vars." + varName + " || '" + lit + "' }}"
+		}
+	}
 	if !ok || lit == "" {
 		return VarRef(varName), "" // orphan var: bare ref, flip tag (imageExpr parity)
-	}
-	path = imagePathExpr(lit)
-	if path == lit { // no ${VAR} lowered ⇒ external literal ⇒ instance override knob
-		path = "${{ vars." + varName + " || '" + lit + "' }}"
 	}
 	if tag := imageTag(val); tag != "" && tag != "${"+imageTagMakeVar+"}" {
 		pinnedTag = lowerMakeExpr(tag, nil, nil, nil) // a plain literal stays verbatim
@@ -913,31 +971,48 @@ func toolImageParts(varName string, b *ci.Build) (path, pinnedTag string) {
 func lowerMakeExpr(s string, defaults map[string]string, matrix, partial map[string]bool) string {
 	return imageVarRefRe.ReplaceAllStringFunc(s, func(m string) string {
 		name := imageVarRefRe.FindStringSubmatch(m)[1]
-		if name == imageTagMakeVar {
-			return imageTagExpr()
-		}
-		if matrix[name] {
-			return matrixVarExpr(name, partial, defaults)
-		}
-		if def := defaults[name]; def != "" {
-			return "${{ vars." + name + " || '" + def + "' }}"
-		}
-		return "${{ vars." + name + " }}"
+		return "${{ " + refExprInner(name, defaults, matrix, partial) + " }}"
 	})
 }
 
-// matrixVarExpr lowers a per-cell matrix variable NAME to its forge expression. A
-// var bound on every cell needs only the bare ${{ matrix.NAME }}. A PARTIAL override
-// (a var some cell leaves unset) backstops with the vars store then the build-arg
-// default, so an un-decorated cell keeps the default instead of an empty value —
-// `||` is first-truthy, so the cell's matrix value still wins wherever it is set.
-func matrixVarExpr(name string, partial map[string]bool, defaults map[string]string) string {
+// refExprInner is the INNER (context-free) lowering of one ${NAME} make ref — the
+// same rule set lowerMakeExpr wraps in ${{ }}: the tag var maps to the workflow
+// env hoist, a matrix-bound name reads the cell, a name with a literal build-arg
+// default keeps it as its fallback, anything else is a bare vars lookup. Shared
+// with sinkImageExpr, whose format() args are expressions WITHOUT the ${{ }}
+// wrapper — one rule set, two wrappings.
+func refExprInner(name string, defaults map[string]string, matrix, partial map[string]bool) string {
+	if name == imageTagMakeVar {
+		return "env." + TagEnvVar
+	}
+	if matrix[name] {
+		return matrixExprInner(name, partial, defaults)
+	}
+	if def := defaults[name]; def != "" {
+		return "vars." + name + " || '" + def + "'"
+	}
+	return "vars." + name
+}
+
+// matrixExprInner is the matrix branch of the inner lowering: a var bound on every
+// cell needs only the bare matrix.NAME. A PARTIAL override (a var some cell leaves
+// unset) backstops with the vars store then the build-arg default, so an
+// un-decorated cell keeps the default instead of an empty value — `||` is
+// first-truthy, so the cell's matrix value still wins wherever it is set.
+func matrixExprInner(name string, partial map[string]bool, defaults map[string]string) string {
 	if partial[name] {
 		if def := defaults[name]; def != "" {
-			return "${{ matrix." + name + " || vars." + name + " || '" + def + "' }}"
+			return "matrix." + name + " || vars." + name + " || '" + def + "'"
 		}
 	}
-	return "${{ matrix." + name + " }}"
+	return "matrix." + name
+}
+
+// matrixVarExpr lowers a per-cell matrix variable NAME to its wrapped forge
+// expression — matrixExprInner in ${{ }}, for the call sites that embed one
+// matrix ref in surrounding text.
+func matrixVarExpr(name string, partial map[string]bool, defaults map[string]string) string {
+	return "${{ " + matrixExprInner(name, partial, defaults) + " }}"
 }
 
 // buildArgDefaults maps each build-arg NAME to its LITERAL default. Composed defaults
@@ -971,6 +1046,56 @@ func imagePathExpr(path string) string {
 		return path
 	}
 	return lowerMakeExpr(path, nil, nil, nil)
+}
+
+// sinkImageExpr lowers a pull-sink-composed image reference (Build.Images value
+// with a Build.ImageHeads entry) to ONE forge expression:
+//
+//	${{ vars.<overrideVar> || format('{0}<body…>:{N}', vars.SOURCE_DOCKER_REGISTRY || '<head>', <part refs…>) }}
+//
+// head is the literal repository head the sink contributed (kiota.ch,
+// docker.io/damianbuho) and body is the rest of val — entirely the image's own
+// identity, so the head is the only part SourceRegistryVar replaces. Every ${NAME}
+// in the body lowers by refExprInner's rules and becomes a format() arg, which is
+// why the WHOLE reference must live inside one ${{ }}: a piecewise spelling would
+// juxtapose the override against the body and a full-ref vars.<NAME> value would
+// append to it instead of replacing it. overrideVar names the per-image exception
+// hatch — its scope is the CALLER's value (the full ref for a build-arg/pf-cli
+// input, the repository for a tool `image:` whose tag run-tool appends), matching
+// the external-literal override toolImageParts already wraps. format() braces in
+// literal body text are doubled, per the expression grammar. A val the head does
+// not prefix (a stale head) falls to piecewise lowering — the old spelling —
+// rather than guessing a split.
+func sinkImageExpr(overrideVar, head, val string, defaults map[string]string, matrix, partial map[string]bool) string {
+	if !strings.HasPrefix(val, head+"/") {
+		return lowerMakeExpr(val, defaults, matrix, partial)
+	}
+	body := val[len(head):]
+	var fmtStr, args []string
+	fmtStr = append(fmtStr, "{0}")
+	args = append(args, "vars."+SourceRegistryVar+" || '"+head+"'")
+	rest := body
+	for {
+		loc := imageVarRefRe.FindStringSubmatchIndex(rest)
+		if loc == nil {
+			fmtStr = append(fmtStr, escapeFormatLiteral(rest))
+			break
+		}
+		fmtStr = append(fmtStr, escapeFormatLiteral(rest[:loc[0]]))
+		name := rest[loc[2]:loc[3]]
+		fmtStr = append(fmtStr, "{"+strconv.Itoa(len(args))+"}")
+		args = append(args, refExprInner(name, defaults, matrix, partial))
+		rest = rest[loc[1]:]
+	}
+	return "${{ vars." + overrideVar + " || format('" + strings.Join(fmtStr, "") +
+		"', " + strings.Join(args, ", ") + ") }}"
+}
+
+// escapeFormatLiteral doubles the braces a format() template would otherwise read
+// as placeholders — registry references carry none, but the escape keeps the
+// builder honest for any body text.
+func escapeFormatLiteral(s string) string {
+	return strings.NewReplacer("{", "{{", "}", "}}").Replace(s)
 }
 
 // ImageArchiveEnv is the build→scan contract variable. A consuming portable job
@@ -1085,11 +1210,32 @@ func resolverEnv() []KV {
 // so this expansion is applied at exactly the two block sites and nowhere else.
 // Driven by resolverEnv() itself, so a third hoist is covered by construction; the
 // definitions carry no env refs, so one pass is enough.
+//
+// The bare-token pass (`env.M6E_TAG` WITHOUT the wrapper) covers hoist refs embedded
+// INSIDE a larger expression — a format() arg in a sink-composed image ref, where the
+// exact-string form never occurs. It applies only to single-expression definitions
+// (innerExpr): the tag var's definition has an inner form, but a juxtaposed
+// definition like the run scope's (`${{ github.run_id }}-${{ github.run_attempt }}`)
+// has none — its halves would splice mid-expression — so such a hoist must never be
+// referenced bare inside an env block, and isn't.
 func inlineHoists(s string) string {
 	for _, kv := range resolverEnv() {
 		s = strings.ReplaceAll(s, "${{ env."+kv.Key+" }}", kv.Value)
+		if inner, ok := innerExpr(kv.Value); ok {
+			s = strings.ReplaceAll(s, "env."+kv.Key, inner)
+		}
 	}
 	return s
+}
+
+// innerExpr strips the single ${{ … }} wrapper off a hoist definition, yielding the
+// expression as it can appear as a format() argument or inside another expression.
+func innerExpr(v string) (string, bool) {
+	const open, shut = "${{ ", " }}"
+	if !strings.HasPrefix(v, open) || !strings.HasSuffix(v, shut) {
+		return "", false
+	}
+	return v[len(open) : len(v)-len(shut)], true
 }
 
 // inlineHoistsEnv applies inlineHoists across a job `env:` block. Fresh slice: bindEnv
@@ -2489,7 +2635,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 					fileArgs = append(fileArgs, bi.Name+"="+substAxes(bi.File, subst))
 					continue
 				}
-				step.Env = append(step.Env, EnvVar{Key: bi.Name, Value: buildInputValue(bi, argDefaults, matrixSet, partial, dispatchArgs)})
+				step.Env = append(step.Env, EnvVar{Key: bi.Name, Value: buildInputValue(bi, b, argDefaults, matrixSet, partial, dispatchArgs)})
 				names = append(names, bi.Name)
 			}
 		}
@@ -2996,7 +3142,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		if b != nil {
 			buildInputs = b.Args // fuels `dispatch:{build-args:true}` — one input per declared arg
 		}
-		triggers = buildTriggers(g.Schedule, g.Dispatch, buildInputs)
+		triggers = buildTriggers(g.Schedule, g.Dispatch, buildInputs, b)
 		goalScope = g.When
 	}
 	// The `on:` surface derives from the REAL jobs only. The synthetic notify job is

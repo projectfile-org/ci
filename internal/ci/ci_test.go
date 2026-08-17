@@ -1076,8 +1076,13 @@ func TestPullRefsAbsentWithoutRoutes(t *testing.T) {
 // both route planes reach in publishDoc.
 const (
 	sinkKiota = "kiota"
-	sinkGHCR  = "ghcr"
-	archRISCV = "riscv64"
+	// testUbuntuBaseImageVar / testJsToolsImageVar / hubHead name the images var
+	// keys and the flat sink head the sink-composition tests repeat.
+	testUbuntuBaseImageVar = "B19_UBUNTU_BASE_IMAGE"
+	testJsToolsImageVar    = "D9T_JS_TOOLS_IMAGE"
+	hubHead                = "docker.io/damianbuho"
+	sinkGHCR               = "ghcr"
+	archRISCV              = "riscv64"
 	// refGHCR is what publishDoc's ghcr template composes to: a NESTED path with the
 	// axis left verbatim for the cell to fill. Both route planes expect this one value,
 	// which is the point — push and pull compose a sink identically.
@@ -1218,16 +1223,19 @@ org:
 //     hole in it, because a half-composed ref pulls the wrong image.
 func TestDeclaredImagesComposeFromParts(t *testing.T) {
 	r := &Reader{doc: declaredImagesDoc(t)}
-	got, err := r.declaredImages()
+	got, heads, err := r.declaredImages("")
 	if err != nil {
 		t.Fatalf("declaredImages: %v", err)
 	}
 	want := map[string]string{
-		"D9T_JS_TOOLS_IMAGE": "${D9T_DOCKER_REGISTRY}/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
-		"B19_GO_IMAGE":       "${B19_DOCKER_REGISTRY}/b19/go:dev",
+		testJsToolsImageVar: "${D9T_DOCKER_REGISTRY}/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+		"B19_GO_IMAGE":      "${B19_DOCKER_REGISTRY}/b19/go:dev",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("declaredImages:\n got %#v\nwant %#v", got, want)
+	}
+	if len(heads) != 0 {
+		t.Fatalf("declaredImages heads: got %#v, want none (no pull route)", heads)
 	}
 }
 
@@ -1236,12 +1244,137 @@ func TestDeclaredImagesComposeFromParts(t *testing.T) {
 // ci-plane entries on their own.
 func TestDeclaredImagesAbsentIsNoOp(t *testing.T) {
 	r := &Reader{doc: publishDoc(t)}
-	got, err := r.declaredImages()
+	got, _, err := r.declaredImages("forgejo")
 	if err != nil {
 		t.Fatalf("declaredImages: %v", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("declaredImages: got %#v, want none", got)
+	}
+}
+
+// sinkImagesDoc mirrors the FLEET shape: images declared as parts (path AND
+// flatpath, the flip-var tag) plus the damian-buho metadata sinks/routes — a
+// prefix-shaped nested sink on the origin forge's pull route and a FLAT (Docker
+// Hub) sink on github's, so one fixture pins both layouts.
+func sinkImagesDoc(t *testing.T) *projectfile.Document {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: go
+repositories:
+  - role: origin
+    type: git
+    url: ssh://git@kiota.ch/b19/go.git
+org:
+  projectfile:
+    images:
+      B19_UBUNTU_BASE_IMAGE:
+        org: b19
+        name: ubuntu
+        series: $${B19_UBUNTU_SERIES}
+        path: ${org}/${name}/${series}
+        flatpath: ${org}-${name}-${series}
+        tag: $${M6E_BASE_IMAGE_DEFAULT_VERSION}
+        registry: B19_DOCKER_REGISTRY
+        ref: $${B19_DOCKER_REGISTRY}/${path}:${tag}
+      D9T_JS_TOOLS_IMAGE:
+        org: d9t
+        name: js-tools
+        path: ${org}/${name}
+        flatpath: ${org}-${name}
+        tag: $${M6E_BASE_IMAGE_DEFAULT_VERSION}
+        registry: D9T_DOCKER_REGISTRY
+        ref: $${D9T_DOCKER_REGISTRY}/${path}:${tag}
+    sinks:
+      ghcr:
+        ref: ghcr.io/damian-buho/${path}:${tag}
+      hub:
+        ref: docker.io/damianbuho/${flatpath}:${tag}
+    publish:
+      github:
+        push: [ghcr]
+        pull: hub
+      kiota:
+        push: [ghcr, hub]
+        pull: ghcr
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestDeclaredImagesComposeFromPullSink pins the forge contract this change builds:
+// a declared foreign image composes against the TARGET's pull sink, under the
+// entry's OWN parts — nested (`${path}`) and flat (`${flatpath}`) layouts alike —
+// and a prefix-shaped template records its literal head for the render's
+// vars.SOURCE_DOCKER_REGISTRY redirect. Per-lowering: the forgejo file pulls from
+// the ORIGIN forge's route, the gha file from github's.
+func TestDeclaredImagesComposeFromPullSink(t *testing.T) {
+	r := &Reader{doc: sinkImagesDoc(t)}
+	got, heads, err := r.declaredImages("forgejo")
+	if err != nil {
+		t.Fatalf("declaredImages forgejo: %v", err)
+	}
+	wantRefs := map[string]string{
+		testUbuntuBaseImageVar: "ghcr.io/damian-buho/b19/ubuntu/${B19_UBUNTU_SERIES}:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+		testJsToolsImageVar:    "ghcr.io/damian-buho/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+	}
+	if !reflect.DeepEqual(got, wantRefs) {
+		t.Fatalf("declaredImages forgejo:\n got %#v\nwant %#v", got, wantRefs)
+	}
+	wantHeads := map[string]string{
+		testUbuntuBaseImageVar: "ghcr.io/damian-buho",
+		testJsToolsImageVar:    "ghcr.io/damian-buho",
+	}
+	if !reflect.DeepEqual(heads, wantHeads) {
+		t.Fatalf("declaredImages forgejo heads:\n got %#v\nwant %#v", heads, wantHeads)
+	}
+
+	// github's route pulls from the FLAT sink: same entries, Docker Hub layout.
+	got, heads, err = r.declaredImages("gha")
+	if err != nil {
+		t.Fatalf("declaredImages gha: %v", err)
+	}
+	wantRefs = map[string]string{
+		testUbuntuBaseImageVar: "docker.io/damianbuho/b19-ubuntu-${B19_UBUNTU_SERIES}:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+		testJsToolsImageVar:    "docker.io/damianbuho/d9t-js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+	}
+	if !reflect.DeepEqual(got, wantRefs) {
+		t.Fatalf("declaredImages gha:\n got %#v\nwant %#v", got, wantRefs)
+	}
+	wantHeads = map[string]string{
+		testUbuntuBaseImageVar: hubHead,
+		testJsToolsImageVar:    hubHead,
+	}
+	if !reflect.DeepEqual(heads, wantHeads) {
+		t.Fatalf("declaredImages gha heads:\n got %#v\nwant %#v", heads, wantHeads)
+	}
+}
+
+// TestSplitSinkPrefix pins the prefix-shape test the head redirect depends on:
+// only `<literal head>/${path}:${tag}` and `…/${flatpath}:${tag}` split (the head
+// must be literal — a `${part}` in it names no registry a redirect could stand
+// for); every other grammar composes whole and bakes.
+func TestSplitSinkPrefix(t *testing.T) {
+	for _, tc := range []struct{ tmpl, head, tail string }{
+		{"kiota.ch/${path}:${tag}", "kiota.ch", "/${path}:${tag}"},
+		{"docker.io/damianbuho/${flatpath}:${tag}", hubHead, "/${flatpath}:${tag}"},
+		{"", "", ""},
+		{"${host}/${path}:${tag}", "", ""},
+		{"ghcr.io/${path}:${tag}/${extra}", "", ""},
+		{"ghcr.io/${path}", "", ""},
+	} {
+		head, tail := splitSinkPrefix(tc.tmpl)
+		if head != tc.head || tail != tc.tail {
+			t.Fatalf("splitSinkPrefix(%q):\n got (%q, %q)\nwant (%q, %q)", tc.tmpl, head, tail, tc.head, tc.tail)
+		}
 	}
 }
 

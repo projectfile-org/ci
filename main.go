@@ -26,8 +26,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
+	"kiota.ch/projectfile/core/v2/pkg/genlog"
 	"projectfile.org/projectfile/ci-resolver/internal/ci"
 	"projectfile.org/projectfile/ci-resolver/internal/render"
 	"projectfile.org/projectfile/ci-resolver/internal/resolve"
@@ -70,8 +72,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, `pf-ci — lower org.projectfile.ci to vendor CI workflows
 
 Usage:
-  pf-ci resolve  [-pf PATH]
-  pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check]
+  pf-ci resolve  [-pf PATH] [-verbose]
+  pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check] [-verbose]
   pf-ci version
 
 resolve   Emit the vendor-neutral job model as JSON (the template input).
@@ -84,7 +86,20 @@ Environment:
                        (default: ".yaml"). Set to ".yml" to render the legacy
                        form; m6e’s make act-* derives its default from the same
                        var, so one knob keeps the generator and consumer in sync.
+  PF_CLI_VERBOSE        Same effect as -verbose, for a run that cannot pass flags.
 `)
+}
+
+// verboseFromFlagOrEnv resolves the effective verbose setting: the -verbose
+// flag, or PF_CLI_VERBOSE=1 when the flag was not set — the same two-source
+// rule pf-cli and pf-bridge apply, so one env var reaches every projectfile
+// binary uniformly.
+func verboseFromFlagOrEnv(flagVal bool) bool {
+	if flagVal {
+		return true
+	}
+	v, _ := strconv.ParseBool(os.Getenv("PF_CLI_VERBOSE"))
+	return v
 }
 
 // lower runs the read+lower pipeline on an already-target-resolved subtree:
@@ -92,13 +107,14 @@ Environment:
 // Callers decide whether the subtree is the neutral one (`resolve`) or a
 // target-pruned view (`generate`) — lowering itself is target-agnostic.
 // pfPath is forwarded to ci.LoadBuild so the resolver can read the run-image map
-// (ci.images) + container-build args (build.args).
+// (ci.images) + container-build args (build.args). No target here, so foreign
+// images keep their own refs (sink composition is a per-lowering fact).
 func lower(st *ci.Subtree, pfPath string) (render.Model, error) {
 	rm, err := resolve.Resolve(st)
 	if err != nil {
 		return render.Model{}, err
 	}
-	b, err := ci.LoadBuild(pfPath)
+	b, err := ci.LoadBuild(pfPath, "")
 	if err != nil {
 		return render.Model{}, fmt.Errorf("ci: reading build inputs: %w", err)
 	}
@@ -118,9 +134,11 @@ func platformOf(st *ci.Subtree, key string) ci.Platform {
 func cmdResolve(args []string) error {
 	fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
 	pf := fs.String("pf", "", "projectfile path (default: auto-discover)")
+	verbose := fs.Bool("verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	genlog.SetVerbose(verboseFromFlagOrEnv(*verbose))
 	// resolve emits the VENDOR-NEUTRAL model: no target, so no membership prune —
 	// every declared tool appears (it is the shared contract, not one vendor's view).
 	st, err := ci.Load(*pf)
@@ -145,9 +163,11 @@ func cmdGenerate(args []string) error {
 	pf := fs.String("pf", "", "projectfile path (default: auto-discover)")
 	out := fs.String("o", "", "output directory for the per-goal workflow files (default: the target's vendor dir); a single path for lefthook")
 	check := fs.Bool("check", false, "freshness gate: exit non-zero if the committed workflow drifted")
+	verbose := fs.Bool("verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	genlog.SetVerbose(verboseFromFlagOrEnv(*verbose))
 	target, ok := render.Targets[*targetKey]
 	if !ok {
 		return fmt.Errorf("unknown -target %q (have %v)", *targetKey, render.TargetKeys())
@@ -200,14 +220,15 @@ func cmdGenerate(args []string) error {
 
 // workflowFiles renders every goal of the subtree to its own committed workflow path,
 // returning the path→bytes map and the resolved output directory. The build inputs
-// (ci.images / build.args) are read ONCE and shared across goals. dir is the -o
-// override when set, else the target's vendor-fixed workflows directory.
+// (ci.images / build.args) are read ONCE per target — the pull route that composes
+// foreign images is a fact of the target's forge — and shared across goals. dir is
+// the -o override when set, else the target's vendor-fixed workflows directory.
 func workflowFiles(st *ci.Subtree, target render.Target, outDir, pfPath string) (map[string][]byte, string, error) {
 	if st == nil || !st.GoalsExplicit {
 		return nil, "", fmt.Errorf("generate %s: no goal:true nodes declared — "+
 			"per-goal workflow generation needs explicit goals", target.Key)
 	}
-	b, err := ci.LoadBuild(pfPath)
+	b, err := ci.LoadBuild(pfPath, target.Key)
 	if err != nil {
 		return nil, "", fmt.Errorf("ci: reading build inputs: %w", err)
 	}

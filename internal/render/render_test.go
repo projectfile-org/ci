@@ -30,6 +30,8 @@ const (
 	testUbuntuHash      = "B19_UBUNTU_HASH"
 	testUbuntuBaseImage = "B19_UBUNTU_BASE_IMAGE"
 	testResolute        = "resolute"
+	testJsToolsImage    = "D9T_JS_TOOLS_IMAGE"
+	testKiotaHead       = "kiota.ch"
 	testContainerTest   = "container-test"
 	testDCUp            = "dc-up-d"
 	testDCDown          = "dc-down"
@@ -440,8 +442,8 @@ func TestImageVarExpression(t *testing.T) {
 			// registry to a juxtaposed ${{ vars.* }} fragment (it never expands `${...}`),
 			// else the verbatim ref is invalid; the flip-var TAG lowers to the dev↔latest
 			// expression via runToolVersion, so no workspace image bakes a literal tag.
-			"B19_GO_IMAGE":       "${B19_DOCKER_REGISTRY}/b19/go:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
-			"D9T_JS_TOOLS_IMAGE": "${D9T_DOCKER_REGISTRY}/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+			"B19_GO_IMAGE":   "${B19_DOCKER_REGISTRY}/b19/go:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+			testJsToolsImage: "${D9T_DOCKER_REGISTRY}/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
 		},
 	}
 	st, err := ci.Parse([]byte(subtree))
@@ -1271,6 +1273,98 @@ func TestBuildArgMakeExprDefault(t *testing.T) {
 	} {
 		if strings.Contains(s, bad) {
 			t.Errorf("raw make syntax / broken wrapping leaked into output (%q):\n%s", bad, s)
+		}
+	}
+}
+
+// TestSinkComposedImageRefs pins the forge contract of the pull-sink composition:
+// a declared foreign image reaches the workflow as ONE expression — the per-image
+// full-ref override, then format() with the vars.SOURCE_DOCKER_REGISTRY redirect
+// (the sink's literal head as fallback) and the entry's parts as args — never a
+// bare vars.<NAME> an operator must set, and never raw make syntax. The same
+// Build also pins the repository-scoped tool form and the pf-cli full-ref form.
+func TestSinkComposedImageRefs(t *testing.T) {
+	const subtree = `{
+  "image": "b19/go",
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "js-lint": {"image": "D9T_JS_TOOLS_IMAGE", "run": "make lint"}
+  },
+  "nodes": {
+    "image-built": {"needs": {"container-build": true}},
+    "linted": {"needs": {"js-lint": true}},
+    "ready": {"goal": true, "needs": {"image-built": true, "linted": true}}
+  }
+}`
+	build := &ci.Build{
+		Images: map[string]string{
+			testUbuntuBaseImage: "kiota.ch/b19/ubuntu/${B19_UBUNTU_SERIES}:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+			testJsToolsImage:    "kiota.ch/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+			PfCliImageVar:       "kiota.ch/projectfile/cli:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+		},
+		ImageHeads: map[string]string{
+			testUbuntuBaseImage: testKiotaHead,
+			testJsToolsImage:    testKiotaHead,
+			PfCliImageVar:       testKiotaHead,
+		},
+		Args: []ci.BuildInput{
+			{Name: testUbuntuBaseImage}, // empty default — the entry, not the default, composes
+			{Name: testUbuntuSeries, Default: testResolute},
+		},
+	}
+	st, err := ci.Parse([]byte(subtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, build), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	// The build-arg FROM ref: full-ref override + redirect + series default + tag hoist.
+	wantBase := "B19_UBUNTU_BASE_IMAGE=${{ vars.B19_UBUNTU_BASE_IMAGE || format('{0}/b19/ubuntu/{1}:{2}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.B19_UBUNTU_SERIES || 'resolute', env.M6E_TAG) }}"
+	if !strings.Contains(s, wantBase) {
+		t.Errorf("sink-composed build-arg wrong:\nwant %q\ngot:\n%s", wantBase, s)
+	}
+	// The same ref promoted to the JOB env block must carry the tag arg INLINED: the
+	// env context does not exist while an env block evaluates ("Unknown Variable
+	// Access env"), so inlineHoists expands the bare env.M6E_TAG token inside the
+	// larger expression — the Forgejo schema failure of the first regeneration.
+	wantJobEnv := "B19_UBUNTU_BASE_IMAGE: ${{ vars.B19_UBUNTU_BASE_IMAGE || format('{0}/b19/ubuntu/{1}:{2}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.B19_UBUNTU_SERIES || 'resolute', vars.BASE_IMAGE_DEFAULT_VERSION || 'latest') }}"
+	if !strings.Contains(s, wantJobEnv) {
+		t.Errorf("sink-composed job-env value not hoist-expanded:\nwant %q\ngot:\n%s", wantJobEnv, s)
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "B19_UBUNTU_BASE_IMAGE:") && strings.Contains(line, "env.M6E_TAG") {
+			t.Errorf("bare env.M6E_TAG survived inside the env-block form:\n%s", line)
+		}
+	}
+	// The tool image: repository-scoped (run-tool appends the tag), no args needed.
+	wantTool := "image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}"
+	if !strings.Contains(s, wantTool) {
+		t.Errorf("sink-composed tool image wrong:\nwant %q\ngot:\n%s", wantTool, s)
+	}
+	// pf-cli: the FULL ref inside the one expression (the entry's tag part lowers in).
+	wantCli := "pf-cli-image: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli:{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', env.M6E_TAG) }}"
+	if !strings.Contains(s, wantCli) {
+		t.Errorf("sink-composed pf-cli ref wrong:\nwant %q\ngot:\n%s", wantCli, s)
+	}
+	// An images-declared arg is NOT a dispatch input (a full ref cannot round-trip
+	// as one); the scalar series arg stays.
+	if strings.Contains(s, "B19_UBUNTU_BASE_IMAGE:\n") {
+		t.Errorf("images-declared arg exposed as dispatch input:\n%s", s)
+	}
+	if !strings.Contains(s, "B19_UBUNTU_SERIES:") {
+		t.Errorf("scalar series arg lost its dispatch input:\n%s", s)
+	}
+	// The raw make syntax must never reach the workflow.
+	for _, bad := range []string{"${B19_UBUNTU_SERIES}", "${M6E_BASE_IMAGE_DEFAULT_VERSION}", "=kiota.ch/"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("raw make syntax leaked into output (%q):\n%s", bad, s)
 		}
 	}
 }
