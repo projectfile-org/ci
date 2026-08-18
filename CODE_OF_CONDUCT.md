@@ -83,5 +83,3 @@ The Contributor Covenant is licensed under the
 
 [homepage]: https://www.contributor-covenant.org
 [CC-BY-SA]: https://creativecommons.org/licenses/by-sa/4.0/
-
-*Generated from projectfile ([learn how](https://projectfile.org/how-to/code-of-conduct))*

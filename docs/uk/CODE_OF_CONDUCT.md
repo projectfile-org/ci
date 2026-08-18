@@ -86,6 +86,4 @@ Contributor Covenant поширюється на умовах ліцензії
 
 [homepage]: https://www.contributor-covenant.org
 [CC-BY-SA]: https://creativecommons.org/licenses/by-sa/4.0/
-
-*Згенеровано з projectfile ([дізнатися як](https://projectfile.org/how-to/code-of-conduct))*
 <!-- textlint-enable -->

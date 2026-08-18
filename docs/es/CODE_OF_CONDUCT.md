@@ -94,6 +94,4 @@ El Contributor Covenant se publica bajo la licencia
 
 [homepage]: https://www.contributor-covenant.org
 [CC-BY-SA]: https://creativecommons.org/licenses/by-sa/4.0/
-
-*Generado desde projectfile ([saber cómo](https://projectfile.org/how-to/code-of-conduct))*
 <!-- textlint-enable -->
