@@ -62,6 +62,4 @@ gpg --encrypt --armor --recipient B64C122EE16C3746 message.txt
 
 Projectfile CI Resolver наразі не має програми винагород за вразливості. Проте ми цінуємо
 відповідальні повідомлення — див. канал контакту вище.
-
-*Згенеровано з projectfile ([дізнатися як](https://projectfile.org/how-to/security))*
 <!-- textlint-enable -->

@@ -61,5 +61,3 @@ gpg --encrypt --armor --recipient B64C122EE16C3746 message.txt
 
 Projectfile CI Resolver does not currently run a bug bounty programme. We still welcome
 responsibly disclosed reports — see the contact channel above.
-
-*Generated from projectfile ([learn how](https://projectfile.org/how-to/security))*
