@@ -4,8 +4,8 @@ SPDX-License-Identifier: MIT
 pf-cli-managed: yes
 -->
 
-<!-- textlint-disable terminology -->
-[English](SUPPORT.md) · [Español](docs/es/SUPPORT.md)
+<!-- textlint-disable terminology,common-misspellings -->
+[English](../../SUPPORT.md) · [Español](../es/SUPPORT.md)
 
 # Як отримати підтримку
 
@@ -16,16 +16,13 @@ pf-cli-managed: yes
 
 Перегляньте це спершу — можливо, відповідь уже є:
 
-- [специфікація projectfile](https://projectfile.org)
-- [Issues on Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
-- [Issues on GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
+- [Issues на Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
+- [Issues на GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
 
 ## Куди звертатися
 
-- **Повідомити про відтворювану ваду** — [Issues on Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
-- **Повідомити про відтворювану ваду** — [Issues on GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
-- **Повідомити про вразливість безпеки** — [docs/uk/SECURITY.md](docs/uk/SECURITY.md)
-- **Зробити внесок у проєкт** — [docs/uk/CONTRIBUTING.md](docs/uk/CONTRIBUTING.md)
+- **Повідомити про вразливість безпеки** — [SECURITY.md](SECURITY.md)
+- **Зробити внесок у проєкт** — [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Як поставити гарне запитання
 
@@ -37,10 +34,15 @@ pf-cli-managed: yes
 4. **Середовище** — операційна система, версія Projectfile CI Resolver, версія середовища виконання.
 5. **Мінімальний відтворюваний приклад**, якщо це можливо.
 
-Див. [посібник MCVE на Stack Overflow](https://stackoverflow.com/help/minimal-reproducible-example)
-для порад.
-
 ## Час відповіді
 
 Це проєкт, який підтримує спільнота. Супровідники відповідають, коли мають змогу — зазвичай протягом кількох днів, але без гарантій. Просимо про терпіння та повагу.
+
+## Платна підтримка
+
+Платна підтримка для Projectfile CI Resolver доступна:
+
+- [Підтримка від автора](https://dbuho.me)
+
+*Згенеровано з projectfile ([дізнатися як](https://projectfile.org/how-to/support))*
 <!-- textlint-enable -->
