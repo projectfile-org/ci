@@ -3913,6 +3913,49 @@ func TestSupplyChainPublishFuse(t *testing.T) {
 	}
 }
 
+// TestPublishFuseNeverEntersTheImageStore pins the boundary that keeps the publish job
+// off the runner's SHARED containers-storage graphroot: `docker load` and the synthetic
+// secrets-provision step belong to the LIVE fuse group ALONE, because only its compose
+// stack runs the image and reads a `.secrets/` tree. Every publish member acts elsewhere
+// — skopeo copies the archive straight to the registry, cosign signs the pushed digest —
+// so a load there enters an image no step reads, and the docker-cleanup reap paired with
+// it then deletes layers underneath every concurrent job: containers/storage fails the
+// blob-reuse path with `layer for blob … not found`, which podman reports as the
+// misleading "payload does not match any of the supported image formats" (exit 125). The
+// archive itself must still DOWNLOAD — oci-push reads it as a file.
+func TestPublishFuseNeverEntersTheImageStore(t *testing.T) {
+	st, err := ci.Parse([]byte(supplyChainSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// secretsBuild carries a declared org.projectfile.ci.secrets subtree, so a publish job
+	// that still tested `fuse != ""` would inject the provision step here too.
+	m := Build(rm, st, secretsBuild)
+	sink := jobOf(m, testOCIPush)
+	if sink.Load || sink.Stem != "" || sink.RmiImage != "" || sink.RmNetwork != "" {
+		t.Errorf("a publish-fuse job must not enter the image store: Load=%v Stem=%q RmiImage=%q RmNetwork=%q",
+			sink.Load, sink.Stem, sink.RmiImage, sink.RmNetwork)
+	}
+	for _, s := range sink.Steps {
+		if s.Action == ActionSecretsProvision {
+			t.Errorf("a publish-fuse job runs no compose stack, so it must not provision secrets; steps: %+v", sink.Steps)
+		}
+	}
+	var gotArchive bool
+	for _, d := range sink.Downloads {
+		if d.Name == "image"+artifactScopeSuffix {
+			gotArchive = true
+		}
+	}
+	if !gotArchive {
+		t.Errorf("the publish job must still DOWNLOAD the build archive (oci-push reads the tar), got %+v", sink.Downloads)
+	}
+}
+
 // TestSupplyChainSingletonNoOp pins the OPT-IN safety property: with oci-push the LONE
 // `fuse: publish` tool (no cosign tools opted in), the singleton group is NEVER fused —
 // oci-push stays exactly where it renders today (a step under publish-image, not

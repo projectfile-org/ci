@@ -2010,8 +2010,14 @@ func (s StepView) ExecContainer() string { return "${{ env." + ContainerInstance
 // names that network <project>-network. This is the ONE place the resolver must know that
 // naming, so a `network: live` tool can JOIN the stack dc-up-d brought up (companion of
 // `fuse: live`, which co-locates the tool into the same job).
+//
+// liveFuse is that companion: the ONE fuse group whose members need the built image in the
+// runner's image store, because compose runs it. Every other group (`publish`, `lint`) acts
+// on the archive or on a registry ref, so naming the group here is what keeps `docker load`
+// off their jobs.
 const (
 	liveNetwork          = "live"
+	liveFuse             = "live"
 	composeNetworkSuffix = "-network"
 )
 
@@ -2974,9 +2980,19 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 				hasReports = true
 			}
 			// Build-tar / artifact consumer — DERIVED from the contracted needs edge, no
-			// manifest field. A FUSED member (live) loads the tar into the daemon at the
+			// manifest field. A LIVE-fused member loads the tar into the daemon at the
 			// JOB level; a non-fused scanner reads it as a file via M6E_IMAGE_ARCHIVE on
 			// its own step. A generic build-artifact consumer pulls the producer's upload.
+			// Only the LIVE group loads: it is the one whose compose stack runs the image.
+			// A `publish`/`lint` member takes neither branch — oci-push and cosign act on
+			// the archive and on the registry digest, so a load there enters an image
+			// nothing reads into the runner's SHARED containers-storage graphroot, and the
+			// paired docker-cleanup then reaps it. That pair is a writer AND a reaper in
+			// the race documented in .agents/CONTAINERS.md: a concurrent job resolving a
+			// blob it is reusing finds the layer deleted underneath it and dies with
+			// `layer for blob … not found` (podman reports it as "payload does not match
+			// any of the supported image formats", exit 125). Cheapest fix for a flake is
+			// not emitting the step that causes it.
 			for _, need := range j.Needs {
 				if builds[need] {
 					// The producer may fan over an axis this node DROPPED, in which case one
@@ -3008,7 +3024,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 							job.Downloads = append(job.Downloads, DownloadView{Name: stem})
 						}
 					}
-					if man.Fuse != "" {
+					if man.Fuse == liveFuse {
 						job.Load = true
 						// The FIRST declared architecture stands in when the node consumes
 						// several: a daemon ref names one image, and the arch set is written
@@ -3043,7 +3059,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						// that still has an endpoint attached (the `up`-failed path), and it
 						// says so without failing the step. Run-scoped => never reused.
 						job.RmNetwork = proj + composeNetworkSuffix
-					} else if man.Action == "" {
+					} else if man.Fuse == "" && man.Action == "" {
 						step.Env = append(step.Env, EnvVar{Key: ImageArchiveEnv, Value: step.Stem + ".tar"})
 					}
 					break
@@ -3074,7 +3090,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		// only), so ForTarget strips it and it never reaches Resolve as a tool — the
 		// resolver instead lowers its EFFECT: a leading step in the LIVE (fused) job,
 		// where dc-up-d lives. Detection is DATA-ONLY (no node/tool name hardcode): the
-		// job hosts a member whose manifest declares a non-empty `fuse` (the live group)
+		// job hosts a member whose manifest declares the LIVE fuse group (never `publish`
+		// or `lint`: they run no compose stack, so a `.secrets/` tree materialised there
+		// is written for a reader that does not exist)
 		// AND the org.projectfile.ci.secrets subtree is declared. The empty-subtree no-op
 		// invariant: nil/empty Build.Secrets ⇒ no step, byte-identical to before. Placed
 		// FIRST (the fused members are already DAG-ordered; secrets must exist before the
@@ -3082,7 +3100,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		// matrix-homogeneity check, the event union, and the env/cred folds above.
 		if b != nil && len(b.Secrets) > 0 {
 			for _, t := range memberTools {
-				if st.Tools[t].Fuse != "" {
+				if st.Tools[t].Fuse == liveFuse {
 					secretsArch := jobLoadArch
 					if secretsArch == "" {
 						secretsArch = archVarExpr(axes)

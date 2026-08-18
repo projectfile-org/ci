@@ -44,10 +44,11 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
                              reads the file at build time from the checkout), the
                              mounts name=mountpoint list, and the image ref to stamp.
   providers/oci-push         an ACTION step that CONSUMES the build tar (pulled once by
-                             the node-job) and pushes it: `docker load`s the cell tar,
-                             logs in with the REGISTRY_* env the credentials overlay
-                             binds on the job, re-tags to the push ref (the tool's
-                             `registry:` var, ABSENT => Docker Hub), and pushes.
+                             the node-job) and pushes it: logs in with the REGISTRY_* env
+                             the credentials overlay binds on the job, then copies the
+                             archive STRAIGHT to each push ref (the tool's `registry:`
+                             var, ABSENT => Docker Hub) with skopeo. It never enters the
+                             image store, which is why its job renders no `docker load`.
   providers/container-exec   an ACTION step that execs the tool's `run` command INSIDE
                              the live compose container (the fused live job's test): a
                              `uses:` with the container instance (the build→live env
