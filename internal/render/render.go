@@ -3139,6 +3139,21 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			job.ReportsUpload = artifactStem("reports-"+nv.Name, AxisMap(axes))
 			job.ReportsPath = "reports/"
 		}
+		// Fan-out happens HERE, after the steps, env and artifacts are settled, because a
+		// chain link is the SAME node run at one axis value — splitting it earlier would
+		// hand two nodes the same tools, and tool ownership is per node (a multi-homed
+		// tool is assigned to exactly one owner, so the second link would render hollow).
+		if axesSet && nv.Serialise != "" {
+			chain, err := serialiseChain(job, nv.Serialise, axes)
+			if err != nil {
+				if buildErr == nil {
+					buildErr = err
+				}
+				continue
+			}
+			jobs = append(jobs, chain...)
+			continue
+		}
 		jobs = append(jobs, job)
 	}
 
@@ -3837,6 +3852,116 @@ func excludeViews(rows []ci.Exclusion) []MatrixRowView {
 	out := make([]MatrixRowView, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, MatrixRowView{Fields: kvViews(r)})
+	}
+	return out
+}
+
+// jobIDUnsafe matches every run of characters a forge will not accept in a job id
+// (which is `[A-Za-z_][A-Za-z0-9_-]*`), so an axis value like `3.14` or `linux/amd64`
+// can key a job name. The suffix position means a leading digit is already legal.
+var jobIDUnsafe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
+
+// serialiseChain lowers a node's `serialise: <AXIS>` (ci.Node.Serialise) into the one
+// ordering primitive EVERY forge honours: one job per value of that axis, each waiting
+// on the one before, plus a join carrying the AUTHORED node name so not a single
+// downstream `needs:` has to know the split happened.
+//
+// Why an edge and not a cap: `strategy.max-parallel` is a GitHub guarantee only. Forgejo
+// expands a matrix statically into independent job rows and dispatches each to any runner
+// with a free slot, with no scheduler stage in between for a cap to act in — so the cap
+// renders and is ignored (go-gitea/gitea#35561), while `needs` is stored on the job row
+// the dispatcher actually reads.
+//
+// Only the named axis is walked; every other axis keeps fanning inside each link, so a
+// memory-bound build gets one series at a time with its arches still parallel. An axis the
+// project does not declare (or one carrying a single value) is a logged NO-OP returning
+// the job untouched — the same graceful degradation as matrix.without / matrix.pin, and
+// what lets ONE shared m6e declaration render byte-identically fleet-wide.
+func serialiseChain(job JobView, axis string, axes []ci.Axis) ([]JobView, error) {
+	idx := -1
+	for i, a := range axes {
+		if a.Key == axis {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		genlog.Info("serialise: no such axis, job keeps its fan-out", "job", job.Name, "axis", axis, "declared", len(axes))
+		return []JobView{job}, nil
+	}
+	values := axes[idx].Values
+	if len(values) < 2 {
+		genlog.Info("serialise: axis carries one value, nothing to chain", "job", job.Name, "axis", axis, "values", values)
+		return []JobView{job}, nil
+	}
+
+	links := make([]JobView, 0, len(values))
+	names := make([]string, 0, len(values))
+	seen := make(map[string]string, len(values))
+	for _, v := range values {
+		name := job.Name + "-" + jobIDUnsafe.ReplaceAllString(v, "-")
+		// Two values may slug to ONE id (`3.14` and `3-14`), which would silently drop a
+		// link and build one series twice. Refuse rather than emit a workflow that is
+		// short a cell nobody would miss until the release is wrong.
+		if prev, dup := seen[name]; dup {
+			return nil, fmt.Errorf("org.projectfile.ci: node %q serialise %q: values %q and %q both key job %q "+
+				"(rename one value, or drop serialise on this axis)", job.Name, axis, prev, v, name)
+		}
+		seen[name] = v
+
+		link := job
+		link.Name = name
+		// The axis stays DECLARED at one value rather than being dropped: every artifact
+		// name, report stem and env binding in the steps reads `${{ matrix.<AXIS> }}`, so a
+		// link without the axis would ask for a tar nobody uploaded (the reason matrix.pin
+		// exists at all).
+		link.Matrix = pinAxis(axes, idx, v)
+		link.Include = rowsMatching(job.Include, axis, v)
+		link.Exclude = rowsMatching(job.Exclude, axis, v)
+		link.Needs = append(append([]string(nil), job.Needs...), names...)
+		sort.Strings(link.Needs)
+		links = append(links, link)
+		names = append(names, name)
+		genlog.Decision("serialise_link", job.Name+" "+axis+"="+v+" -> "+name,
+			"chained after "+strings.Join(names[:len(names)-1], ","), "nodes."+job.Name+".serialise")
+	}
+	// The join keeps the authored name AND the node's event predicate: a consumer gated on
+	// the same events must not wait on a gate that never runs.
+	return append(links, JobView{Name: job.Name, Class: ClassGate, IsGate: true, Needs: names, Events: job.Events}), nil
+}
+
+// pinAxis returns axes with the one at idx narrowed to a single value — the grid a chain
+// link fans over. The other axes are carried untouched, so they still fan in parallel.
+func pinAxis(axes []ci.Axis, idx int, value string) AxisMap {
+	out := make([]ci.Axis, len(axes))
+	copy(out, axes)
+	out[idx] = ci.Axis{Key: axes[idx].Key, Values: []string{value}}
+	return AxisMap(out)
+}
+
+// rowsMatching keeps the include/exclude rows that still belong to a link's narrowed grid:
+// a row naming the serialised axis survives only for THIS value, a row silent about it
+// applies to every link. Without the filter an `include` row for another value would MINT
+// the cell the chain just took apart (GHA grows the matrix for an unmatched include row).
+func rowsMatching(rows []MatrixRowView, axis, value string) []MatrixRowView {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]MatrixRowView, 0, len(rows))
+	for _, r := range rows {
+		keep := true
+		for _, f := range r.Fields {
+			if f.Key == axis && f.Value != value {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

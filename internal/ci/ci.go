@@ -78,6 +78,25 @@ type Node struct {
 	// THAT node without touching cheap sibling matrices. Meaningful only when Matrix is
 	// set (enforced at parse); a per-cell scheduling concern, never WHAT a gate means.
 	MaxParallel int
+	// Serialise names the GLOBAL axis this node walks ONE VALUE AT A TIME: the lowering
+	// splits the node into one job per value of that axis, chained by `needs`, plus a
+	// join keeping the authored name (so consumers' edges are untouched). Empty => the
+	// node fans normally.
+	//
+	// It exists because MaxParallel is a GitHub-only guarantee. Forgejo expands a matrix
+	// STATICALLY, server-side, into independent job rows, then dispatches each to any
+	// runner with a free slot — there is no scheduler stage between expansion and
+	// dispatch for a strategy cap to live in, so `strategy.max-parallel` renders and is
+	// then ignored (go-gitea/gitea#35561). `needs` is the ONE ordering primitive both
+	// forges honour, because it is stored on the job row the dispatcher reads. So the
+	// portable spelling of "these cells must not run together" is an EDGE, not a cap.
+	//
+	// Only the named axis serialises; every OTHER axis still fans in parallel inside
+	// each link, which is what a memory-bound build wants (one series at a time, its
+	// arches together). Naming an axis this project does not declare is a logged NO-OP,
+	// as with Without and Pin — the property that lets one shared m6e declaration render
+	// byte-identically across the projects that never had the axis.
+	Serialise string
 	// Concurrency is this node's serialisation group (nil => none). Like MaxParallel it is
 	// a where/how-it-runs concern, never WHAT a gate means: a second run in the same group
 	// queues (or cancels, if CancelInProgress). Set on the publish node so two releases of
@@ -739,7 +758,10 @@ type rawNode struct {
 	Matrix json.RawMessage `json:"matrix"`
 	// MaxParallel mirrors GHA's strategy.max-parallel — cap on concurrent matrix cells
 	// for THIS node. 0/absent => the forge default (all cells at once).
-	MaxParallel int             `json:"max-parallel"`
+	MaxParallel int `json:"max-parallel"`
+	// Serialise names the GLOBAL axis whose values this node walks ONE AT A TIME —
+	// the cap that survives a forge with no matrix scheduler. Empty => full fan-out.
+	Serialise   string          `json:"serialise"`
 	Concurrency *rawConcurrency `json:"concurrency"` // optional per-node serialisation group (same shape as the platform one)
 	Needs       json.RawMessage `json:"needs"`
 	When        *rawWhen        `json:"when"`     // optional trigger predicate (decoded by decodeWhen)
@@ -1709,6 +1731,18 @@ func Parse(data []byte) (*Subtree, error) {
 				return nil, fmt.Errorf("node %q: max-parallel must be >= 1, got %d", name, rn.MaxParallel)
 			}
 		}
+		// serialise chains a node's cells, so like max-parallel it needs cells to chain.
+		// It also names a GLOBAL axis: a per-node matrix is isolated by construction, so
+		// the two shapes cannot both be right and the wrong one must fail loudly here.
+		if rn.Serialise != "" {
+			if !isCell {
+				return nil, fmt.Errorf("node %q: serialise set on a non-matrix node (add matrix: true or drop it)", name)
+			}
+			if len(axes) > 0 {
+				return nil, fmt.Errorf("node %q: serialise names a GLOBAL axis %q, but this node declares its own (matrix.axes) — "+
+					"per-node axes are isolated, so chain over one of those or move the axis global", name, rn.Serialise)
+			}
+		}
 		when, err := decodeWhen(rn.When)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", name, err)
@@ -1726,7 +1760,7 @@ func Parse(data []byte) (*Subtree, error) {
 			}
 			concurrency = &Concurrency{Group: rn.Concurrency.Group, CancelInProgress: rn.Concurrency.CancelInProgress}
 		}
-		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, Excludes: excludes, Without: without, Pin: pin, MaxParallel: rn.MaxParallel, Concurrency: concurrency, Needs: needs, When: when, Schedule: schedule, Dispatch: dispatch}
+		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, Excludes: excludes, Without: without, Pin: pin, MaxParallel: rn.MaxParallel, Serialise: rn.Serialise, Concurrency: concurrency, Needs: needs, When: when, Schedule: schedule, Dispatch: dispatch}
 		st.NodeOrder = append(st.NodeOrder, name)
 	}
 	sort.Strings(st.NodeOrder)

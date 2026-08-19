@@ -437,6 +437,40 @@ func TestMaxParallelRejects(t *testing.T) {
 	}
 }
 
+// TestSerialiseDecode pins that a matrix node's `serialise` survives Parse onto the
+// model — the axis the render walks one job at a time, chained by `needs`.
+func TestSerialiseDecode(t *testing.T) {
+	st, err := Parse([]byte(`{
+	  "matrix": {"axes": {"B19_NODE_SERIES": ["24", "26"]}},
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"image-built": {"goal": true, "matrix": true, "serialise": "B19_NODE_SERIES", "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := st.Nodes["image-built"].Serialise; got != "B19_NODE_SERIES" {
+		t.Errorf("serialise: want B19_NODE_SERIES, got %q", got)
+	}
+}
+
+// TestSerialiseRejects pins the fail-fast guards: there is nothing to chain without
+// cells, and the field names a GLOBAL axis — a node declaring its OWN (isolated) axes
+// cannot mean that, so the ambiguous spelling fails the parse rather than rendering a
+// silently un-chained node.
+func TestSerialiseRejects(t *testing.T) {
+	for name, node := range map[string]string{
+		"non-matrix":    `{"goal": true, "serialise": "B19_NODE_SERIES", "needs": {"container-build": true}}`,
+		"per-node-axes": `{"goal": true, "matrix": {"axes": {"GOOS": ["linux", "darwin"]}}, "serialise": "GOOS", "needs": {"container-build": true}}`,
+	} {
+		doc := `{"matrix": {"axes": {"B19_NODE_SERIES": ["24", "26"]}},
+		  "tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"image-built": ` + node + `}}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: expected a parse error, got nil", name)
+		}
+	}
+}
+
 // TestDispatchBuildArgsFlag pins that `dispatch: {build-args: true}` decodes onto the
 // goal's Dispatch (with no explicit inputs), so the render can auto-expose the declared
 // build.args as workflow_dispatch inputs. An absent flag leaves it false.

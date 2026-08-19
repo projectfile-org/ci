@@ -507,6 +507,9 @@ type NodeView struct {
 	// MaxParallel is ci.Node.MaxParallel carried through: the cap on concurrent matrix
 	// cells the render lifts onto this node's strategy block. 0 => the forge default.
 	MaxParallel int
+	// Serialise is ci.Node.Serialise carried through: the GLOBAL axis whose values the
+	// render walks one job at a time (chained by `needs`). Empty => one job, full fan-out.
+	Serialise string
 	// Concurrency is ci.Node.Concurrency carried through: the node's serialisation group
 	// the render lifts onto the job's concurrency block. nil => no job-level guard.
 	Concurrency *ci.Concurrency
@@ -559,7 +562,7 @@ func NodeModel(st *ci.Subtree) *Nodes {
 		}
 		sort.Strings(tools)
 
-		out.Views = append(out.Views, NodeView{Name: n, Goal: st.Nodes[n].Goal, NodeDeps: deps, Tools: tools, When: st.Nodes[n].When, MaxParallel: st.Nodes[n].MaxParallel, Concurrency: st.Nodes[n].Concurrency})
+		out.Views = append(out.Views, NodeView{Name: n, Goal: st.Nodes[n].Goal, NodeDeps: deps, Tools: tools, When: st.Nodes[n].When, MaxParallel: st.Nodes[n].MaxParallel, Serialise: st.Nodes[n].Serialise, Concurrency: st.Nodes[n].Concurrency})
 
 		// Every tool this node owns waits on this node's upstream node-gates.
 		for _, need := range g.nodeTools[n] {

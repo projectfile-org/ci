@@ -264,6 +264,197 @@ func TestMaxParallelRenders(t *testing.T) {
 	}
 }
 
+// TestSerialiseChainsCells pins the whole shape of `serialise: <AXIS>`: one job per
+// axis value, each waiting on the one before, and a JOIN under the authored name so a
+// consumer's `needs:` never learns the node was split. This is the portable spelling of
+// max-parallel — Forgejo dispatches matrix cells with no regard for a strategy cap, but
+// it always honours `needs`.
+func TestSerialiseChainsCells(t *testing.T) {
+	st, err := ci.Parse([]byte(`{
+	  "image": "b19/node-{B19_NODE_SERIES}",
+	  "matrix": {"axes": {"B19_NODE_SERIES": ["24", "26"]}},
+	  "tools": {"container-build": {"action": "container-build"}, "grype-scan-tar": {}},
+	  "nodes": {
+	    "image-built": {"matrix": true, "serialise": "B19_NODE_SERIES", "needs": {"container-build": true}},
+	    "image-scanned": {"matrix": true, "goal": true, "needs": {"image-built": true, "grype-scan-tar": true}}
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	if m.Err != nil {
+		t.Fatalf("build: %v", m.Err)
+	}
+	byName := map[string]JobView{}
+	for _, j := range m.Jobs {
+		byName[j.Name] = j
+	}
+
+	// One link per value, each narrowed to its OWN cell — the axis stays DECLARED, so
+	// every `${{ matrix.B19_NODE_SERIES }}` in the steps still resolves.
+	for _, tc := range []struct{ job, value string }{{"image-built-24", "24"}, {"image-built-26", "26"}} {
+		j, ok := byName[tc.job]
+		if !ok {
+			t.Fatalf("missing chain link %q; jobs: %v", tc.job, names(m.Jobs))
+		}
+		if len(j.Matrix) != 1 || len(j.Matrix[0].Values) != 1 || j.Matrix[0].Values[0] != tc.value {
+			t.Errorf("%s should fan over exactly %q, got %+v", tc.job, tc.value, j.Matrix)
+		}
+		if len(j.Steps) == 0 {
+			t.Errorf("%s rendered hollow — a chain link must carry the node's steps", tc.job)
+		}
+	}
+	// The ORDER: 26 waits on 24, and 24 does not wait on 26 (that would deadlock).
+	if got := byName["image-built-26"].Needs; !contains(got, "image-built-24") {
+		t.Errorf("image-built-26 must wait on image-built-24, needs: %v", got)
+	}
+	if got := byName["image-built-24"].Needs; contains(got, "image-built-26") {
+		t.Errorf("image-built-24 must NOT wait on its successor (deadlock), needs: %v", got)
+	}
+	// The chain ADDS an edge, it does not replace the authored DAG: this node has no
+	// upstream NODE (its only need is a tool), so the head link is unblocked and the
+	// tail waits on exactly its predecessor.
+	if got := byName["image-built-24"].Needs; len(got) != 0 {
+		t.Errorf("the head link should be unblocked, got needs %v", got)
+	}
+	if got := byName["image-built-26"].Needs; len(got) != 1 {
+		t.Errorf("the tail link should wait on its predecessor alone, got needs %v", got)
+	}
+	// The join carries the AUTHORED name and waits on every link, so the consumer edge
+	// below is a real all-cells barrier.
+	join, ok := byName["image-built"]
+	if !ok {
+		t.Fatalf("the join must keep the authored node name; jobs: %v", names(m.Jobs))
+	}
+	if !join.IsGate || len(join.Steps) != 0 {
+		t.Errorf("the join must be a pure gate, got %+v", join)
+	}
+	if !contains(join.Needs, "image-built-24") || !contains(join.Needs, "image-built-26") {
+		t.Errorf("the join must wait on every link, needs: %v", join.Needs)
+	}
+	// The whole point of the join: the consumer is UNTOUCHED by the split.
+	if got := byName["image-scanned"].Needs; !contains(got, "image-built") {
+		t.Errorf("consumer edge should still name the authored node, got %v", got)
+	}
+}
+
+// TestSerialiseKeepsOtherAxesParallel pins that only the NAMED axis is walked: a
+// memory-bound build wants one series at a time with that series' arches still running
+// together, so a chain link keeps every other axis at full fan-out.
+func TestSerialiseKeepsOtherAxesParallel(t *testing.T) {
+	st, err := ci.Parse([]byte(`{
+	  "image": "b19/node-{B19_NODE_SERIES}",
+	  "matrix": {"axes": {"B19_NODE_SERIES": ["24", "26"], "M6E_ARCH": ["amd64", "arm64"]}},
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"image-built": {"matrix": true, "goal": true, "serialise": "B19_NODE_SERIES", "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	if m.Err != nil {
+		t.Fatalf("build: %v", m.Err)
+	}
+	for _, j := range m.Jobs {
+		if j.Name != "image-built-24" {
+			continue
+		}
+		for _, a := range j.Matrix {
+			want := 1
+			if a.Key == "M6E_ARCH" {
+				want = 2 // untouched: the arches of ONE series still build together
+			}
+			if len(a.Values) != want {
+				t.Errorf("axis %s: want %d value(s) on a chain link, got %v", a.Key, want, a.Values)
+			}
+		}
+		return
+	}
+	t.Fatalf("no chain link rendered; jobs: %v", names(m.Jobs))
+}
+
+// TestSerialiseUnknownAxisIsNoOp pins the graceful degradation every axis-naming field
+// shares (matrix.without, matrix.pin): naming an axis the project does not declare
+// LOGS and leaves the job alone. That is what lets ONE shared m6e declaration render
+// byte-identically on the projects that never had the axis.
+func TestSerialiseUnknownAxisIsNoOp(t *testing.T) {
+	st, err := ci.Parse([]byte(`{
+	  "image": "b19/node-{B19_NODE_SERIES}",
+	  "matrix": {"axes": {"B19_NODE_SERIES": ["24", "26"]}},
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"image-built": {"matrix": true, "goal": true, "serialise": "M6E_ARCH", "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	if m.Err != nil {
+		t.Fatalf("build: %v", m.Err)
+	}
+	for _, j := range m.Jobs {
+		if strings.HasPrefix(j.Name, "image-built-") {
+			t.Fatalf("an unmatched axis must not split the node, got job %q", j.Name)
+		}
+	}
+	j, ok := jobByName(m, "image-built")
+	if !ok || len(j.Matrix) != 1 || len(j.Matrix[0].Values) != 2 {
+		t.Fatalf("the node should keep its full fan-out, got %+v", j)
+	}
+}
+
+// TestSerialiseCollidingValuesFail pins the fail-closed guard on the job-id slug: two
+// axis values may spell ONE id once the forge-illegal characters are folded (`3.14` and
+// `3-14`), which would drop a link and build one value twice. The build refuses instead
+// — a workflow short a cell is the kind of defect nobody notices until a release is wrong.
+func TestSerialiseCollidingValuesFail(t *testing.T) {
+	st, err := ci.Parse([]byte(`{
+	  "image": "b19/python-{B19_PYTHON_SERIES}",
+	  "matrix": {"axes": {"B19_PYTHON_SERIES": ["3.14", "3-14"]}},
+	  "tools": {"container-build": {"action": "container-build"}},
+	  "nodes": {"image-built": {"matrix": true, "goal": true, "serialise": "B19_PYTHON_SERIES", "needs": {"container-build": true}}}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if m := Build(rm, st, nil); m.Err == nil {
+		t.Fatalf("colliding slugs must fail the build, got jobs %v", names(m.Jobs))
+	}
+}
+
+func names(jobs []JobView) []string {
+	out := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, j.Name)
+	}
+	return out
+}
+
+func jobByName(m Model, name string) (JobView, bool) {
+	for _, j := range m.Jobs {
+		if j.Name == name {
+			return j, true
+		}
+	}
+	return JobView{}, false
+}
+
 // TestCellToCellFanInIsCoarse pins the CELL→CELL fan-in DECISION (general-plan
 // task 7): GHA/Forgejo `needs:` between two matrix jobs is an ALL-CELLS barrier —
 // the engine has no `needs: build[matrix.x == ...]` per-cell primitive — so a scan
