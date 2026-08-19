@@ -34,12 +34,23 @@ Consulta [FEATURES.md](FEATURES.md) para ver la lista completa.
 
 Descarga la imagen de contenedor publicada:
 
+### Descargar de GHCR
+
 ```sh
 docker pull ghcr.io/damian-buho/projectfile/ci-resolver:latest
+```
+
+### Descargar de DockerHub
+
+```sh
 docker pull docker.io/damianbuho/projectfile-ci-resolver:latest
 ```
 
+Las versiones estables también publican las etiquetas `X.Y.Z`, `X.Y` y `X`: descarga el nivel de precisión que quieras fijar.
+
 Si los registros anteriores no están disponibles, descarga desde el origen:
+
+### Descargar de Kiota
 
 ```sh
 docker pull kiota.ch/projectfile/ci-resolver:latest
@@ -57,7 +68,9 @@ pf-ci generate -target gha -check
 
 ## Compilación
 
-- [Referencia del Makefile](../MAKEFILE.md)
+Ejecuta `make` sin argumentos para el destino predeterminado; ejecuta `make help` para listar todos los destinos.
+
+Para el bucle de desarrollo local, `make dev-container` levanta el dev-container.
 
 Puntos de entrada de la canalización:
 
@@ -66,35 +79,20 @@ Puntos de entrada de la canalización:
 - `make check-outdated` — Report every pinned dependency that lags upstream
 - `make ready-to-publish` — Run the pseudo-CI pipeline locally — build, test and scan, without publishing
 
-Ejecuta `make` sin argumentos para el destino predeterminado; ejecuta `make help` para listar todos los destinos.
-
-Para el bucle de desarrollo local, `make dev-container` levanta el dev-container.
-
 ## Políticas
 
 - [Cómo contribuir](CONTRIBUTING.md)
 - [Política de seguridad](SECURITY.md)
 - [Cómo obtener ayuda](SUPPORT.md)
 - [Código de conducta](CODE_OF_CONDUCT.md)
+- [Política sobre IA y LLM](AI_POLICY.md)
 
 ## Enlaces
 
-### Proyecto
-
 - [Especificación de Projectfile](https://projectfile.org)
-- [Projectfile CI Resolver en Codeberg](https://codeberg.org/projectfile/ci-resolver)
-- [Projectfile CI Resolver en GitHub](https://github.com/damian-buho/projectfile-ci-resolver)
-- [Projectfile CI Resolver en kiota.ch](https://kiota.ch/projectfile/ci-resolver)
-- [Incidencias en Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
-- [Incidencias en GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
-
-### Otros
-
-- [Del autor](https://dbuho.me)
 
 ## Licencia
 
 Este proyecto se publica bajo la licencia MIT — consulta el archivo [LICENSE](LICENSE) para más detalles.
 
-*Generado desde projectfile ([saber cómo](https://projectfile.org/how-to/readme))*
 <!-- textlint-enable -->

@@ -2967,7 +2967,8 @@ func TestLiveLeavesFuse(t *testing.T) {
 		"container-tested:", // the NODE-job hosting the fused live steps
 		"uses: actions/download-artifact@v8",
 		"name: " + testImageMatrixStem,
-		"run: docker load --input " + testImageMatrixStem + ".tar",
+		"uses: projectfile/ci-actions/container-load@v1",
+		"archive: " + testImageMatrixStem + ".tar",
 		"run: docker compose up -d --wait",
 		`run: docker exec "${M6E_CONTAINER_INSTANCE}" test.d`,
 		// Job `env:` values carry the EXPANDED tag (the env context does not exist yet

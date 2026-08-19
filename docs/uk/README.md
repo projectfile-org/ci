@@ -34,12 +34,23 @@ pf-cli-managed: yes
 
 Завантажте опублікований образ контейнера:
 
+### Завантажити з GHCR
+
 ```sh
 docker pull ghcr.io/damian-buho/projectfile/ci-resolver:latest
+```
+
+### Завантажити з DockerHub
+
+```sh
 docker pull docker.io/damianbuho/projectfile-ci-resolver:latest
 ```
 
+Стабільні випуски також публікують теґи `X.Y.Z`, `X.Y` і `X` — завантажте той рівень точності, який хочете зафіксувати.
+
 Якщо наведені вище реєстри недоступні, завантажте з джерела:
+
+### Завантажити з Kiota
 
 ```sh
 docker pull kiota.ch/projectfile/ci-resolver:latest
@@ -57,7 +68,9 @@ pf-ci generate -target gha -check
 
 ## Збирання
 
-- [Довідник із Makefile](../MAKEFILE.md)
+Виконайте `make` без аргументів для типової цілі; виконайте `make help`, щоб переглянути всі цілі.
+
+Для локального циклу розробки `make dev-container` піднімає dev-container.
 
 Точки входу конвеєра:
 
@@ -66,35 +79,20 @@ pf-ci generate -target gha -check
 - `make check-outdated` — Report every pinned dependency that lags upstream
 - `make ready-to-publish` — Run the pseudo-CI pipeline locally — build, test and scan, without publishing
 
-Виконайте `make` без аргументів для типової цілі; виконайте `make help`, щоб переглянути всі цілі.
-
-Для локального циклу розробки `make dev-container` піднімає dev-container.
-
 ## Політики
 
 - [Як зробити внесок](CONTRIBUTING.md)
 - [Політика безпеки](SECURITY.md)
 - [Як отримати підтримку](SUPPORT.md)
 - [Кодекс поведінки](CODE_OF_CONDUCT.md)
+- [Політика щодо ШІ та LLM](AI_POLICY.md)
 
 ## Посилання
 
-### Проєкт
-
 - [Специфікація Projectfile](https://projectfile.org)
-- [Projectfile CI Resolver на Codeberg](https://codeberg.org/projectfile/ci-resolver)
-- [Projectfile CI Resolver на GitHub](https://github.com/damian-buho/projectfile-ci-resolver)
-- [Projectfile CI Resolver на kiota.ch](https://kiota.ch/projectfile/ci-resolver)
-- [Issues на Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
-- [Issues на GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
-
-### Інше
-
-- [Від автора](https://dbuho.me)
 
 ## Ліцензія
 
 Цей проєкт ліцензовано на умовах MIT — див. файл [LICENSE](LICENSE) для подробиць.
 
-*Згенеровано з projectfile ([дізнатися як](https://projectfile.org/how-to/readme))*
 <!-- textlint-enable -->
