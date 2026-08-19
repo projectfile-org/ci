@@ -439,9 +439,6 @@ jobs:
       matrix:
         M6E_PUBLISH_SINK: ["kiota", "dockerhub"]
     env:
-      M6E_IMAGE_FULLNAME: projectfile/ci-resolver:${{ vars.BASE_IMAGE_DEFAULT_VERSION || 'latest' }}-${{ github.run_id }}
-      M6E_COMPOSE_PROJECT_NAME: ci-projectfile-ci-resolver-${{ github.run_id }}-${{ github.run_attempt }}
-      M6E_CONTAINER_INSTANCE: ci-projectfile-ci-resolver-${{ github.run_id }}-${{ github.run_attempt }}
       DOCKERHUB_REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_REGISTRY_PASSWORD }}
       DOCKERHUB_REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_REGISTRY_USERNAME }}
       REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
@@ -453,7 +450,6 @@ jobs:
       - uses: actions/download-artifact@v3
         with:
           name: image-${{ github.run_id }}
-      - run: docker load --input image-${{ github.run_id }}.tar
       - name: oci-push
         # This cell's destination gate — on the STEP because a job `if:` may not read
         # the matrix context, and a forge rejects the whole file when one does.
@@ -478,18 +474,6 @@ jobs:
           # This CELL's destination, off the publish axis: the job runs one cell per
           # place the archive goes, so a registry refusing a push fails only its own.
           sink: ${{ matrix.M6E_PUBLISH_SINK }}
-      # Reap the run-scoped image tag AND the live stack's network. Both are unique per
-      # run (the tag carries M6E_RUN_SCOPE, the network the run-scoped project name), so
-      # without this the runner's docker store gains one image per run forever AND a
-      # failed/timed-out `up` can orphan the network (compose reports the removal error
-      # WITHOUT failing). RmiImage and RmNetwork are always PAIRED (single assignment
-      # site), so one docker-cleanup step reaps both — the imperative reaps + their
-      # `inspect` guard live in the pinned action, not inline (Law 2).
-      - if: ${{ always() }}
-        uses: projectfile/ci-actions/docker-cleanup@v1
-        with:
-          image: projectfile/ci-resolver:${{ env.M6E_TAG }}-${{ github.run_id }}
-          network: ci-projectfile-ci-resolver-${{ env.M6E_RUN_SCOPE }}-network
   published:
     runs-on: docker
     needs: ["binaries-released", "publish-image", "ready-to-publish"]
