@@ -1314,6 +1314,10 @@ func (r *Reader) publishRefs() (map[string][]SinkRef, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !r.composesAnySink(sinks) {
+		genlog.Decision("publish_cells", "(none)", imageScope, "project declares no image part")
+		return nil, nil
+	}
 	out := map[string][]SinkRef{}
 	for lowering, forge := range r.publishForges(routes) {
 		for _, sink := range routes[forge].Push {
@@ -1343,6 +1347,10 @@ func (r *Reader) pullRefs() (map[string]SinkRef, error) {
 	sinks, err := r.sinkTemplates()
 	if err != nil {
 		return nil, err
+	}
+	if !r.composesAnySink(sinks) {
+		genlog.Decision("audit_target", "(none)", imageScope, "project declares no image part")
+		return nil, nil
 	}
 	out := map[string]SinkRef{}
 	for lowering, forge := range r.publishForges(routes) {
@@ -1375,6 +1383,25 @@ func (r *Reader) sinkTemplates() (map[string]string, error) {
 		out[name] = s.Ref
 	}
 	return out, nil
+}
+
+// composesAnySink reports whether ANY declared sink resolves against the image parts
+// this project declares — the question that separates a MISDECLARED part from a
+// project that builds no image at all.
+//
+// What we are trying to do: keep the drop warnings actionable. The sinks and the
+// routes come from a shared include every project carries, so a Go library inherits
+// destinations it was never going to push to; each one dropping is the fragment not
+// applying, not a defect. A sink that drops while a SIBLING composed is the real
+// case the warning exists for — a project that does publish, reaching one
+// destination fewer than it declared.
+func (r *Reader) composesAnySink(sinks map[string]string) bool {
+	for _, tmpl := range sinks {
+		if _, resolved := interp.ExpandIn(r.doc, tmpl, imageScope); resolved {
+			return true
+		}
+	}
+	return false
 }
 
 // composeSink resolves ONE destination name to its composed reference. Shared by both

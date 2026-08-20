@@ -5,6 +5,7 @@
 package ci
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"kiota.ch/projectfile/core/v2/pkg/genlog"
 	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 )
 
@@ -1089,6 +1091,93 @@ func TestPullRefsComposePerLowering(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("pullRefs:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// libraryDoc is a project on the SHARED metadata include: it inherits the fleet's
+// sinks and routes, and declares no image part, because it builds no container. The
+// image namespace carries only the org label the namespace include supplies.
+func libraryDoc(t *testing.T) *projectfile.Document {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.projectfile
+  name: core
+repositories:
+  - role: origin
+    type: git
+    url: ssh://git@kiota.ch/projectfile/core.git
+org:
+  projectfile:
+    image:
+      org: projectfile
+    sinks:
+      ghcr:
+        ref: ghcr.io/damian-buho/${path}:${tag}
+      hub:
+        ref: docker.io/damianbuho/${flatpath}:${tag}
+    publish:
+      github:
+        push: [ghcr]
+        pull: ghcr
+      kiota:
+        push: [hub]
+        pull: hub
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestLibraryComposesNoSinkSilently pins the noise half of the drop rule. A project
+// that composes NO destination declares no image at all: the inherited routes never
+// applied to it, both planes yield nothing, and the run stays silent. Warning here
+// fired once per route per plane on every library in the fleet, and its remedy —
+// declare an image part — is advice a library must not take.
+func TestLibraryComposesNoSinkSilently(t *testing.T) {
+	r := &Reader{doc: libraryDoc(t)}
+
+	var log bytes.Buffer
+	genlog.SetOutput(&log)
+	defer genlog.SetOutput(os.Stderr)
+
+	pub, err := r.publishRefs()
+	if err != nil {
+		t.Fatalf("publishRefs: %v", err)
+	}
+	pull, err := r.pullRefs()
+	if err != nil {
+		t.Fatalf("pullRefs: %v", err)
+	}
+	if len(pub) != 0 || len(pull) != 0 {
+		t.Fatalf("composed %#v / %#v, want none", pub, pull)
+	}
+	if strings.Contains(log.String(), "unresolved") {
+		t.Fatalf("warned about a project with no image:\n%s", log.String())
+	}
+}
+
+// TestBrokenSinkAmongWorkingOnesStillWarns pins the half that must stay loud: the
+// `broken` sink drops while ghcr and hub compose, so this project DOES publish and
+// is reaching one destination fewer than it declared.
+func TestBrokenSinkAmongWorkingOnesStillWarns(t *testing.T) {
+	r := &Reader{doc: publishDoc(t)}
+
+	var log bytes.Buffer
+	genlog.SetOutput(&log)
+	defer genlog.SetOutput(os.Stderr)
+
+	if _, err := r.publishRefs(); err != nil {
+		t.Fatalf("publishRefs: %v", err)
+	}
+	if !strings.Contains(log.String(), "broken") {
+		t.Fatalf("a dropped sink among working ones went unreported:\n%s", log.String())
 	}
 }
 
