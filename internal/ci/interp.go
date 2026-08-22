@@ -162,14 +162,16 @@ func (r *Reader) interpolateRefs(st *Subtree) error {
 // forgejo-release action tool from org.projectfile.artifacts: the single entry
 // with kind=binary. The action can't take a `run:` (it owns its steps), so the
 // path is resolved here — Load-time, against the same merged doc
-// interpolateRefs walks — and stashed on the manifest for render to thread as a
-// `with:` input. The action then suffixes it per cell (→ <path>-${GOOS}-${GOARCH}).
+// interpolateRefs walks, references and all — and stashed on the manifest for
+// render to thread as a `with:` input. The action then suffixes it per cell
+// (→ <path>-<os>-<arch>).
 //
 // Fail-closed: a forgejo-release tool with zero or more than one kind=binary
 // artifact is an ambiguous attach target, not a silent miss — the action would
 // either attach nothing or the wrong binary. `kind` is advisory vocabulary, so
 // the match is on the literal `binary` value only.
 func (r *Reader) resolveReleaseAssetPaths(st *Subtree) error {
+	ip := interpolator{doc: r.doc}
 	var releaseTools int
 	for name, man := range st.Tools {
 		if man.Action != ActionForgejoRelease {
@@ -185,6 +187,13 @@ func (r *Reader) resolveReleaseAssetPaths(st *Subtree) error {
 		}
 		if count > 1 {
 			return fmt.Errorf("tool %q: %d org.projectfile.artifacts entries have kind=binary — forgejo-release attaches exactly one; the multi-binary case needs the core v1.0.2 selector", name, count)
+		}
+		// The path is a string scalar like any other (§3.8), so a shared language
+		// fragment writes dist/${identity.name} and every consumer resolves its own
+		// name. interpolateRefs cannot reach it — that walks tool invocations, and this
+		// value arrives from the artifacts subtree — so the same interpolator runs here.
+		if path, err = ip.interpolate(path); err != nil {
+			return fmt.Errorf("tool %q release asset path: %w", name, err)
 		}
 		man.ReleaseAssetPath = path
 		st.Tools[name] = man // value in map — write back

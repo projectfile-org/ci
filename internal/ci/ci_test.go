@@ -979,6 +979,17 @@ org:
 	if _, err := Load(write(t, two)); err == nil {
 		t.Errorf("Load with two kind=binary artifacts: expected error, got nil")
 	}
+
+	// The path is a §3.8 string scalar: a shared language fragment declares
+	// dist/${identity.name} once and each consumer resolves its own name. Left
+	// verbatim, the reference reaches the workflow and the release attaches nothing.
+	st, err = Load(write(t, "      bin:\n        kind: binary\n        path: dist/${identity.name}"))
+	if err != nil {
+		t.Fatalf("Load with interpolated artifact path: %v", err)
+	}
+	if got := st.Tools["forgejo-release"].ReleaseAssetPath; got != "dist/demo" {
+		t.Errorf("interpolated ReleaseAssetPath = %q, want %q", got, "dist/demo")
+	}
 }
 
 // publishDoc is a document declaring two destinations with DIFFERENT path
