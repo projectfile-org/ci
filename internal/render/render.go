@@ -443,6 +443,11 @@ func validateSecretName(name string) error {
 // genuinely different engine (Tekton) would bring its own table over the SAME keys.
 var ciContextExpr = map[string]string{
 	ci.CIKeyVersion: "${{ github.ref_name }}",
+	// The branch this run is on, empty on a tag. A FACT, not a policy: what it means
+	// for the published tags (one `latest-<branch>`, no cascade, primary sink only) is
+	// the versioned oci-push action's rule. The resolver hands over the ref and stops,
+	// exactly as it does for the semver cascade it likewise never computes.
+	ci.CIKeyPreview: "${{ github.ref_type == 'branch' && github.ref_name || '' }}",
 }
 
 // eventExpr maps one abstract trigger token (ci.WhenEvents) to the GHA/Forgejo
@@ -450,13 +455,28 @@ var ciContextExpr = map[string]string{
 // both targets share the spelling). A genuinely different engine (Tekton) would
 // bring its own table over the SAME tokens — the neutral model never names one.
 //   - "tag"           → a tag ref pushed;
+//   - "preview"       → a push to a branch that is not one of `primary`;
 //   - "push:<branch>" → a push whose ref is that branch;
 //   - "dispatch"      → the run was started by the manual button;
 //   - "schedule"      → the run was started by a cron timer.
-func eventExpr(e string) string {
+//
+// `primary` is the project's primary-branch set (ci.Build.PrimaryBranches, defaulted by
+// primaryBranches) and is read by the preview token alone.
+func eventExpr(e string, primary []string) string {
 	switch e {
 	case ci.EventTag:
 		return "startsWith(github.ref, 'refs/tags/')"
+	case ci.EventPreview:
+		// Spelled as "a branch ref, minus the primary names" rather than as a branch
+		// allow-list, because the whole point of the token is that the branch cannot be
+		// named ahead of time. Reads the `github` context only, so it stays legal at JOB
+		// level on both forges — an `if:` naming `matrix` makes the WHOLE file unusable.
+		parts := make([]string, 0, len(primary)+1)
+		parts = append(parts, "startsWith(github.ref, 'refs/heads/')")
+		for _, b := range primary {
+			parts = append(parts, "github.ref != 'refs/heads/"+b+"'")
+		}
+		return strings.Join(parts, " && ")
 	case ci.EventDispatch:
 		return "github.event_name == 'workflow_dispatch'"
 	case ci.EventSchedule:
@@ -466,20 +486,31 @@ func eventExpr(e string) string {
 	return "github.ref == 'refs/heads/" + branch + "'"
 }
 
+// primaryBranches is the project's primary-branch set with the fleet default applied:
+// the branch names a push must NOT be on for `preview` to fire. A nil Build (a project
+// declaring nothing the resolver reads) and a Build that simply records no default
+// branch answer identically, because neither one states anything to the contrary.
+func primaryBranches(b *ci.Build) []string {
+	if b == nil || len(b.PrimaryBranches) == 0 {
+		return ci.DefaultPrimaryBranches
+	}
+	return b.PrimaryBranches
+}
+
 // jobIf composes a job's `if:` condition from its neutral event set: one event is
 // the bare expression, several are OR-ed (each parenthesised) so the job runs when
 // ANY of its triggers fires. An empty set yields "" — no `if:` line, the job runs
 // whenever the workflow triggers (the back-compatible default).
-func jobIf(events []string) string {
+func jobIf(events []string, primary []string) string {
 	switch len(events) {
 	case 0:
 		return ""
 	case 1:
-		return eventExpr(events[0])
+		return eventExpr(events[0], primary)
 	}
 	parts := make([]string, len(events))
 	for i, e := range events {
-		parts[i] = "(" + eventExpr(e) + ")"
+		parts[i] = "(" + eventExpr(e, primary) + ")"
 	}
 	return strings.Join(parts, " || ")
 }
@@ -527,6 +558,10 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope []string) OnView {
 	}
 	branches := map[string]bool{}
 	tags := false
+	// A `preview` gate cannot contribute a branch NAME — the branch is unknown until the
+	// push happens — so it widens the surface to every branch and lets the job `if:` do
+	// the narrowing. That is the same division of labour the broad default already uses.
+	branchesAll := false
 	// fold accumulates a token set's push/tag surface; dispatch/schedule are gating-only
 	// (their `on:` entry comes from the goal's triggers, not the push axis).
 	fold := func(events []string) {
@@ -534,6 +569,8 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope []string) OnView {
 			switch e {
 			case ci.EventTag:
 				tags = true
+			case ci.EventPreview:
+				branchesAll = true
 			case ci.EventDispatch, ci.EventSchedule:
 			default:
 				branches[strings.TrimPrefix(e, ci.EventPushPrefix)] = true
@@ -563,7 +600,7 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope []string) OnView {
 			fold(j.Events)
 		}
 	}
-	if len(branches) == 0 && !tags {
+	if len(branches) == 0 && !tags && !branchesAll {
 		// No push/tag events: fall back to the broad surface ONLY when there is also no
 		// dispatch/schedule trigger — a pure manual/cron file must not silently gain push/PR.
 		if ov.Dispatch == nil && len(ov.Schedule) == 0 {
@@ -572,6 +609,12 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope []string) OnView {
 		return ov
 	}
 	ov.PushTags = tags
+	if branchesAll {
+		// The `**` glob matches every branch and no tag, so a file gated [tag, preview]
+		// still narrows its tag surface rather than falling back to a bare `push: {}`.
+		ov.PushBranches = []string{"**"}
+		return ov
+	}
 	if len(branches) > 0 {
 		ov.PushBranches = make([]string, 0, len(branches))
 		for b := range branches {
@@ -1526,6 +1569,13 @@ type StepView struct {
 	// push ref_name IS the version. The cascade itself is imperative shell in the versioned
 	// oci-push action (Law 2), never here — the resolver only hands it the tag.
 	PublishVersion string `json:"publish-version,omitempty"`
+	// PublishPreview is the oci-push `preview:` input — the BRANCH this run is on, empty
+	// on a tag (ci:preview). Non-empty makes the action collapse the cascade to a single
+	// `latest-<branch>` tag and publish it to the primary sink alone. Set beside
+	// PublishVersion and for the same reason: the resolver hands over the ref and the
+	// versioned action owns what tags come out of it. oci-push ONLY — a forge release is
+	// an object built around a tag and has no preview form.
+	PublishPreview string `json:"publish-preview,omitempty"`
 	// PublishRefs is the oci-push `refs:` input — one `<sink> <ref>` line per
 	// destination this lowering publishes to, each composed by the document that
 	// declared the sink. It is what lets ONE archive land nested on one registry and
@@ -1836,6 +1886,12 @@ type StepEmitView struct {
 	Event      string // semantic event name, verbatim from the tool manifest
 	Goal       string // the workflow's goal (same value the notify job stamps)
 	WebhookVar string // forge var holding the sink URL; empty value => the step no-ops
+	// ReleaseOnly withholds the fact on a PREVIEW publish. A downstream router turns
+	// ci.image.published into a rebuild dispatch for every consumer of the image, and a
+	// preview base is precisely what they must not be rebuilt against. Set on a publish
+	// step, so the goal-level "published succeeded" notification still fires — the human
+	// signal survives and only the machine-readable rebuild trigger is withheld.
+	ReleaseOnly bool
 }
 
 // If gates the step on the webhook var AND on everything before it having succeeded —
@@ -1847,6 +1903,9 @@ type StepEmitView struct {
 func (e StepEmitView) If(gate string) string {
 	if gate != "" {
 		gate = " && (" + gate + ")"
+	}
+	if e.ReleaseOnly {
+		gate += " && github.ref_type == 'tag'"
 	}
 	return "${{ success() && vars." + e.WebhookVar + " != ''" + gate + " }}"
 }
@@ -2171,6 +2230,12 @@ type Model struct {
 	// the pinned goal, carried so `pf-ci resolve` emits it and every target lowers the
 	// same data. nil => push/PR only. The vendor `on:` spelling lives in On above.
 	Triggers *TriggersView `json:"triggers,omitempty"`
+	// PrimaryBranches is the branch set a push must NOT be on for the `preview` token to
+	// fire (eventExpr). Resolved from the document at Build time and carried here so
+	// Workflow stays a dumb template — every target lowers the same neutral set. Never
+	// empty: primaryBranches applies ci.DefaultPrimaryBranches when the document records
+	// no default branch, which is every project in the fleet today.
+	PrimaryBranches []string `json:"primary-branches,omitempty"`
 	// Err is a fail-fast Build defect that has no place in the rendered output: a node
 	// that mixes incompatible matrix axes, or a tool multi-homed across unrelated nodes
 	// (constraints #1/#3 of node=job). Build cannot return an error without churning
@@ -2548,6 +2613,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// expr as the M6E_VERSION build-arg — the version lives in ONE place (ciContextExpr).
 	if publishes {
 		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
+		step.PublishPreview = ciContextExpr[ci.CIKeyPreview]
 		// Per-cell: a composed ref carries `{AXIS}` verbatim, because composition
 		// never touches a token with no `$`. The same substitution the basename
 		// above gets, so a matrix cell publishes its own series to every sink.
@@ -2566,7 +2632,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// one absent renders no step at all — the same secure default the notify job keeps.
 	// Goal is stamped later, in Build, where the workflow's goal name is known.
 	if man.Emit != "" && b != nil && b.Events != nil {
-		step.Emit = &StepEmitView{Event: man.Emit, WebhookVar: b.Events.WebhookVar}
+		step.Emit = &StepEmitView{Event: man.Emit, WebhookVar: b.Events.WebhookVar, ReleaseOnly: publishes}
 	}
 	// forgejo-release gets the SAME git tag (ci:version) as oci-push, PLUS the
 	// resolved binary path (Manifest.ReleaseAssetPath, looked up Load-side from
@@ -3208,7 +3274,15 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			env = append(env, KV{Key: k, Value: inlineHoists(lowerMakeExpr(st.Env[k], defs, nil, nil))})
 		}
 	}
-	return Model{Name: name, Jobs: jobs, On: on, Triggers: triggers, Env: env, Err: buildErr}
+	return Model{
+		Name:            name,
+		Jobs:            jobs,
+		On:              on,
+		Triggers:        triggers,
+		Env:             env,
+		PrimaryBranches: primaryBranches(b),
+		Err:             buildErr,
+	}
 }
 
 // emitJob synthesises the lifecycle-notify job (the forge half of the events model):
@@ -3363,7 +3437,7 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		if jobs[i].Emit != nil {
 			jobs[i].If = emitIf(jobs[i].Emit.WebhookVar)
 		} else {
-			jobs[i].If = jobIf(jobs[i].Events)
+			jobs[i].If = jobIf(jobs[i].Events, m.PrimaryBranches)
 		}
 		// Fan the publish job over its destinations, per lowering. Before the env
 		// folds below: the axis is an action INPUT, not an env binding, so nothing

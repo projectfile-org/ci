@@ -3344,6 +3344,123 @@ func TestWhenNarrowsOnWhenAllGated(t *testing.T) {
 	}
 }
 
+// previewSubtree gates the publish node on `tag` OR `preview`, the b19 publish policy
+// shape: a release still publishes its cascade, and a push to a branch nobody can name
+// ahead of time publishes a preview of it.
+const previewSubtree = `{
+  "image": "b19/ubuntu",
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "oci-push": {"action": "oci-push", "emit": "ci.image.published"}
+  },
+  "nodes": {
+    "image-built":   {"needs": {"container-build": true}},
+    "publish-image": {"when": {"events": ["tag", "preview"]}, "needs": {"oci-push": true, "image-built": true}},
+    "done":          {"goal": true, "needs": {"publish-image": true}}
+  }
+}`
+
+// TestPreviewGateAndInput pins the whole preview lowering: the job gate that admits a
+// non-primary branch, the ref FACT handed to the action (never the tag policy — that is
+// the versioned action's, like the semver cascade beside it), and the downstream rebuild
+// fact a preview must NOT emit.
+func TestPreviewGateAndInput(t *testing.T) {
+	st, err := ci.Parse([]byte(previewSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	b := &ci.Build{Events: &ci.Events{WebhookVar: ci.DefaultWebhookVar}}
+	out, err := Workflow(Build(rm, st, b), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+
+	for _, want := range []string{
+		// The gate: a tag, OR a branch ref that is none of the primary names. Both
+		// operands read the `github` context alone, which is what keeps it legal on a
+		// JOB `if:` — see TestJobIfNeverReadsTheMatrixContext.
+		// Token order is decodeWhen's sort, which is what keeps the render byte-stable.
+		"if: (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' && " +
+			"github.ref != 'refs/heads/master') || (startsWith(github.ref, 'refs/tags/'))",
+		// The FACT: which branch, empty on a tag. What it makes of it (one
+		// `latest-<branch>` tag, primary sink only) is the action's rule, not ours.
+		"preview: ${{ github.ref_type == 'branch' && github.ref_name || '' }}",
+		// The release input is untouched beside it — a preview narrows, never replaces.
+		"version: ${{ github.ref_name }}",
+		// A preview publish must not announce a published image: the router turns that
+		// fact into a rebuild dispatch for every consumer of it.
+		"github.ref_type == 'tag'",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("preview lowering missing %q\n---\n%s", want, s)
+		}
+	}
+}
+
+// TestPreviewPrimaryBranchIsDeclared pins the override half: a project that records its
+// default branch is gated on THAT name, so a fleet convention never overrides a document.
+func TestPreviewPrimaryBranchIsDeclared(t *testing.T) {
+	st, err := ci.Parse([]byte(previewSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, &ci.Build{PrimaryBranches: []string{"release"}}),
+		Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "github.ref != 'refs/heads/release'") {
+		t.Errorf("a declared primary branch must drive the gate:\n%s", s)
+	}
+	// The fleet default must be GONE, not merely joined — a project on `release` pushes
+	// to `main` as an ordinary branch, and that has to publish a preview.
+	if strings.Contains(s, "github.ref != 'refs/heads/main'") {
+		t.Errorf("a declared primary branch must REPLACE the default set:\n%s", s)
+	}
+}
+
+// TestPreviewWidensThePushSurface pins the `on:` half. A preview cannot contribute a
+// branch NAME — that is the entire point of the token — so an all-gated file widens to
+// every branch and leaves the narrowing to the job `if:`, while still keeping its tag
+// glob rather than collapsing to a bare `push: {}`.
+func TestPreviewWidensThePushSurface(t *testing.T) {
+	const allGated = `{
+  "tools": {"publish": {"run": "publish"}},
+  "nodes": {
+    "published": {"goal": true, "when": {"events": ["tag", "preview"]}, "needs": {"publish": true}}
+  }
+}`
+	st, err := ci.Parse([]byte(allGated))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "  push:\n    branches: [\"**\"]\n    tags: [\"**\"]") {
+		t.Errorf("a [tag, preview] file must widen to every branch and keep its tag glob:\n%s", s)
+	}
+	if strings.Contains(s, "pull_request") {
+		t.Errorf("an all-gated preview workflow must not trigger on pull_request:\n%s", s)
+	}
+}
+
 // TestWhenRejectsUnknownEvent is the parse guard: a token outside the closed
 // vocabulary fails the parse rather than silently widening (or muting) a trigger.
 func TestWhenRejectsUnknownEvent(t *testing.T) {
@@ -3925,8 +4042,10 @@ func TestToolEmitStepRenders(t *testing.T) {
 
 	for _, want := range []string{
 		"- name: emit ci.image.published",
-		// Gated on the sink being configured AND the push having succeeded.
-		"if: ${{ success() && vars.EVENTS_WEBHOOK_URL != '' }}",
+		// Gated on the sink being configured, the push having succeeded, AND the ref
+		// being a tag: a downstream router turns this fact into a rebuild dispatch for
+		// every consumer, and a preview base is what they must NOT be rebuilt against.
+		"if: ${{ success() && vars.EVENTS_WEBHOOK_URL != '' && github.ref_type == 'tag' }}",
 		// The cell rides step env; toJSON is multi-line, so it must not be inlined.
 		"M6E_EVENT_CELL: ${{ toJSON(matrix) }}",
 		// Image and digest are read back from what the action verified, never recomposed.
@@ -4442,6 +4561,27 @@ func TestJobIfNeverReadsTheMatrixContext(t *testing.T) {
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.HasPrefix(line, "    if:") && strings.Contains(line, "matrix.") {
 				t.Errorf("%s: job-level if reads matrix: %s", key, line)
+			}
+		}
+	}
+	// The `preview` gate is the newest job-level predicate, and the longest — sweep it
+	// under the same rule rather than trusting that it reads only `github`.
+	pst, err := ci.Parse([]byte(previewSubtree))
+	if err != nil {
+		t.Fatalf("preview parse: %v", err)
+	}
+	prm, err := resolve.Resolve(pst)
+	if err != nil {
+		t.Fatalf("preview resolve: %v", err)
+	}
+	for _, key := range []string{TargetGHA, TargetForgejo} {
+		out, err := Workflow(Build(prm, pst, nil), Targets[key], ci.Platform{})
+		if err != nil {
+			t.Fatalf("preview %s: %v", key, err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "    if:") && strings.Contains(line, "matrix.") {
+				t.Errorf("preview %s: job-level if reads matrix: %s", key, line)
 			}
 		}
 	}

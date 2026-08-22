@@ -126,6 +126,9 @@ type Node struct {
 // may carry — each a genuinely distinct CI event, kept vendor-neutral so the same
 // predicate lowers onto GHA, Forgejo, or a future engine:
 //   - "tag"            a tag push (any tag) — the version-release trigger;
+//   - "preview"        a push to a branch that is NOT a primary one (see
+//     primaryBranches) — the pre-release trigger, for a node that
+//     must run on a branch nobody can name ahead of time;
 //   - "push:<branch>"  a push to the named branch (e.g. push:main);
 //   - "dispatch"       a manual run (the dispatch button) — workflow_dispatch;
 //   - "schedule"       a timed run — one of triggers.schedule's crons fired.
@@ -140,6 +143,7 @@ type Node struct {
 // rather than silently widening (or muting) a trigger.
 const (
 	EventTag        = "tag"      // a tag push (any tag)
+	EventPreview    = "preview"  // a push to a branch that is not a primary one
 	EventPushPrefix = "push:"    // push:<branch> — a push to the named branch
 	EventDispatch   = "dispatch" // a manual run (the dispatch button)
 	EventSchedule   = "schedule" // a scheduled run (one of triggers.schedule fired)
@@ -154,7 +158,7 @@ const StepWhenAlways = "always"
 // `push:` token must name a non-empty branch; "tag"/"dispatch"/"schedule" stand alone.
 func validEvent(e string) bool {
 	switch e {
-	case EventTag, EventDispatch, EventSchedule:
+	case EventTag, EventPreview, EventDispatch, EventSchedule:
 		return true
 	}
 	return strings.HasPrefix(e, EventPushPrefix) && len(e) > len(EventPushPrefix)
@@ -287,6 +291,11 @@ const (
 	SourceLiteral = "literal"
 
 	CIKeyVersion = "version" // the build version (GHA: the git ref name)
+	// CIKeyPreview is the BRANCH this run is on, empty on a tag — the one fact that
+	// separates a preview publish from a release one. Deliberately absent from
+	// BuildArgCIKeys: it steers where and under what name an artifact is PUBLISHED,
+	// and must never reach a Dockerfile ARG and change what gets built.
+	CIKeyPreview = "preview"
 
 	BoolTrue  = "true"
 	BoolFalse = "false"
@@ -847,6 +856,14 @@ type Build struct {
 	// the project releases only on the forge it runs on, which is the ambient Forgejo
 	// Actions context and needs no input at all.
 	ReleaseTargets map[string][]ReleaseTarget
+	// PrimaryBranches is the branch set a push must NOT be on to count as a PREVIEW
+	// (EventPreview): the origin repository's recorded default branch. Read from
+	// repositories[role=origin].branch (spec §4.3a) so the fact is DECLARED once and
+	// both planes agree on it — the make plane compares the same set in
+	// M6E_GIT_BRANCH_DEFAULT. Empty => the document records none and the lowering
+	// applies DefaultPrimaryBranches; it is empty far more often than not, because
+	// nothing in the fleet writes that field yet.
+	PrimaryBranches []string
 }
 
 // SinkRef is one composed publish destination: the sink NAME the credentials key on,
@@ -1161,14 +1178,16 @@ func LoadBuild(pfPath, lowering string) (*Build, error) {
 	if err != nil {
 		return nil, err
 	}
+	primaryBranches := r.primaryBranches()
 	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
-		len(buildTarget) == 0 && len(publishRefs) == 0 && len(pullRefs) == 0 && len(releaseTargets) == 0 {
+		len(buildTarget) == 0 && len(publishRefs) == 0 && len(pullRefs) == 0 && len(releaseTargets) == 0 &&
+		len(primaryBranches) == 0 {
 		return nil, nil
 	}
 	return &Build{
 		Images: images, ImageHeads: heads, Args: inputs, Events: events, Secrets: secRaw,
 		BuildTarget: buildTarget, PublishRefs: publishRefs, PullRefs: pullRefs,
-		ReleaseTargets: releaseTargets,
+		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches,
 	}, nil
 }
 
@@ -1480,6 +1499,30 @@ func (r *Reader) originForgeSlug() string {
 	host = strings.FieldsFunc(host, func(c rune) bool { return c == '/' || c == ':' })[0]
 	label, _, _ := strings.Cut(host, ".")
 	return label
+}
+
+// DefaultPrimaryBranches is the branch set assumed when a project records no default
+// branch — which is every project in the fleet today, so this is the value that
+// actually runs. TWO names, not one, because the make plane has always compared against
+// `master main` (m6e core/base/100-git-state.mk) and both planes must call the same
+// pushes previews without anyone declaring anything. It also errs in the CHEAP
+// direction: an extra name here only declines to publish a preview, whereas a missing
+// one publishes a `latest-<branch>` tag most registries can never delete.
+var DefaultPrimaryBranches = []string{"main", "master"}
+
+// primaryBranches reads the origin repository's recorded default branch — the branch a
+// push must NOT be on for EventPreview to fire. Returns nil when the document records
+// none, so the caller keeps its empty-subtree no-op and the lowering applies
+// DefaultPrimaryBranches. Same bracket-selector idiom (and same sole-entry-without-role
+// blind spot) as originForgeSlug above, because it reads the same entry.
+func (r *Reader) primaryBranches() []string {
+	raw, ok := interp.ExpandIn(r.doc, "${repositories[role=origin].branch}", imageScope)
+	branch := strings.TrimSpace(raw)
+	if !ok || branch == "" {
+		return nil
+	}
+	genlog.Decision("primary_branch", branch, "repositories[role=origin].branch", "")
+	return []string{branch}
 }
 
 // Load runs pf-cli against the projectfile at dir (empty => auto-discover the
@@ -2171,7 +2214,8 @@ func decodeWhen(rw *rawWhen) ([]string, error) {
 	seen := make(map[string]bool, len(rw.Events))
 	for _, e := range rw.Events {
 		if !validEvent(e) {
-			return nil, fmt.Errorf("when: unknown event %q (want %q or %q<branch>)", e, EventTag, EventPushPrefix)
+			return nil, fmt.Errorf("when: unknown event %q (want %q, %q, %q, %q or %q<branch>)",
+				e, EventTag, EventPreview, EventDispatch, EventSchedule, EventPushPrefix)
 		}
 		if !seen[e] {
 			seen[e] = true

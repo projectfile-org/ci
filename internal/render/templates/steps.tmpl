@@ -248,6 +248,12 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- if .Step.PublishVersion }}
           version: {{ .Step.PublishVersion }}
 {{- end }}
+{{- if .Step.PublishPreview }}
+          # The branch this run is on, empty on a tag. Non-empty collapses the cascade to
+          # one `latest-<branch>` tag on the primary sink, so a branch build is testable
+          # without a tag and without moving anything a consumer floats on.
+          preview: {{ .Step.PublishPreview }}
+{{- end }}
           # OUTPUT_REGISTRY: the forge-dependent PUSH target (kiota.ch / ghcr.io / …),
           # always threaded — empty => Docker Hub. NOT the per-namespace INPUT registries
           # (B19_DOCKER_REGISTRY & friends answer "where base images come FROM"); this
