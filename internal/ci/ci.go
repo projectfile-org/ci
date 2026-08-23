@@ -973,6 +973,13 @@ func (r *Reader) declaredImages(lowering string) (map[string]string, map[string]
 		return nil, nil, fmt.Errorf("%s: parse: %w", imagesNS, err)
 	}
 	sink := r.pullSinkTemplate(lowering)
+	// A template naming neither part cannot address a foreign image at all.
+	if sink != "" && !spendsImagePath(sink) {
+		genlog.Warn("pull sink not composed — its ref spends neither ${path} nor ${flatpath}",
+			"lowering", lowering, "template", sink,
+			"remedy", "keep org.projectfile.sinks.<name>.ref addressing any image; reshape the project's own artifact with selfref")
+		sink = ""
+	}
 	head, tailTmpl := splitSinkPrefix(sink)
 	images := make(map[string]string, len(parts))
 	heads := make(map[string]string, len(parts))
@@ -1044,10 +1051,16 @@ func splitSinkPrefix(tmpl string) (head, tail string) {
 // sinkPrefixRe recognizes the prefix shape splitSinkPrefix describes.
 var sinkPrefixRe = regexp.MustCompile(`^([^$]*)/\$\{(?:path|flatpath)\}:\$\{tag\}$`)
 
+// spendsImagePath reports whether a template addresses an image by its own repository.
+func spendsImagePath(tmpl string) bool {
+	return strings.Contains(tmpl, "${path}") || strings.Contains(tmpl, "${flatpath}")
+}
+
 // pullSinkTemplate resolves the lowering's pull route to its sink's raw `ref`
 // template — the grammar every foreign image composes against for files of this
 // lowering. "" when the project declares no publish route, no pull on the route
 // that applies, or a pull naming no declared sink (warned, mirroring composeSink).
+// `ref`, never `selfref` — this is the FOREIGN plane.
 func (r *Reader) pullSinkTemplate(lowering string) string {
 	routes, err := r.publishRoutes()
 	if err != nil || len(routes) == 0 {
@@ -1061,7 +1074,7 @@ func (r *Reader) pullSinkTemplate(lowering string) string {
 	if sink == "" {
 		return ""
 	}
-	sinks, err := r.sinkTemplates()
+	sinks, _, err := r.sinkTemplates()
 	if err != nil {
 		return ""
 	}
@@ -1329,7 +1342,7 @@ func (r *Reader) publishRefs() (map[string][]SinkRef, error) {
 	if err != nil || len(routes) == 0 {
 		return nil, err
 	}
-	sinks, err := r.sinkTemplates()
+	_, sinks, err := r.sinkTemplates()
 	if err != nil {
 		return nil, err
 	}
@@ -1363,7 +1376,7 @@ func (r *Reader) pullRefs() (map[string]SinkRef, error) {
 	if err != nil || len(routes) == 0 {
 		return nil, err
 	}
-	sinks, err := r.sinkTemplates()
+	_, sinks, err := r.sinkTemplates()
 	if err != nil {
 		return nil, err
 	}
@@ -1386,22 +1399,33 @@ func (r *Reader) pullRefs() (map[string]SinkRef, error) {
 // `${identity.name}`) then exhausts core's depth bound and reports unresolved on a
 // reference that composed fine. The readme bridge expands the template for the same
 // reason.
-func (r *Reader) sinkTemplates() (map[string]string, error) {
+//
+// `foreign` is each entry's `ref` (any image's coordinates); `self` is its
+// `selfref` falling back to `ref` (this project's own artifact).
+func (r *Reader) sinkTemplates() (foreign, self map[string]string, err error) {
 	sinkRaw, err := r.subtree("org.projectfile.sinks")
 	if err != nil || len(sinkRaw) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	var sinks map[string]struct {
-		Ref string `json:"ref"`
+		Ref     string `json:"ref"`
+		SelfRef string `json:"selfref"`
 	}
 	if err := json.Unmarshal(sinkRaw, &sinks); err != nil {
-		return nil, fmt.Errorf("org.projectfile.sinks: parse: %w", err)
+		return nil, nil, fmt.Errorf("org.projectfile.sinks: parse: %w", err)
 	}
-	out := make(map[string]string, len(sinks))
+	foreign = make(map[string]string, len(sinks))
+	self = make(map[string]string, len(sinks))
 	for name, s := range sinks {
-		out[name] = s.Ref
+		foreign[name] = s.Ref
+		self[name] = s.Ref
+		if s.SelfRef != "" {
+			genlog.Decision("sink_selfref", s.SelfRef, "org.projectfile.sinks."+name+".selfref",
+				"own artifact only; foreign images keep "+s.Ref)
+			self[name] = s.SelfRef
+		}
 	}
-	return out, nil
+	return foreign, self, nil
 }
 
 // composesAnySink reports whether ANY declared sink resolves against the image parts

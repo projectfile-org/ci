@@ -1215,6 +1215,7 @@ const (
 	testUbuntuBaseImageVar = "B19_UBUNTU_BASE_IMAGE"
 	testJsToolsImageVar    = "D9T_JS_TOOLS_IMAGE"
 	hubHead                = "docker.io/damianbuho"
+	ghcrHead               = "ghcr.io/damian-buho"
 	sinkGHCR               = "ghcr"
 	archRISCV              = "riscv64"
 	// refGHCR is what publishDoc's ghcr template composes to: a NESTED path with the
@@ -1464,8 +1465,8 @@ func TestDeclaredImagesComposeFromPullSink(t *testing.T) {
 		t.Fatalf("declaredImages forgejo:\n got %#v\nwant %#v", got, wantRefs)
 	}
 	wantHeads := map[string]string{
-		testUbuntuBaseImageVar: "ghcr.io/damian-buho",
-		testJsToolsImageVar:    "ghcr.io/damian-buho",
+		testUbuntuBaseImageVar: ghcrHead,
+		testJsToolsImageVar:    ghcrHead,
 	}
 	if !reflect.DeepEqual(heads, wantHeads) {
 		t.Fatalf("declaredImages forgejo heads:\n got %#v\nwant %#v", heads, wantHeads)
@@ -1631,5 +1632,104 @@ func TestNodeMatrixPinDecodes(t *testing.T) {
 	}
 	if got := n.Pin[ArchAxis]; got != "amd64" {
 		t.Errorf("pin[%s]: want amd64, got %q", ArchAxis, got)
+	}
+}
+
+// sinkRefNested is the fleet's own ghcr grammar: a forced account, then the
+// image's own path.
+const sinkRefNested = ghcrHead + "/${path}:${tag}"
+
+// selfSinkDoc declares one sink reached by BOTH planes, with a `selfref` that
+// differs from its `ref` — the shape a project takes when the destination's
+// literal account already spells the org its own `${path}` would repeat.
+func selfSinkDoc(t *testing.T, ref string) *projectfile.Document {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: me.example
+  name: textlint-server
+repositories:
+  - role: origin
+    type: git
+    url: ssh://git@kiota.ch/damian-buho/textlint-server.git
+org:
+  projectfile:
+    image:
+      name: ${identity.name}
+      org: damian-buho
+      path: ${org}/${name}
+      flatpath: ${org}-${name}
+      tag: latest
+    images:
+      D9T_JS_TOOLS_IMAGE:
+        org: d9t
+        name: js-tools
+        path: ${org}/${name}
+        flatpath: ${org}-${name}
+        tag: $${M6E_BASE_IMAGE_DEFAULT_VERSION}
+        registry: D9T_DOCKER_REGISTRY
+        ref: $${D9T_DOCKER_REGISTRY}/${path}:${tag}
+    sinks:
+      ghcr:
+        ref: `+ref+`
+        selfref: ghcr.io/damian-buho/${name}:${tag}
+    publish:
+      kiota:
+        push: [ghcr]
+        pull: ghcr
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestSelfRefSplitsTheTwoPlanes is the whole point of `selfref`: one sink, two
+// subjects. The project's OWN artifact drops the repeated org segment, while a
+// foreign image pulled through the SAME sink keeps its own nesting.
+func TestSelfRefSplitsTheTwoPlanes(t *testing.T) {
+	r := &Reader{doc: selfSinkDoc(t, sinkRefNested)}
+
+	refs, err := r.publishRefs()
+	if err != nil {
+		t.Fatalf("publishRefs: %v", err)
+	}
+	want := []SinkRef{{Sink: sinkGHCR, Ref: "ghcr.io/damian-buho/textlint-server:latest"}}
+	if !reflect.DeepEqual(refs[LoweringForgejo], want) {
+		t.Fatalf("publishRefs forgejo:\n got %#v\nwant %#v", refs[LoweringForgejo], want)
+	}
+
+	images, heads, err := r.declaredImages(LoweringForgejo)
+	if err != nil {
+		t.Fatalf("declaredImages: %v", err)
+	}
+	const wantImage = "ghcr.io/damian-buho/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}"
+	if images[testJsToolsImageVar] != wantImage {
+		t.Fatalf("declaredImages: got %q, want %q", images[testJsToolsImageVar], wantImage)
+	}
+	if heads[testJsToolsImageVar] != ghcrHead {
+		t.Fatalf("declaredImages head: got %q, want %q", heads[testJsToolsImageVar], ghcrHead)
+	}
+}
+
+// TestPullSinkSpendingNoImagePathIsRefused pins the loud half: a sink `ref` that
+// names neither ${path} nor ${flatpath} cannot address a foreign image, so the
+// entry falls back to its own ref instead of composing a well-formed wrong one.
+func TestPullSinkSpendingNoImagePathIsRefused(t *testing.T) {
+	r := &Reader{doc: selfSinkDoc(t, "ghcr.io/damian-buho/${name}:${tag}")}
+	images, heads, err := r.declaredImages(LoweringForgejo)
+	if err != nil {
+		t.Fatalf("declaredImages: %v", err)
+	}
+	const wantImage = "${D9T_DOCKER_REGISTRY}/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}"
+	if images[testJsToolsImageVar] != wantImage {
+		t.Fatalf("declaredImages: got %q, want %q", images[testJsToolsImageVar], wantImage)
+	}
+	if len(heads) != 0 {
+		t.Fatalf("declaredImages heads: got %#v, want none", heads)
 	}
 }
