@@ -329,108 +329,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
-      - name: pf-bridge-ai-policy-md-check
+      - name: pf-bridge-check
         uses: projectfile/ci-actions/run-tool@v1
         with:
           image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
-          run: pf-bridge ai-policy --check
-      - name: pf-bridge-citation-cff-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge cff CITATION.cff --check
-      - name: pf-bridge-claudeignore-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge ignore .claudeignore --check
-      - name: pf-bridge-code-of-conduct-md-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge coc --check
-      - name: pf-bridge-codeowners-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge codeowners --check
-      - name: pf-bridge-contributing-md-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge contributing --check
-      - name: pf-bridge-dockerignore-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge ignore .dockerignore --check
-      - name: pf-bridge-fragments-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge fragments --check
-      - name: pf-bridge-gitattributes-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge gitattributes --check
-      - name: pf-bridge-gitignore-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge ignore .gitignore --check
-      - name: pf-bridge-grype-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge vulnerabilities .grype.yaml --check
-      - name: pf-bridge-license-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge license --check
-      - name: pf-bridge-osv-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge vulnerabilities osv-scanner.toml --check
-      - name: pf-bridge-readme-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge readme --check
-      - name: pf-bridge-security-md-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge security --check
-      - name: pf-bridge-support-md-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge support --check
-      - name: pf-bridge-trivyignore-check
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge vulnerabilities .trivyignore --check
+          run: pf-bridge check
   projectfile-is-valid:
     runs-on: ubuntu-latest
     steps:
