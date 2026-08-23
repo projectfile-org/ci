@@ -9,6 +9,8 @@
 
 # >>> user-include
 *.md
+*.out
+*.test
 .compose
 .fetch
 .forgejo
@@ -22,6 +24,8 @@ CODEOWNERS
 LICENSE
 LICENSES
 Makefile
+bin/
+dist/
 docs
 lefthook.yaml
 lefthook.yml
