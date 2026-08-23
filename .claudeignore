@@ -8,8 +8,14 @@
 # pf-cli-managed: yes
 
 # >>> user-include
+*.out
+*.test
 .git
 CITATION.cff
+LICENSE
+LICENSES
+bin/
+dist/
 # <<< user-include
 
 # >>> user-extra
