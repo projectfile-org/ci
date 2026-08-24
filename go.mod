@@ -7,8 +7,8 @@ module projectfile.org/projectfile/ci-resolver
 go 1.26.6
 
 require (
-	gopkg.in/yaml.v3 v3.0.1
-	kiota.ch/projectfile/core/v2 v2.9.4
+	go.yaml.in/yaml/v3 v3.0.5
+	kiota.ch/projectfile/core/v2 v2.9.5
 )
 
 require (
@@ -28,7 +28,6 @@ require (
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/xo/terminfo v1.0.0 // indirect
 	golang.org/x/exp v0.0.0-20260820142414-ca536658362e // indirect
 	golang.org/x/sys v0.47.0 // indirect

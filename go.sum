@@ -42,9 +42,5 @@ golang.org/x/exp v0.0.0-20260820142414-ca536658362e h1:01Ju2A/fZKkci4zqx0eZxw//D
 golang.org/x/exp v0.0.0-20260820142414-ca536658362e/go.mod h1:zeBbvyFKDaLwa7CH/zI8KXt7gTl14SF7sO08Pl5jBCM=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
-gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
-gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
-kiota.ch/projectfile/core/v2 v2.9.4 h1:SO2+krFboKlJC27MKnibjZmLBlCTU6I4AZquxdPGa7s=
-kiota.ch/projectfile/core/v2 v2.9.4/go.mod h1:2aMQWnnG5zdE7SjWsUydYl/fKBZ5t0F9O9ZS45SWAqw=
+kiota.ch/projectfile/core/v2 v2.9.5 h1:ls2WN1RBMqO1o4M4Q4hxMvcs9QZwLns/GAkO/2qXydk=
+kiota.ch/projectfile/core/v2 v2.9.5/go.mod h1:JMHe1to9sR4etAK/+sJDAybhObJTMDZOFtFyDmJUmP4=
