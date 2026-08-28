@@ -35,9 +35,13 @@ name: published
         type: string
       GOPROXY:
         type: string
+      LANG:
+        type: string
       M6E_APT_CACHE_HOST:
         type: string
       M6E_APT_CACHE_PORT:
+        type: string
+      M6E_BUILD_DEBUG:
         type: string
       M6E_NEAR_CACHE_HOST:
         type: string
@@ -85,14 +89,7 @@ jobs:
           name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
       - name: gsa
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-gsa dist/pf-ci
-          env: |-
-            GOARCH=${{ matrix.GOARCH }}
-            GOOS=${{ matrix.GOOS }}
+        run: gsa
   binaries-released:
     runs-on: docker
     needs: ["binaries-built"]
@@ -192,13 +189,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
-      - name: markdownlint
+      - name: auto-markdownlint
         uses: projectfile/ci-actions/run-tool@v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-markdownlint
-      - name: textlint
+      - name: auto-textlint
         uses: projectfile/ci-actions/run-tool@v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
@@ -227,8 +224,10 @@ jobs:
       B19_VERBOSITY: ${{ inputs.B19_VERBOSITY || vars.B19_VERBOSITY || 'info' }}
       DESTINATION_DOCKER_REGISTRY: ${{ inputs.DESTINATION_DOCKER_REGISTRY || vars.DESTINATION_DOCKER_REGISTRY }}
       GOPROXY: ${{ inputs.GOPROXY || vars.GOPROXY }}
+      LANG: ${{ inputs.LANG || vars.LANG }}
       M6E_APT_CACHE_HOST: ${{ inputs.M6E_APT_CACHE_HOST || vars.M6E_APT_CACHE_HOST }}
       M6E_APT_CACHE_PORT: ${{ inputs.M6E_APT_CACHE_PORT || vars.M6E_APT_CACHE_PORT }}
+      M6E_BUILD_DEBUG: ${{ inputs.M6E_BUILD_DEBUG || vars.M6E_BUILD_DEBUG }}
       M6E_NEAR_CACHE_HOST: ${{ inputs.M6E_NEAR_CACHE_HOST || vars.M6E_NEAR_CACHE_HOST }}
       M6E_NEAR_CACHE_PORT: ${{ inputs.M6E_NEAR_CACHE_PORT || vars.M6E_NEAR_CACHE_PORT }}
       SOURCE_DOCKER_REGISTRY: ${{ inputs.SOURCE_DOCKER_REGISTRY || vars.SOURCE_DOCKER_REGISTRY }}
@@ -252,8 +251,10 @@ jobs:
             B19_VERBOSITY=${{ inputs.B19_VERBOSITY || vars.B19_VERBOSITY || 'info' }}
             DESTINATION_DOCKER_REGISTRY=${{ inputs.DESTINATION_DOCKER_REGISTRY || vars.DESTINATION_DOCKER_REGISTRY }}
             GOPROXY=${{ inputs.GOPROXY || vars.GOPROXY }}
+            LANG=${{ inputs.LANG || vars.LANG }}
             M6E_APT_CACHE_HOST=${{ inputs.M6E_APT_CACHE_HOST || vars.M6E_APT_CACHE_HOST }}
             M6E_APT_CACHE_PORT=${{ inputs.M6E_APT_CACHE_PORT || vars.M6E_APT_CACHE_PORT }}
+            M6E_BUILD_DEBUG=${{ inputs.M6E_BUILD_DEBUG || vars.M6E_BUILD_DEBUG }}
             M6E_NAMESPACE=projectfile
             M6E_NEAR_CACHE_HOST=${{ inputs.M6E_NEAR_CACHE_HOST || vars.M6E_NEAR_CACHE_HOST }}
             M6E_NEAR_CACHE_PORT=${{ inputs.M6E_NEAR_CACHE_PORT || vars.M6E_NEAR_CACHE_PORT }}
@@ -486,22 +487,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
-      - name: cffr-validate
+      - name: auto-cffr-validate
         uses: projectfile/ci-actions/run-tool@v1
         with:
           image: ${{ vars.D9T_R_TOOLS_IMAGE || format('{0}/d9t/r-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-cffr-validate
-      - name: go-vet
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: go vet ./...
-          env: |-
-            GOPROXY
-          mounts: /app/data/ci-cache/go:/app/.cache/go:rw
-      - name: golangci-lint
+      - name: auto-golangci-lint
         uses: projectfile/ci-actions/run-tool@v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
@@ -510,12 +502,39 @@ jobs:
           env: |-
             GOPROXY
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
-      - name: gosec
+      - name: auto-gosec
         uses: projectfile/ci-actions/run-tool@v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-gosec
+          env: |-
+            GOPROXY
+          mounts: /app/data/ci-cache/go:/app/.cache/go:rw
+      - name: auto-jsonlint
+        uses: projectfile/ci-actions/run-tool@v1
+        with:
+          image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-jsonlint
+      - name: auto-shellcheck
+        uses: projectfile/ci-actions/run-tool@v1
+        with:
+          image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-shellcheck
+      - name: auto-yamllint
+        uses: projectfile/ci-actions/run-tool@v1
+        with:
+          image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-yamllint
+      - name: go-vet
+        uses: projectfile/ci-actions/run-tool@v1
+        with:
+          image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: go vet ./...
           env: |-
             GOPROXY
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
@@ -532,21 +551,3 @@ jobs:
           image: ${{ vars.D9T_IGNORELINT_IMAGE || format('{0}/d9t/ignorelint', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: ignorelint
-      - name: jsonlint
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-jsonlint
-      - name: shellcheck
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-shellcheck
-      - name: yamllint
-        uses: projectfile/ci-actions/run-tool@v1
-        with:
-          image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-yamllint
