@@ -64,8 +64,11 @@ jobs:
     needs: ["source-is-ready"]
     strategy:
       matrix:
-        GOARCH: ["amd64", "arm64"]
+        GOARCH: ["amd64", "arm64", "riscv64"]
         GOOS: ["linux", "darwin"]
+        exclude:
+          - GOARCH: "riscv64"
+            GOOS: "darwin"
     env:
       GOARCH: ${{ matrix.GOARCH }}
       GOOS: ${{ matrix.GOOS }}
@@ -100,8 +103,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
-        GOARCH: ["amd64", "arm64"]
+        GOARCH: ["amd64", "arm64", "riscv64"]
         GOOS: ["linux", "darwin"]
+        exclude:
+          - GOARCH: "riscv64"
+            GOOS: "darwin"
     env:
       GOARCH: ${{ matrix.GOARCH }}
       GOOS: ${{ matrix.GOOS }}
@@ -207,8 +213,11 @@ jobs:
     needs: ["binaries-built"]
     strategy:
       matrix:
-        GOARCH: ["amd64", "arm64"]
+        GOARCH: ["amd64", "arm64", "riscv64"]
         GOOS: ["linux", "darwin"]
+        exclude:
+          - GOARCH: "riscv64"
+            GOOS: "darwin"
     env:
       GOARCH: ${{ matrix.GOARCH }}
       GOOS: ${{ matrix.GOOS }}
