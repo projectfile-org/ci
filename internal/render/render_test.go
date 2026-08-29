@@ -5034,3 +5034,73 @@ func TestArchRunnersAbsentMapChangesNothing(t *testing.T) {
 		t.Errorf("unmapped target must render the adapter default runner:\n%s", s)
 	}
 }
+
+// advisorySubtree pairs the two step KINDS a tool lowers to — a host `run:` and an
+// image tool through run-tool — with one BLOCKING sibling of each, so the same
+// assertion proves both the opt-in and the fail-closed default.
+const advisorySubtree = `{
+  "tools": {
+    "link-validate":  {"image": "reg.example/js-tools:latest", "run": "auto-linkinator", "advisory": true},
+    "grype-scan":     {"image": "reg.example/js-tools:latest", "run": "auto-grype"},
+    "spell-check":    {"run": "make spell", "advisory": true},
+    "site-build":     {"run": "make site"}
+  },
+  "nodes": {
+    "source-is-valid": {"goal": true, "needs": {"link-validate": true, "grype-scan": true, "spell-check": true, "site-build": true}}
+  }
+}`
+
+// TestAdvisoryLowering pins the non-blocking verdict on both step kinds, and pins that
+// it is INERT where nobody wrote it: a host `run:` step takes the runner's own
+// `continue-on-error`, a containerised one takes the run-tool `advisory` input (the rc
+// decode already lives in that action), and a tool with no `advisory` key renders
+// byte-identically to before — fail-closed, so no existing document changes meaning.
+func TestAdvisoryLowering(t *testing.T) {
+	st, err := ci.Parse([]byte(advisorySubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+
+	// Neutral model: only the two declared tools carry the flag.
+	for name, want := range map[string]bool{
+		"link-validate": true, "spell-check": true,
+		"grype-scan": false, "site-build": false,
+	} {
+		if got := steps(m)[name].Advisory; got != want {
+			t.Errorf("%s.Advisory = %v, want %v", name, got, want)
+		}
+	}
+
+	for _, tgt := range []string{TargetGHA, TargetForgejo} {
+		out, err := Workflow(m, Targets[tgt], ci.Platform{})
+		if err != nil {
+			t.Fatalf("%s: %v", tgt, err)
+		}
+		s := string(out)
+		// Host step: the runner's own knob, directly above the command it guards.
+		if !strings.Contains(s, "        continue-on-error: true\n        run: make spell\n") {
+			t.Errorf("%s: advisory host step lost its continue-on-error:\n%s", tgt, s)
+		}
+		// Image step: the action input, beside the run it reports on.
+		if !strings.Contains(s, "          advisory: \"true\"\n          run: auto-linkinator\n") {
+			t.Errorf("%s: advisory image step lost its run-tool input:\n%s", tgt, s)
+		}
+		// Inert where absent: neither spelling reaches a blocking sibling.
+		if strings.Contains(s, "      - name: site-build\n        continue-on-error") {
+			t.Errorf("%s: a blocking host step must render no continue-on-error:\n%s", tgt, s)
+		}
+		// Counted on the KEY spellings (leading newline + exact indent) so the rationale
+		// comments above them, which name both knobs in prose, never satisfy the assertion.
+		if n := strings.Count(s, "\n          advisory: "); n != 1 {
+			t.Errorf("%s: want exactly 1 advisory input (the one tool that asked), got %d", tgt, n)
+		}
+		if n := strings.Count(s, "\n        continue-on-error: "); n != 1 {
+			t.Errorf("%s: want exactly 1 continue-on-error, got %d", tgt, n)
+		}
+	}
+}

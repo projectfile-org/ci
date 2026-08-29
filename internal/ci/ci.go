@@ -445,8 +445,21 @@ type Manifest struct {
 	// the step runs only when every earlier step succeeded (the default). This is the
 	// per-STEP cousin of a node's `when:{events}` trigger predicate — same word, a
 	// different axis (intra-job step ordering vs workflow-level event shaping).
-	When string   `json:"when"`
-	Tags []string `json:"tags"` // advisory open-vocabulary labels (no lowering semantics)
+	When string `json:"when"`
+	// Advisory makes the tool's FAILURE non-blocking: the step runs, its output and its
+	// `reports:` are kept, the failure is reported where a pass would be, and nothing
+	// downstream is skipped or failed by it. Fail-CLOSED — absent (false) is blocking, so
+	// no existing document changes meaning, and only an explicit `true` disarms a verdict.
+	// It is for a linter younger than our patience with it, NEVER for a scanner, a publish
+	// or a test: those are what a gate is for. The two lowerings differ by step KIND, not
+	// by intent — a host `run:` step takes the runner's own `continue-on-error` (confirmed
+	// honoured by Forgejo's act fork, which clears the error and marks the conclusion
+	// success), while a containerised tool takes the `advisory` INPUT on the run-tool
+	// action, because run.sh already decodes the rc into a named cause and the recipe
+	// belongs in the versioned action (Law 2). Distinct from `guard`/`inputs`, which decide
+	// WHETHER a tool runs; this decides what its exit status MEANS.
+	Advisory bool     `json:"advisory"`
+	Tags     []string `json:"tags"` // advisory open-vocabulary labels (no lowering semantics)
 	// `guard` (a file-existence predicate) is DELIBERATELY not decoded here: this
 	// lowering does not gate a tool on a file. The only fleet users (cffr-validate /
 	// hadolint) name a file their bolt-on always ships, so the predicate is constant-

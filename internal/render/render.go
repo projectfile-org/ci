@@ -1519,10 +1519,15 @@ type StepView struct {
 	// today is a tool's `when: always` (a fused-job teardown), lowered to the GHA/Forgejo
 	// `${{ always() }}` expression so a cleanup member runs even after an earlier step
 	// failed. Empty => no guard (the default: skip if an earlier step failed).
-	If    string `json:"if,omitempty"`
-	Run   string `json:"run"`
-	Args  string `json:"args,omitempty"`
-	Image string `json:"image,omitempty"` // AGNOSTIC image PATH; RunTool* split it for the action
+	If string `json:"if,omitempty"`
+	// Advisory carries Manifest.Advisory: this step reports its failure but never blocks
+	// the job. It lowers by step KIND — `continue-on-error: true` on a host `run:` step,
+	// the run-tool action's `advisory` input on a containerised one — so the two paths
+	// share one meaning and neither hides the failure. False (the default) is blocking.
+	Advisory bool   `json:"advisory,omitempty"`
+	Run      string `json:"run"`
+	Args     string `json:"args,omitempty"`
+	Image    string `json:"image,omitempty"` // AGNOSTIC image PATH; RunTool* split it for the action
 	// PinnedTag is a tool image's HARD-pinned tag (an external vendor release like
 	// `v2.14.0`) carried SEPARATELY from Image, which stays path-only. Set ONLY when the
 	// ci.images value's tag is a literal — NOT the mutable `${M6E_BASE_IMAGE_DEFAULT_VERSION}`
@@ -2488,6 +2493,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		PinnedTag: pin,
 		SelfImage: self,
 		Action:    man.Action,
+		Advisory:  man.Advisory,
 		Network:   man.Network,
 		Stem:      artifactStem("image", AxisMap(j.Axes)),
 		Arch:      archVarExpr(j.Axes),

@@ -124,6 +124,12 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- if .Step.If }}
         if: {{ .Step.If }}
 {{- end }}
+{{- if .Step.Advisory }}
+        # `advisory: true` — this step RUNS and its failure is REPORTED, but the job and
+        # everything downstream carry on. A host step has no action to put the recipe in,
+        # so the runner's own knob is it; Forgejo's act fork honours it.
+        continue-on-error: true
+{{- end }}
         run: {{ .Step.Command }}
 {{- if .Step.Upload }}
       - uses: {{ .Target.Upload }}
@@ -158,6 +164,12 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- end }}
 {{- with .Step.RunToolNetwork }}
           network: {{ . }}
+{{- end }}
+{{- if .Step.Advisory }}
+          # `advisory: true` — run.sh reports the failure with its named cause, then returns
+          # 0. It rides the ACTION because that decode already lives there, so one code path
+          # behaves the same on every forge however each implements the step-level knob.
+          advisory: "true"
 {{- end }}
           run: {{ .Step.Command }}
 {{- if .Step.EnvForward }}
