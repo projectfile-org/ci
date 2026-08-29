@@ -88,11 +88,14 @@ jobs:
         with:
           name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
-      - name: gsa
-        run: gsa
+  binaries-ready:
+    runs-on: docker
+    needs: ["binaries-built", "gsa"]
+    steps:
+      - run: echo binaries-ready
   binaries-released:
     runs-on: docker
-    needs: ["binaries-built"]
+    needs: ["binaries-ready"]
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
@@ -205,6 +208,33 @@ jobs:
     runs-on: docker
     steps:
       - run: echo fetched
+  gsa:
+    runs-on: docker
+    needs: ["binaries-built"]
+    strategy:
+      matrix:
+        GOARCH: ["amd64", "arm64"]
+        GOOS: ["linux", "darwin"]
+    env:
+      GOARCH: ${{ matrix.GOARCH }}
+      GOOS: ${{ matrix.GOOS }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v3
+        with:
+          name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
+          path: dist
+      - name: auto-gsa
+        uses: projectfile/ci-actions/run-tool@v1
+        with:
+          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-gsa dist/pf-ci
+          env: |-
+            GOARCH=${{ matrix.GOARCH }}
+            GOOS=${{ matrix.GOOS }}
   image-is-built:
     runs-on: docker
     needs: ["source-is-ready"]
