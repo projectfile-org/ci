@@ -977,20 +977,6 @@ Tear down the compose stack of every matrix variant
 
 Tear down every variant’s stack and volumes, remove built images and the fetch cache
 
-## Manifest
-
-### `build-binaries`
-
-`.scripts/build-binaries.sh`
-
-> Image: GO_TOOL_IMAGE
-
-### `install-binary`
-
-`.scripts/install-binary.sh`
-
-> Image: host runner
-
 ## Meta
 
 ### `m6e-commit`

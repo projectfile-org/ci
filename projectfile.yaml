@@ -95,9 +95,6 @@ org:
               GOOS:
                 - linux
                 - darwin
-          needs:
-            build-binaries: true
-            source-is-ready: true
         gsa:
           matrix:
             axes:
@@ -107,13 +104,6 @@ org:
               GOOS:
                 - linux
                 - darwin
-          needs:
-            binaries-built: true
-            auto-gsa: true
-        binaries-ready:
-          needs:
-            binaries-built: true
-            gsa: true
         binaries-released:
           matrix:
             axes:
@@ -123,47 +113,7 @@ org:
               GOOS:
                 - linux
                 - darwin
-          needs:
-            binaries-ready: true
-            forgejo-release: true
-            gh-release: true
-          when:
-            events:
-              - tag
-        published:
-          needs:
-            binaries-released: true
-            install-binary: true
       status: maintained
-      tools:
-        build-binaries:
-          artifact: dist
-          env:
-            - GOPROXY
-            - GOOS
-            - GOARCH
-            - GITHUB_REF_NAME
-          guard: go.mod
-          image: GO_TOOL_IMAGE
-          m6e:
-            prefer-local: true
-          run: .scripts/build-binaries.sh
-        forgejo-release:
-          action: forgejo-release
-          env:
-            - FORGEJO_TOKEN
-          gha: false
-          m6e: false
-        gh-release:
-          env:
-            - GH_TOKEN
-          forgejo: false
-          m6e: false
-          run: .scripts/gh-release.sh "$${{ github.ref_name }}"
-        install-binary:
-          forgejo: false
-          gha: false
-          run: .scripts/install-binary.sh
     readme:
       usage:
         - commands:
