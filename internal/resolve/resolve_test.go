@@ -7,7 +7,7 @@ package resolve
 import (
 	"testing"
 
-	"projectfile.org/projectfile/ci-resolver/internal/ci"
+	"projectfile.org/projectfile/ci/internal/ci"
 )
 
 // axisSeries is the global axis the matrix tests fan over (goconst).

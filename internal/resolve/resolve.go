@@ -25,7 +25,7 @@ import (
 	"strings"
 
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
-	"projectfile.org/projectfile/ci-resolver/internal/ci"
+	"projectfile.org/projectfile/ci/internal/ci"
 )
 
 // Class is a node's matrix timing class (Model 1 — membership is a per-node flag).

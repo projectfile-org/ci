@@ -4,7 +4,7 @@
 
 // Replay the spec's org.projectfile.ci conformance vectors against THIS lowering.
 //
-// This is what makes "ci-resolver is a second, faithful implementation of
+// This is what makes "pf-ci is a second, faithful implementation of
 // org.projectfile.ci" honest: every behaviour vector the spec ships
 // (spec/conformance/ci/*.yaml) is run through the SAME resolver the generator
 // uses — the identical vectors m6e replays through make. With no shared lowering
@@ -25,7 +25,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"projectfile.org/projectfile/ci-resolver/internal/ci"
+	"projectfile.org/projectfile/ci/internal/ci"
 )
 
 type vector struct {
@@ -46,7 +46,7 @@ type vector struct {
 func vectorsDir(t *testing.T) string {
 	t.Helper()
 	_, self, _, _ := runtime.Caller(0)
-	// internal/resolve/ -> ci-resolver -> projectfile
+	// internal/resolve/ -> ci -> projectfile
 	dir := filepath.Join(filepath.Dir(self), "..", "..", "..",
 		"specification", "spec", "conformance", "ci")
 	if _, err := os.Stat(dir); err != nil {

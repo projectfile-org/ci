@@ -11,8 +11,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"projectfile.org/projectfile/ci-resolver/internal/ci"
-	"projectfile.org/projectfile/ci-resolver/internal/resolve"
+	"projectfile.org/projectfile/ci/internal/ci"
+	"projectfile.org/projectfile/ci/internal/resolve"
 )
 
 // Test-local constants for repeated string literals (goconst).
@@ -460,7 +460,7 @@ func jobByName(m Model, name string) (JobView, bool) {
 // the engine has no `needs: build[matrix.x == ...]` per-cell primitive — so a scan
 // cell waits for EVERY build cell, not just its sibling. m6e pairs per cell only
 // because it runs each cell as one `--scope=cell KEY=…` sub-make pass holding the
-// whole CELL slice (build→scan together); ci-resolver splits per tool (the locked
+// whole CELL slice (build→scan together); pf-ci splits per tool (the locked
 // one-job-per-tool / edge-level rule), so the pairing is lost at the tool boundary.
 //
 // We ACCEPT this: the coarse gate costs only parallelism (a straggler build cell

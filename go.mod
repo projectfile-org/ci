@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-module projectfile.org/projectfile/ci-resolver
+module projectfile.org/projectfile/ci
 
 go 1.26.6
 

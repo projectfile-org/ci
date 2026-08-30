@@ -5,7 +5,7 @@
 // Package ci reads the (includes-merged) org.projectfile.ci signal subtree.
 //
 // The read path is core-as-a-library (see read.go): core resolves root
-// `includes:` and deep-merges them (base/local wins, spec §4.9a); ci-resolver
+// `includes:` and deep-merges them (base/local wins, spec §4.9a); pf-ci
 // normalises the one already-merged view into a Go model the resolver can lower,
 // never re-implementing the merge. Contract validation lives in tests that drive
 // the built binary, not in a production subprocess.
@@ -465,14 +465,14 @@ type Manifest struct {
 	// hadolint) name a file their bolt-on always ships, so the predicate is constant-
 	// true — and the d9t runner self-guards a genuinely-absent file (a wasted-but-green
 	// run, never a failure). The make lowering still honours `guard` via `test -f`
-	// (clean, no inline shell), so the field stays valid spec; ci-resolver just trusts
+	// (clean, no inline shell), so the field stays valid spec; pf-ci just trusts
 	// the runner. Applicability belongs to MEMBERSHIP (include the fragment ⟺ have the
 	// file), not a runtime predicate.
 	// Lowering MEMBERSHIP, keyed by the TARGET NAME directly (a sibling of `m6e:`,
 	// never under a `targets:` wrapper — one grammar: the target name is the key).
 	// OPT-OUT: an absent key (nil) means the tool runs on this target; only an
 	// explicit `false` removes it. The m6e lowering reads its own `m6e:` block;
-	// ci-resolver renders exactly gha/forgejo (see render.Targets), so those are the
+	// ci renders exactly gha/forgejo (see render.Targets), so those are the
 	// keys it consults — a new render target adds a field here next to its adapter row.
 	GHA     *bool `json:"gha"`
 	Forgejo *bool `json:"forgejo"`

@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MIT
 
 ---
-name: dev-projectfile-ci-resolver
+name: dev-projectfile-ci
 services:
-  projectfile-ci-resolver:
+  projectfile-ci:
     container_name: ${M6E_CONTAINER_INSTANCE}
     image: ${M6E_IMAGE_FULLNAME}
     labels:

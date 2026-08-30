@@ -5,7 +5,7 @@
 // Package render turns a resolved job model into a vendor CI workflow.
 //
 // The graph lowering (internal/resolve) is target-neutral — that is the whole
-// point of the neutral name "ci-resolver". A target is then just a TEMPLATE plus
+// point of the neutral name "pf-ci". A target is then just a TEMPLATE plus
 // a thin ADAPTER: GitHub Actions and Forgejo Actions share one workflow template
 // (Forgejo Actions is GHA-compatible) and differ only in a handful of tokens
 // (runner label, checkout ref, workflow path). Tekton, a genuinely different
@@ -30,8 +30,8 @@ import (
 	"text/template"
 
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
-	"projectfile.org/projectfile/ci-resolver/internal/ci"
-	"projectfile.org/projectfile/ci-resolver/internal/resolve"
+	"projectfile.org/projectfile/ci/internal/ci"
+	"projectfile.org/projectfile/ci/internal/resolve"
 )
 
 //go:embed templates/*.tmpl
@@ -1324,7 +1324,7 @@ func sortedBuilders() []string {
 // WorkflowExtEnv is the single knob that picks the committed workflow file
 // extension. The workspace standard is ".yaml" (see m6e/AGENTS.md: the data
 // plane is ".yaml"); a developer who prefers ".yml" exports
-// PF_CI_WORKFLOW_EXT=.yml and BOTH planes honour it — ci-resolver renders to
+// PF_CI_WORKFLOW_EXT=.yml and BOTH planes honour it — pf-ci renders to
 // ".yml" here, and m6e's act.mk derives its M6E_ACT_WORKFLOW_EXT default from
 // the same var, so `make act-*` finds the ".yml" file. One knob, no lockstep
 // burden on the operator.
@@ -3860,7 +3860,7 @@ var funcs = template.FuncMap{
 		return "[" + strings.Join(quoted, ", ") + "]"
 	},
 	// actionRef resolves a library PATH to the target's external action ref
-	// (`<ActionLib>/<path>@<ActionVer>`): ci-resolver keeps "which action + ordering"
+	// (`<ActionLib>/<path>@<ActionVer>`): pf-ci keeps "which action + ordering"
 	// and the external library keeps the recipe. The path is composed by each action
 	// partial, so a backend/variant (`container-build/buildx`) needs no new func.
 	"actionRef": func(t Target, path string) string {

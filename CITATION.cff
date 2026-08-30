@@ -24,10 +24,10 @@ contact:
     orcid: https://orcid.org/0009-0004-8579-7633
     website: https://dbuho.me
 license: MIT
-repository-code: https://kiota.ch/projectfile/ci-resolver
+repository-code: https://kiota.ch/projectfile/ci
 keywords:
   - pf-ci
-  - ci-resolver
+  - pf-ci
   - projectfile
   - dag
   - workflow

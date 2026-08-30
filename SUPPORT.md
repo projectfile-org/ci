@@ -15,8 +15,8 @@ This document explains where to get help and how to ask effective questions.
 
 Please check these first — your question may already be answered:
 
-- [Issues on Codeberg](https://codeberg.org/projectfile/ci-resolver/issues)
-- [Issues on GitHub](https://github.com/damian-buho/projectfile-ci-resolver/issues)
+- [Issues on Codeberg](https://codeberg.org/projectfile/ci/issues)
+- [Issues on GitHub](https://github.com/damian-buho/projectfile-ci/issues)
 
 ## Where to Ask
 

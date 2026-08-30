@@ -7,7 +7,7 @@ copyright:
   year: 2026
 identity:
   created: "2026-06-01"
-  name: ci-resolver
+  name: ci
   summary:
     en: Lowers the org.projectfile.ci DAG to CI workflows
     es: Convierte el DAG de org.projectfile.ci en flujos de trabajo de CI
@@ -35,7 +35,7 @@ links:
       - badges
       - badges-gitea
     type: source-code
-    url: https://codeberg.org/projectfile/ci-resolver
+    url: https://codeberg.org/projectfile/ci
   - label:
       en: Projectfile CI Resolver on GitHub
       es: Projectfile CI Resolver en GitHub
@@ -45,14 +45,14 @@ links:
       - badges
       - badges-github
     type: source-code
-    url: https://github.com/damian-buho/projectfile-ci-resolver
+    url: https://github.com/damian-buho/projectfile-ci
   - label:
       en: Projectfile CI Resolver on kiota.ch
       es: Projectfile CI Resolver en kiota.ch
       uk: Projectfile CI Resolver на kiota.ch
     preferred: true
     type: source-code
-    url: https://kiota.ch/projectfile/ci-resolver
+    url: https://kiota.ch/projectfile/ci
   - label:
       en: Issues on Codeberg
       es: Incidencias en Codeberg
@@ -60,7 +60,7 @@ links:
     tags:
       - support
     type: bugs
-    url: https://codeberg.org/projectfile/ci-resolver/issues
+    url: https://codeberg.org/projectfile/ci/issues
   - label:
       en: Issues on GitHub
       es: Incidencias en GitHub
@@ -68,7 +68,7 @@ links:
     tags:
       - support
     type: bugs
-    url: https://github.com/damian-buho/projectfile-ci-resolver/issues
+    url: https://github.com/damian-buho/projectfile-ci/issues
 org:
   projectfile:
     artifacts:
@@ -137,17 +137,16 @@ org:
 repositories:
   - role: mirror
     type: git
-    url: ssh://git@codeberg.org/projectfile/ci-resolver.git
+    url: ssh://git@codeberg.org/projectfile/ci.git
   - role: mirror
     type: git
-    url: git@github.com:damian-buho/projectfile-ci-resolver.git
+    url: git@github.com:damian-buho/projectfile-ci.git
   - branch: main
     role: origin
     type: git
-    url: ssh://git@kiota.ch/projectfile/ci-resolver.git
+    url: ssh://git@kiota.ch/projectfile/ci.git
 keywords:
   - pf-ci
-  - ci-resolver
   - projectfile
   - dag
   - workflow

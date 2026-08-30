@@ -6,7 +6,7 @@ ARG B19_GO_BASE_IMAGE=registry.invalid/b19/go:latest
 ARG B19_UBUNTU_BASE_IMAGE=registry.invalid/b19/ubuntu/resolute:latest
 ARG B19_UBUNTU_SERIES=resolute
 
-FROM ${B19_GO_BASE_IMAGE} AS projectfile-ci-resolver-builder
+FROM ${B19_GO_BASE_IMAGE} AS projectfile-ci-builder
 
 ARG B19_COLOR
 ARG B19_FETCH_DOCKER_CACHE
@@ -52,7 +52,7 @@ RUN --mount=type=bind,from=fetch,source=.,target=/fetch                         
 # hadolint ignore=DL3066 # B19_UID comes from the root
 USER ${B19_UID}
 
-FROM ${B19_UBUNTU_BASE_IMAGE} AS projectfile-ci-resolver
+FROM ${B19_UBUNTU_BASE_IMAGE} AS projectfile-ci
 
 ARG B19_COLOR
 ARG B19_FETCH_DOCKER_CACHE
@@ -73,7 +73,7 @@ ARG TARGETARCH
 ENV M6E_VERSION=${M6E_VERSION}
 
 COPY --chown=${B19_UID}:${B19_GID} .container/base/ /
-COPY --from=projectfile-ci-resolver-builder /export /
+COPY --from=projectfile-ci-builder /export /
 
 USER 0
 

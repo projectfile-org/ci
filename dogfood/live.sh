@@ -36,9 +36,9 @@ set -euo pipefail
 # actions (not the published @v1) — the whole point of dogfooding local edits.
 # ---------------------------------------------------------------------------------
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO_CI_RESOLVER="$(cd "${HERE}/.." && pwd)"
-REPO_CI_ACTIONS="$(cd "${REPO_CI_RESOLVER}/../ci-actions" && pwd)"
-PFCI="${PFCI:-${REPO_CI_RESOLVER}/dist/pf-ci}"
+REPO_CI="$(cd "${HERE}/.." && pwd)"
+REPO_CI_ACTIONS="$(cd "${REPO_CI}/../ci-actions" && pwd)"
+PFCI="${PFCI:-${REPO_CI}/dist/pf-ci}"
 ACT_IMAGE="${ACT_IMAGE:-catthehacker/ubuntu:act-latest}"
 REGISTRY="${REGISTRY:-dogfood.local}"           # passed as --var, now a harmless no-op
 COMPOSE_PROJECT="pf-live-dogfood"               # distinctive => no real-stack collision

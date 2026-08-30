@@ -25,7 +25,7 @@ const (
 // document and serves the extension subtrees the resolver needs — replacing the
 // former `pf-cli get … --format json` subprocess dance (six execs per run). Read
 // once, query many. The merge (root `includes:`, deep-merge per spec §4.9a) is
-// core's, same as production; ci-resolver never re-implements it.
+// core's, same as production; pf-ci never re-implements it.
 type Reader struct{ doc *projectfile.Document }
 
 // newReader loads the includes-merged document: pfPath explicit, else the newest
