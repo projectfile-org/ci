@@ -1241,6 +1241,24 @@ Validate the projectfile document
 
 > Image: PF_CLI_IMAGE
 
+## Publish
+
+### `build-binaries`
+
+Cross-compile the release binaries for the OS/arch cell
+
+`.scripts/build-binaries.sh`
+
+> Image: GO_TOOL_IMAGE
+
+### `install-binary`
+
+Build the host-native binary and install it into ~/.local/bin
+
+`.scripts/install-binary.sh`
+
+> Image: host runner
+
 ## Release
 
 ### `svu-current`
