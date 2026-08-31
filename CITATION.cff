@@ -27,7 +27,6 @@ license: MIT
 repository-code: https://kiota.ch/projectfile/ci
 keywords:
   - pf-ci
-  - pf-ci
   - projectfile
   - dag
   - workflow
