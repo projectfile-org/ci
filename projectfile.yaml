@@ -22,6 +22,7 @@ includes:
   - .makefile/b19/images/go.yaml
   - .makefile/b19/images/ubuntu.yaml
   - .makefile/library/languages/go.yaml
+  - .makefile/library/traits/go-binary.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml
   - https://kiota.ch/projectfile/metadata/raw/branch/main/include.yaml
 kind: SoftwareSourceCode
