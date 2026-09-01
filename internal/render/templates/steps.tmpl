@@ -298,10 +298,20 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- if .Step.PublishVersion }}
           version: {{ .Step.PublishVersion }}
 {{- end }}
+{{- /*
+release-asset-path is emitted only when NON-EMPTY, and the guard is the feature: a
+project declaring no kind=binary artifact resolves it to "", and the action reads an
+UNSET input as its create-only route — mint the release, attach no binary. Emitting a
+blank value instead would hand the action a set-but-empty string it has to tell apart
+from a real path. The `with` also keeps every existing consumer's committed workflow
+byte-identical, so the drift gate stays quiet for projects that do declare a binary.
+*/ -}}
+{{- with .Step.ReleaseAssetPath }}
           # The unsuffixed binary path resolved from org.projectfile.artifacts (the single
           # kind=binary entry). The action suffixes it per cell (→ <path>-${GOOS}-${GOARCH})
           # to find the binary the build→consumer download edge restored to the workspace.
-          release-asset-path: {{ .Step.ReleaseAssetPath }}
+          release-asset-path: {{ . }}
+{{- end }}
 {{- with .Step.ReleaseURL }}
           # WHERE this cell attaches, off the publish axis. A forge granting no build
           # minutes still gets the same binaries: they are pushed from the forge that

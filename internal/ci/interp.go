@@ -236,10 +236,12 @@ func (r *Reader) interpolateRefs(st *Subtree) error {
 // render to thread as a `with:` input. The action then suffixes it per cell
 // (→ <path>-<os>-<arch>).
 //
-// Fail-closed: a forgejo-release tool with zero or more than one kind=binary
-// artifact is an ambiguous attach target, not a silent miss — the action would
-// either attach nothing or the wrong binary. `kind` is advisory vocabulary, so
-// the match is on the literal `binary` value only.
+// ZERO kind=binary artifacts leaves the path EMPTY, which the action reads as
+// CREATE-ONLY: a container-only project mints the release its image torrents
+// attach to, and has no binary to name. MORE than one still fails closed — that
+// is a genuine ambiguity rather than an absence, and the action would attach the
+// wrong binary. `kind` is advisory vocabulary, so the match is on the literal
+// `binary` value only.
 func (r *Reader) resolveReleaseAssetPaths(st *Subtree) error {
 	ip := interpolator{doc: r.doc}
 	var releaseTools int
@@ -252,9 +254,6 @@ func (r *Reader) resolveReleaseAssetPaths(st *Subtree) error {
 		if err != nil {
 			return fmt.Errorf("tool %q: %w", name, err)
 		}
-		if count == 0 {
-			return fmt.Errorf("tool %q: no org.projectfile.artifacts entry with kind=binary — declare one to attach", name)
-		}
 		if count > 1 {
 			return fmt.Errorf("tool %q: %d org.projectfile.artifacts entries have kind=binary — forgejo-release attaches exactly one; the multi-binary case needs the core v1.0.2 selector", name, count)
 		}
@@ -262,6 +261,8 @@ func (r *Reader) resolveReleaseAssetPaths(st *Subtree) error {
 		// fragment writes dist/${identity.name} and every consumer resolves its own
 		// name. interpolateRefs cannot reach it — that walks tool invocations, and this
 		// value arrives from the artifacts subtree — so the same interpolator runs here.
+		// An empty path (count 0) carries no `$`, so this is a no-op on the create-only
+		// route rather than a branch to keep in step.
 		if path, err = ip.interpolate(path); err != nil {
 			return fmt.Errorf("tool %q release asset path: %w", name, err)
 		}

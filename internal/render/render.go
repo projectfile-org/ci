@@ -1646,8 +1646,9 @@ type StepView struct {
 	// the cell axes (→ dist/pf-cli-${GOOS}-${GOARCH}) to find the built binary the
 	// build→consumer download edge restored to the workspace. The release tag rides
 	// PublishVersion (the same ci:version), so this is the only forgejo-release-
-	// specific input. Empty when no kind=binary artifact is declared (a load-time
-	// error guards that — see resolveReleaseAssetPath).
+	// specific input. EMPTY when the project declares no kind=binary artifact, which
+	// the template omits entirely and the action reads as create-only — the release
+	// a container-only project mints for its image torrents to attach to.
 	ReleaseAssetPath string `json:"release-asset-path,omitempty"`
 	BuildArgNames    string `json:"-"`
 	FileArgs         string `json:"-"`

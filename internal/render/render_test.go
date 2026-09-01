@@ -1937,6 +1937,33 @@ func TestForgejoReleaseAction(t *testing.T) {
 	}
 }
 
+// TestForgejoReleaseCreateOnly pins the container-only route: with no kind=binary
+// artifact, Load leaves ReleaseAssetPath EMPTY and the template must omit the input
+// ENTIRELY. An emitted `release-asset-path:` with a blank value would reach the
+// action as a set-but-empty string it has to tell apart from a real path — the
+// action instead reads an unset input as "create the release, attach no binary".
+func TestForgejoReleaseCreateOnly(t *testing.T) {
+	st, err := ci.Parse([]byte(releaseSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st) // ReleaseAssetPath left empty, as Load leaves it
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, nil), Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "release-asset-path:") {
+		t.Errorf("create-only release still emits release-asset-path:\n%s", out)
+	}
+	// The release itself is still rendered — only the asset input is gone.
+	if !strings.Contains(string(out), "version: ${{ github.ref_name }}") {
+		t.Errorf("create-only release lost its version input:\n%s", out)
+	}
+}
+
 // reportsSubtree is a node with TWO containerised scanners that EMIT diagnostic reports
 // (manifest `reports:`) but are CONSUMED by nothing — a gate node needs them. It pins
 // that the reports of a whole job roll up into ONE upload (the entire `reports/` dir),

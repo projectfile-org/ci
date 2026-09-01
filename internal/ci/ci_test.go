@@ -998,9 +998,9 @@ org:
 
 // TestLoadResolvesReleaseAssetPath pins the forgejo-release action's binary-path
 // resolution: during Load, a forgejo-release tool's ReleaseAssetPath is populated
-// from the single org.projectfile.artifacts entry with kind=binary. Fail-closed:
-// zero or >1 kind=binary artifact errors (ambiguous attach target), and a non-
-// forgejo-release tool is left untouched.
+// from the single org.projectfile.artifacts entry with kind=binary. ZERO leaves it
+// empty (the action's create-only route, for a container-only project); >1 still
+// errors, because that is an ambiguous attach target rather than an absence.
 func TestLoadResolvesReleaseAssetPath(t *testing.T) {
 	// write builds a projectfile with one kind=binary artifact and a forgejo-release
 	// action tool; extra artifacts can be appended via the artifacts param.
@@ -1042,9 +1042,15 @@ org:
 		t.Errorf("ReleaseAssetPath = %q, want %q", got, "dist/demo")
 	}
 
-	// Fail-closed: zero kind=binary artifacts.
-	if _, err := Load(write(t, "      docs:\n        kind: website\n        path: dist/docs")); err == nil {
-		t.Errorf("Load with no kind=binary artifact: expected error, got nil")
+	// Zero kind=binary artifacts is CREATE-ONLY, not an error: a container-only
+	// project mints the release its image torrents attach to, and names no binary.
+	// The empty path is what the template omits, so the action sees an unset input.
+	st, err = Load(write(t, "      docs:\n        kind: website\n        path: dist/docs"))
+	if err != nil {
+		t.Fatalf("Load with no kind=binary artifact: unexpected error %v", err)
+	}
+	if got := st.Tools["forgejo-release"].ReleaseAssetPath; got != "" {
+		t.Errorf("create-only ReleaseAssetPath = %q, want empty", got)
 	}
 
 	// Fail-closed: two kind=binary artifacts (ambiguous attach target).
