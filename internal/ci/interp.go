@@ -42,10 +42,12 @@ type interpolator struct {
 //     reader's `pf get || true` twin (Law 3: one neutral rule, two engine spellings).
 //     The cost: a genuine typo silently drops the arg instead of failing loudly.
 //
-// A reference naming SEVERAL values (a `{kind=binary}` selector over a map) is
-// left VERBATIM by core rather than collapsed to the first, so it reaches this
-// plane unresolved and lands on the empty rule above. Fanning one reference out
-// to several positional args is a render concern nothing declares yet.
+// A reference naming SEVERAL values fans out only when it ASKS to: `${list[]}`
+// joins every element on a space, reading a scalar as the one-element list it is,
+// and nothing else does. An ACCIDENTAL several —
+// a `{kind=binary}` selector over a map that matches twice — is left verbatim by
+// core and lands on the empty rule above, so a project growing a second binary
+// never silently starts passing two paths where the command takes one.
 func (ip interpolator) interpolate(s string) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -135,16 +137,51 @@ func braced(s string, i int) (expr string, next int, ok bool) {
 // arg UNSET, never a hard error. The old `[k=v]` bracket spelling is still refused
 // LOUDLY, because it is not a miss: the selector grammar is `{k=v}`, and silently
 // dropping the argument would publish a well-formed command with a hole in it.
+// `[]` and `[N]` are NOT that spelling — they project and index a list, which is
+// how an announce-URL array reaches a tool as one whitespace-separated value.
 func (ip interpolator) resolve(expr string) (string, error) {
-	if strings.ContainsAny(expr, "[]") {
-		return "", fmt.Errorf("reference ${%s}: `[…]` is not the selector spelling — "+
-			"write `{k=v}` for a selector and `{}` for a projection", expr)
+	if bracketSelector(expr) {
+		return "", fmt.Errorf("reference ${%s}: `[k=v]` is not the selector spelling — "+
+			"write `{k=v}`; `[]` projects a list and `[N]` indexes one", expr)
+	}
+	// `[]` is the EXPLICIT list projection, and the only spelling that fans out: the
+	// author wrote "every element", so several values are the answer and they join
+	// on a space — what every reader on the tracker path already splits on. Every
+	// other reference keeps the single-value rule, so a `{kind=binary}` selector
+	// that happens to match TWICE still resolves to empty rather than silently
+	// joining two binaries into one argument.
+	if strings.Contains(expr, "[]") {
+		if lines, ok := interp.ExpandFanOutIn(ip.doc, "${"+expr+"}", imageScope); ok {
+			return strings.Join(lines, " "), nil
+		}
+		// A `[]` over a SCALAR is a MISS in the address grammar, not a list of one —
+		// so a field that used to be written `a;b` and is now read with a projection
+		// would resolve to nothing. Retry without it: the same value, read as the
+		// one-element list it effectively is. That is graceful degradation and not
+		// laxity, because the value this rule protects is an announce-URL list, and a
+		// magnet minted without one cannot be corrected in place — the list is baked
+		// into every magnet already published.
+		expr = strings.Replace(expr, "[]", "", 1)
 	}
 	out, ok := interp.ExpandIn(ip.doc, "${"+expr+"}", imageScope)
 	if !ok {
 		return "", nil // unresolved → empty (D4 reversed): leave the arg unset
 	}
 	return out, nil
+}
+
+// bracketSelector reports the RETIRED `[k=v]` address spelling — a `=` between a
+// `[` and the next `]`. It stays refused LOUDLY rather than collapsing to empty,
+// because it is a wrong spelling and not a miss: a silently emptied argument
+// publishes a well-formed command with a hole in it. Every span is checked, not
+// just the first, so `a[].b[k=v]` is caught too.
+func bracketSelector(expr string) bool {
+	for _, span := range strings.Split(expr, "[")[1:] {
+		if k := strings.IndexByte(span, ']'); k >= 0 && strings.ContainsRune(span[:k], '=') {
+			return true
+		}
+	}
+	return false
 }
 
 // interpolateRefs resolves every `${<pf-path>}` reference in the subtree's tool

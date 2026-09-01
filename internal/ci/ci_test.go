@@ -860,6 +860,7 @@ func TestInterpolateGuards(t *testing.T) {
 	ip := interpolator{doc: declaredImageDoc(t)}
 	for _, in := range []string{
 		"${org.projectfile.artifacts[kind=binary].path}", // `[k=v]` is not the selector spelling
+		"${org.projectfile.a[].b[kind=binary].c}",        // …in a LATER span either, past a legal `[]`
 		"tail ${unterminated",                            // no closing brace
 		"${org.projectfile.artifacts{kind=binary}.path",  // the selector's brace is not the reference's
 	} {
@@ -869,8 +870,10 @@ func TestInterpolateGuards(t *testing.T) {
 	}
 }
 
-// selectorDoc declares a MAP of artifacts, which is what a `{k=v}` selector picks
-// one entry out of — the shape the torrent path writes to name one asset per cell.
+// selectorDoc declares the two shapes a reference addresses beyond a plain field:
+// a MAP the `{k=v}` selector picks one entry out of, and a LIST the `[]`
+// projection takes every element of. Both are what the torrent path writes — one
+// asset path per cell, one announce-URL list per project.
 func selectorDoc(t *testing.T) *projectfile.Document {
 	t.Helper()
 	dir := t.TempDir()
@@ -881,6 +884,13 @@ identity:
   name: demo
 org:
   projectfile:
+    torrent:
+      trackers:
+        - https://tracker.example.org/announce
+        - udp://tracker.example.org:6969
+      solo:
+        - https://only.example.org/announce
+      scalar: a;b
     artifacts:
       bin:
         kind: binary
@@ -898,20 +908,26 @@ org:
 	return doc
 }
 
-// TestInterpolateSelector pins what a flat first-`}` scan got wrong. A `{k=v}`
-// selector lives INSIDE the reference, so the closing brace has to be found by
-// counting: scanning to the first `}` hands core the truncated
+// TestInterpolateSelectorAndProjection pins the two rules a flat first-`}` scan got
+// wrong. A `{k=v}` selector lives INSIDE the reference, so the closing brace has to
+// be found by counting: scanning to the first `}` hands core the truncated
 // `artifacts{kind=binary`, which core leaves verbatim — the `${…}` then reaches the
-// runner and bash answers `bad substitution`. A selector matching SEVERAL entries
-// still collapses to empty, so nothing starts passing two paths as one argument.
-func TestInterpolateSelector(t *testing.T) {
+// runner and bash answers `bad substitution`. And `[]` is the one spelling that fans
+// out: it joins on a space, while a selector that matches SEVERAL entries by accident
+// still collapses to empty rather than silently passing two paths as one argument.
+func TestInterpolateSelectorAndProjection(t *testing.T) {
 	ip := interpolator{doc: selectorDoc(t)}
 	cases := []struct{ in, want string }{
 		{"--cell ${org.projectfile.artifacts{kind=binary}.path}", "--cell dist/demo"},
 		{"${org.projectfile.artifacts{kind=image}.path}", "dist/demo.tar"},
 		{"a ${org.projectfile.artifacts{kind=binary}.path} b ${identity.name}", "a dist/demo b demo"},
+		{"${org.projectfile.torrent.trackers[]}", "https://tracker.example.org/announce udp://tracker.example.org:6969"},
+		{"${org.projectfile.torrent.solo[]}", "https://only.example.org/announce"},
+		{"${org.projectfile.torrent.trackers[0]}", "https://tracker.example.org/announce"},
+		{"${org.projectfile.torrent.nope[]}", ""},              // a missing list is still a miss → empty
+		{"${org.projectfile.torrent.scalar[]}", "a;b"},         // `[]` over a scalar reads it as a list of one
 		{"${org.projectfile.artifacts{kind=binary}.nope}", ""}, // a selector hitting no field → empty
-		{"${org.projectfile.artifacts{}.path}", ""},            // several values → empty, never collapsed to the first
+		{"${org.projectfile.torrent.trackers}", ""},            // several values WITHOUT `[]` → empty, never joined
 	}
 	for _, c := range cases {
 		got, err := ip.interpolate(c.in)
