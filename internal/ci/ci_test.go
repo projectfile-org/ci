@@ -859,11 +859,68 @@ func TestInterpolateSyntax(t *testing.T) {
 func TestInterpolateGuards(t *testing.T) {
 	ip := interpolator{doc: declaredImageDoc(t)}
 	for _, in := range []string{
-		"${org.projectfile.artifacts[kind=binary].path}", // `[…]` is not the selector spelling
+		"${org.projectfile.artifacts[kind=binary].path}", // `[k=v]` is not the selector spelling
 		"tail ${unterminated",                            // no closing brace
+		"${org.projectfile.artifacts{kind=binary}.path",  // the selector's brace is not the reference's
 	} {
 		if _, err := ip.interpolate(in); err == nil {
 			t.Errorf("interpolate(%q): expected error, got nil", in)
+		}
+	}
+}
+
+// selectorDoc declares a MAP of artifacts, which is what a `{k=v}` selector picks
+// one entry out of — the shape the torrent path writes to name one asset per cell.
+func selectorDoc(t *testing.T) *projectfile.Document {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: demo
+org:
+  projectfile:
+    artifacts:
+      bin:
+        kind: binary
+        path: dist/demo
+      img:
+        kind: image
+        path: dist/demo.tar
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return doc
+}
+
+// TestInterpolateSelector pins what a flat first-`}` scan got wrong. A `{k=v}`
+// selector lives INSIDE the reference, so the closing brace has to be found by
+// counting: scanning to the first `}` hands core the truncated
+// `artifacts{kind=binary`, which core leaves verbatim — the `${…}` then reaches the
+// runner and bash answers `bad substitution`. A selector matching SEVERAL entries
+// still collapses to empty, so nothing starts passing two paths as one argument.
+func TestInterpolateSelector(t *testing.T) {
+	ip := interpolator{doc: selectorDoc(t)}
+	cases := []struct{ in, want string }{
+		{"--cell ${org.projectfile.artifacts{kind=binary}.path}", "--cell dist/demo"},
+		{"${org.projectfile.artifacts{kind=image}.path}", "dist/demo.tar"},
+		{"a ${org.projectfile.artifacts{kind=binary}.path} b ${identity.name}", "a dist/demo b demo"},
+		{"${org.projectfile.artifacts{kind=binary}.nope}", ""}, // a selector hitting no field → empty
+		{"${org.projectfile.artifacts{}.path}", ""},            // several values → empty, never collapsed to the first
+	}
+	for _, c := range cases {
+		got, err := ip.interpolate(c.in)
+		if err != nil {
+			t.Errorf("interpolate(%q): unexpected error %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("interpolate(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

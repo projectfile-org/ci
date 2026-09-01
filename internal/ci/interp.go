@@ -64,19 +64,22 @@ func (ip interpolator) interpolate(s string) (string, error) {
 			b.WriteByte('$')
 			i += 2
 		case i+1 < len(s) && s[i+1] == '{':
-			// A pf-path never contains `}` (keys, `[k=v]` selectors, `[]`/[N]
-			// brackets — no braces), so the matching close is the next `}`.
-			rel := strings.IndexByte(s[i+2:], '}')
-			if rel < 0 {
+			// Brace-BALANCED, not first-`}`. The address grammar spells a map selector
+			// in curly braces (`artifacts{kind=binary}.path`), so a first-`}` scan ends
+			// the reference INSIDE the selector and asks core to resolve the truncated
+			// `artifacts{kind=binary`. Core leaves that verbatim, so the `${…}` reaches
+			// the runner and the shell answers `bad substitution` — a failure that names
+			// the workflow, never the fragment that wrote the address.
+			expr, next, ok := braced(s, i)
+			if !ok {
 				return "", fmt.Errorf("unterminated ${…} reference at %q", s[i:])
 			}
-			expr := s[i+2 : i+2+rel]
 			val, err := ip.resolve(expr)
 			if err != nil {
 				return "", err
 			}
 			b.WriteString(val)
-			i += 2 + rel + 1
+			i = next
 		default:
 			// bare `$` (not `$$` or `${`) — a runtime shell var, untouched.
 			b.WriteByte('$')
@@ -84,6 +87,36 @@ func (ip interpolator) interpolate(s string) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// braced reads the `${…}` opening at i and returns the inner address plus the
+// index just past its closing brace, counting nested braces so a `{k=v}`
+// selector inside the address does not end the scan early. Quoted spans are
+// skipped for the same reason fieldpath's own splitter skips them: a predicate
+// value may carry a brace (`{label="a{b}"}`) and must not move the count. ok is
+// false when the brace is never closed, which the caller reports as an error —
+// core's twin instead emits the `$` as an ordinary character, because a badge
+// URL may legitimately carry one.
+func braced(s string, i int) (expr string, next int, ok bool) {
+	depth, inQuote := 0, false
+	for j := i + 1; j < len(s); j++ {
+		switch {
+		case inQuote:
+			if s[j] == '"' {
+				inQuote = false
+			}
+		case s[j] == '"':
+			inQuote = true
+		case s[j] == '{':
+			depth++
+		case s[j] == '}':
+			depth--
+			if depth == 0 {
+				return s[i+2 : j], j + 1, true
+			}
+		}
+	}
+	return "", 0, false
 }
 
 // resolve computes one `${expr}` reference, through core's `interp` — the SAME
@@ -120,7 +153,7 @@ func (ip interpolator) resolve(expr string) (string, error) {
 // basename is finalized. An unresolved reference now resolves to EMPTY (D4, reversed
 // 2026-07-10): a shared-preset ref to an artifact THIS project omits leaves the arg
 // unset rather than failing the generate. Only a malformed ref (an unterminated
-// `${`, or the deferred `[…]` selector) still errors.
+// `${`, or the retired `[k=v]` selector) still errors.
 func (r *Reader) interpolateRefs(st *Subtree) error {
 	ip := interpolator{doc: r.doc}
 	for name, man := range st.Tools {
