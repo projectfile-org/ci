@@ -67,10 +67,10 @@ hoists); Env is the optional projectfile-authored env. Both render under one `en
 block, ResolverEnv first so the hoists sit above authored entries. */}}
 env:
 {{- range $.ResolverEnv }}
-  {{ .Key }}: {{ .Value }}
+  {{ .Key }}:{{ with .Value }} {{ . }}{{ else }} ''{{ end }}
 {{- end }}
 {{- range $.Env }}
-  {{ .Key }}: {{ .Value }}
+  {{ .Key }}:{{ with .Value }} {{ . }}{{ else }} ''{{ end }}
 {{- end }}
 jobs:
 {{- range .Jobs }}
@@ -117,7 +117,7 @@ jobs:
 {{- if .Env }}
     env:
 {{- range .Env }}
-      {{ .Key }}: {{ .Value }}
+      {{ .Key }}:{{ with .Value }} {{ . }}{{ else }} ''{{ end }}
 {{- end }}
 {{- end }}
     steps:{{ stepbody $.Target . }}
