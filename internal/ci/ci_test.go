@@ -641,8 +641,8 @@ func TestCheckoutTokenOverlayDecode(t *testing.T) {
 // reads it from there). Keyed per target like every other overlay field.
 func TestActionsOverlayDecode(t *testing.T) {
 	st, err := Parse([]byte(`{
-	  "forgejo": {"actions": {"checkout": "actions/checkout@v7",
-	                          "ci-actions": "projectfile/ci-actions@v1"}},
+	  "forgejo": {"actions": {"checkout": "actions/checkout@v7"},
+	              "library": "projectfile/actions@v1"},
 	  "tools": {"shellcheck": {"run": "shellcheck"}},
 	  "nodes": {"linted": {"goal": true, "needs": {"shellcheck": true}}}
 	}`))
@@ -656,8 +656,8 @@ func TestActionsOverlayDecode(t *testing.T) {
 	if got := p.Actions["checkout"]; got != "actions/checkout@v7" {
 		t.Errorf("actions[checkout]: want the pinned ref, got %q", got)
 	}
-	if got := p.Actions["ci-actions"]; got != "projectfile/ci-actions@v1" {
-		t.Errorf("actions[ci-actions]: want repo@tag, got %q", got)
+	if got := p.Library; got != "projectfile/actions@v1" {
+		t.Errorf("library: want repo@tag, got %q", got)
 	}
 	if _, leaked := st.Platforms["gha"]; leaked {
 		t.Error("gha overlay must stay absent — action refs are keyed per target")

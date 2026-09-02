@@ -59,14 +59,14 @@ type Target struct {
 	Ext      string // per-goal file extension (workflowExt(), ".yaml" by default); paired with OutDir
 	OutPath  string // single committed file path (lefthook); the per-goal targets use OutDir/Ext
 	Template string // template file under templates/
-	// ActionLib + ActionVer are the external ci-actions library ref: an `action:`
+	// ActionLib + ActionVer are the external action-library ref: an `action:`
 	// tool lowers to `uses: <ActionLib>/<name>@<ActionVer>`, NOT an inline recipe
 	// compiled into this resolver. The token is per-target because `uses:` is NOT
 	// forge-portable — a GHA runner resolves it against github.com, a Forgejo runner
-	// against its OWN instance. Mirroring the library to each forge lets the same
-	// bare path resolve on both, so today both rows carry the same value; the token
-	// stays adapter-overridable for the non-mirrored case (e.g. a full-URL ref on
-	// Forgejo).
+	// against its OWN instance — and a mirror rarely lands under the SAME OWNER on
+	// both (a forge owner is free; a github.com org name may already be taken). The
+	// adapter default names the canonical Forgejo coordinate; a deployment whose
+	// mirror sits elsewhere overrides it via org.projectfile.ci.<target>.library.
 	ActionLib string
 	ActionVer string
 	// Builder is the default container-build BACKEND for this target. Two backends
@@ -121,7 +121,6 @@ const (
 	SlotCheckout         = "checkout"
 	SlotDownloadArtifact = "download-artifact"
 	SlotUploadArtifact   = "upload-artifact"
-	SlotCIActions        = "ci-actions"
 )
 
 // Cache lowering literals (Phase 8). The three share the `ci-cache` segment on
@@ -163,7 +162,7 @@ const (
 const ActionContainerBuild = ci.ActionContainerBuild
 
 // ActionOciPush is the action path whose leaf CONSUMES a cell-keyed OCI archive
-// and pushes it to a registry. Like container-build it lowers to a ci-actions ref
+// and pushes it to a registry. Like container-build it lowers to an action-library ref
 // (never `make` in the cloud), but it is a tar CONSUMER, not a producer: the
 // build→push hand-off rides the SAME derived `needs` edge to container-build the
 // image scans use (download-artifact + the cell-keyed `<Stem>.tar`), so there is no
@@ -1383,7 +1382,7 @@ var Targets = map[string]Target{
 	// `@v3` actions. So gha gets the current majors (upload@v7 / download@v8, v2
 	// protocol) and forgejo is pinned to @v3 (v1 protocol). This is a Forgejo PLATFORM
 	// constraint, not project policy, hence a lowering default (Law 3). NOTE: the upload
-	// major MUST match the ci-actions container-build composite that uploads the build
+	// major MUST match the action-library container-build composite that uploads the build
 	// tar — gha→buildx (upload@v7), forgejo→buildah (upload@v3); the backend split is
 	// also the forge split, so each composite carries its own paired version.
 	TargetGHA: {
@@ -1391,7 +1390,7 @@ var Targets = map[string]Target{
 		Download: "actions/download-artifact@v8", Upload: "actions/upload-artifact@v7",
 		UploadOverwrite: true,
 		OutDir:          ".github/workflows", Ext: workflowExt(), Template: "workflow.yaml.tmpl",
-		ActionLib: "projectfile/ci-actions", ActionVer: "v1", Builder: BackendBuildx,
+		ActionLib: "projectfile/actions", ActionVer: "v1", Builder: BackendBuildx,
 		CacheRestore: CacheActionRestore, CacheSave: CacheActionSave, CacheDir: CacheDirGHA,
 	},
 	TargetForgejo: {
@@ -1403,7 +1402,7 @@ var Targets = map[string]Target{
 		// no `buildx` subcommand. buildah is the daemonless, podman-native analogue
 		// and emits the IDENTICAL OCI-tar hand-off. gha keeps buildx (real docker on
 		// GitHub-hosted runners). Overridable per project via .forgejo.builder.
-		ActionLib: "projectfile/ci-actions", ActionVer: "v1", Builder: BackendBuildah,
+		ActionLib: "projectfile/actions", ActionVer: "v1", Builder: BackendBuildah,
 		// No CacheRestore: a self-hosted runner binds a PERSISTENT cache dir (RO) the
 		// refresh pipeline fills — no per-job restore action. The emptiness IS the fork.
 		CacheDir: CacheDirForge,
@@ -1542,7 +1541,7 @@ type StepView struct {
 	// of the build artifact and exists in NO registry, so RunToolPull pins `never`:
 	// run-tool's `always` default would try to fetch the run-scoped tag and fail.
 	SelfImage bool   `json:"self-image,omitempty"`
-	Action    string `json:"action,omitempty"` // ci-actions path — dispatch to stepfrag providers/<action>
+	Action    string `json:"action,omitempty"` // action-library path — dispatch to stepfrag providers/<action>
 	// Network is the symbolic Manifest.Network (`live` today): the tool's container joins
 	// the live compose stack's network to reach it by service name. RunToolNetwork lowers
 	// it to the run-tool `network:` input. Empty => the default bridge (every non-live tool).
@@ -1994,7 +1993,7 @@ func command(run, args string) string {
 // `run:` via `sh -c`); a minimal `d9t/*-tools` image has no Node and a distroless
 // tool (`hadolint`) has neither, so both classes die before the tool ever runs.
 // Instead the step runs on the HOST (which HAS Node/git/docker) and reaches its
-// image through the versioned `projectfile/ci-actions/run-tool@v1` action (the
+// image through the versioned `projectfile/actions/run-tool@v1` action (the
 // cloud analogue of m6e's M6E_RUN, declarative — no inline `docker run`, Law 2).
 // The action takes the image as TWO inputs (image path + version) and composes
 // the ref. Registry threading is DROPPED (agnostic revolution): every consumed tool
@@ -3355,8 +3354,7 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 	// per-target adapter defaults — same value-copy discipline as Builder above (a set
 	// slot replaces the constant, an absent one keeps it, so no overlay renders
 	// byte-identical to before). Values are full `name@ref` pins, the form you'd
-	// hand-write in `uses:`; the ci-actions library splits at the final `@` into repo +
-	// tag. Iterated sorted so an unknown-slot error is deterministic.
+	// hand-write in `uses:`. Iterated sorted so an unknown-slot error is deterministic.
 	for _, slot := range sortedKeys(plat.Actions) {
 		ref := plat.Actions[slot]
 		switch slot {
@@ -3366,16 +3364,20 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 			target.Download = ref
 		case SlotUploadArtifact:
 			target.Upload = ref
-		case SlotCIActions:
-			at := strings.LastIndex(ref, "@")
-			if at <= 0 || at == len(ref)-1 {
-				return nil, fmt.Errorf("org.projectfile.ci.%s.actions.ci-actions %q must be a `repo@tag` ref", target.Key, ref)
-			}
-			target.ActionLib, target.ActionVer = ref[:at], ref[at+1:]
 		default:
 			return nil, fmt.Errorf("org.projectfile.ci.%s.actions: unknown slot %q "+
-				"(known: checkout, download-artifact, upload-artifact, ci-actions)", target.Key, slot)
+				"(known: checkout, download-artifact, upload-artifact)", target.Key, slot)
 		}
+	}
+	// Library: a `repo@tag` PREFIX the lowering recomposes per action path
+	// (`<repo>/<provider>@<tag>`), NOT a pinned `uses:` ref like the slots above — which
+	// is why it sits BESIDE `actions` rather than inside it. Absent => adapter default.
+	if ref := plat.Library; ref != "" {
+		at := strings.LastIndex(ref, "@")
+		if at <= 0 || at == len(ref)-1 {
+			return nil, fmt.Errorf("org.projectfile.ci.%s.library %q must be a `repo@tag` ref", target.Key, ref)
+		}
+		target.ActionLib, target.ActionVer = ref[:at], ref[at+1:]
 	}
 	var root *template.Template
 	root = template.New("root").Funcs(funcs).Funcs(template.FuncMap{
@@ -3397,7 +3399,7 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 			return b.String(), nil
 		},
 		// stepfrag paints ONE member tool inside its node-job (no checkout — that is the
-		// job's): an `action:` tool dispatches to its ci-actions fragment; an image tool
+		// job's): an `action:` tool dispatches to its action-library fragment; an image tool
 		// to the run-tool fragment; a plain tool to a bare host `run:`. A missing action
 		// fragment is a HARD ERROR — never a silent fall-through to `make` in the cloud.
 		"stepfrag": func(tgt Target, s StepView) (string, error) {
@@ -3410,7 +3412,7 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 			}
 			if root.Lookup(name) == nil {
 				return "", fmt.Errorf("step %q: no fragment %q for target %q "+
-					"(an action step MUST lower to a ci-actions ref — never `make` in the cloud)", s.Name, name, tgt.Key)
+					"(an action step MUST lower to an action-library ref — never `make` in the cloud)", s.Name, name, tgt.Key)
 			}
 			var b strings.Builder
 			if err := root.ExecuteTemplate(&b, name, fragCtx{Target: tgt, Step: s}); err != nil {

@@ -35,7 +35,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
                              the HOST, NEVER as a job `container:` (a job container needs
                              Node + a keep-alive shell minimal/distroless tool images lack;
                              the recipe stays in the versioned action, not inline — Law 2).
-  providers/container-build  an ACTION step: dispatch to the EXTERNAL ci-actions library
+  providers/container-build  an ACTION step: dispatch to the EXTERNAL action library
                              (the recipe + the OCI-tar build→scan hand-off live in the
                              pinned, backend-keyed `container-build/<Builder>` action).
                              `with:` inputs: the build-args NAME=VALUE block (the value
@@ -57,7 +57,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
   providers/secrets-provision  a SYNTHETIC ACTION step (NOT a DAG tool — secrets-provision
                              is gha:false/forgejo:false; Build injects it before dc-up-d in
                              the live job when org.projectfile.ci.secrets is declared).
-                             Dispatches to the external ci-actions library like the other
+                             Dispatches to the external action library like the other
                              providers; `with:` inputs: the RAW secrets JSON (declarations),
                              .secrets dir, the misc-tools default-image, and the project's
                              own image (the `image: self` target). provision.sh dispatches.
@@ -370,7 +370,7 @@ step env because toJSON renders multi-line JSON; the run text is built in Go
 providers/secrets-provision — the SYNTHETIC pre-dc-up-d step (cloud half of
 org.projectfile.ci.secrets). NOT a DAG tool: secrets-provision is gha:false/forgejo:
 false (m6e-only), so the resolver lowers its EFFECT — a leading step in the live
-(fused) job — rather than a tool leaf. Dispatches to the EXTERNAL ci-actions library
+(fused) job — rather than a tool leaf. Dispatches to the EXTERNAL action library
 exactly like container-build/oci-push/container-exec (the recipe + the value/docker
 dispatch live in the pinned action's provision.sh, NOT here — Law 2). `with:` inputs:
   declarations   the RAW org.projectfile.ci.secrets JSON (provision.sh parses the exact

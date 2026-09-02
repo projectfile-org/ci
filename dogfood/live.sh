@@ -10,11 +10,11 @@
 # brings it up, then `compose exec … test.d` gates. Asserts BOTH directions: test.d
 # exit 0 => job green; test.d exit 1 => the failing run-step fails the job.
 #
-# `live` is NOT a ci-actions action: the fuse model dissolved it into plain ordered
+# `live` is NOT an action-library action: the fuse model dissolved it into plain ordered
 # run-steps the RESOLVER emits (render.go `steps/fused`), so there is nothing to
 # dispatch to. This is the cloud counterpart to render's TestLiveLeavesFuse (which
 # pins the YAML wiring): here we exercise those rendered run-steps end to end against
-# a live stack. container-build IS still an action (buildx), so the ci-actions repo
+# a live stack. container-build IS still an action (buildx), so the action library
 # is still mapped in below. Heavyweight by nature — needs act + a docker daemon +
 # buildx + network — so it is NOT a unit test; it is gated m6e-only (the cloud runner
 # has no act-in-act). Run it by hand:
@@ -32,12 +32,12 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------------
-# Config. REPO_CI_ACTIONS is mapped into act so the workflow uses the WORKING-TREE
+# Config. REPO_ACTIONS is mapped into act so the workflow uses the WORKING-TREE
 # actions (not the published @v1) — the whole point of dogfooding local edits.
 # ---------------------------------------------------------------------------------
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_CI="$(cd "${HERE}/.." && pwd)"
-REPO_CI_ACTIONS="$(cd "${REPO_CI}/../ci-actions" && pwd)"
+REPO_ACTIONS="$(cd "${REPO_CI}/../actions" && pwd)"
 PFCI="${PFCI:-${REPO_CI}/dist/pf-ci}"
 ACT_IMAGE="${ACT_IMAGE:-catthehacker/ubuntu:act-latest}"
 REGISTRY="${REGISTRY:-dogfood.local}"           # passed as --var, now a harmless no-op
@@ -149,7 +149,7 @@ EOF
 }
 
 # run_act: one act invocation over the fixture workflow, log to $1. DooD socket is
-# act's default; the local-repository map points ci-actions@v1 at the working tree.
+# act's default; the local-repository map points the action library at the working tree.
 run_act() {
   local logfile="$1"
   rm -rf "${ARTIFACTS:?}"/* 2>/dev/null || true
@@ -162,7 +162,7 @@ run_act() {
       --var "M6E_BASE_IMAGE_DEFAULT_VERSION=dev"                            \
       --pull=false                                                          \
       --artifact-server-path "${ARTIFACTS}"                                 \
-      --local-repository "projectfile/ci-actions@v1=${REPO_CI_ACTIONS}"     \
+      --local-repository "projectfile/actions@v1=${REPO_ACTIONS}"           \
       > "${logfile}" 2>&1 ) || true   # job-failure is an EXPECTED outcome we assert on
 }
 
@@ -203,7 +203,7 @@ main() {
     "gating test.d ran against the live container (load → up → exec)"
   assert_contains "${WORK}/act-positive.log" "Job succeeded" "the green run finishes the job"
   assert_absent   "${WORK}/act-positive.log" "Job failed" "no job failed on the green run"
-  assert_absent   "${WORK}/act-positive.log" "ci-actions/live" "live is run-steps, not an action ref"
+  assert_absent   "${WORK}/act-positive.log" "projectfile/actions/live" "live is run-steps, not an action ref"
   # Fusion: the live region is ONE job (container-test); dc-up-d never stands alone.
   assert_absent   "${WORK}/act-positive.log" "[ci/dc-up-d" "dc-up-d is ABSORBED (fusion), not a standalone job"
 

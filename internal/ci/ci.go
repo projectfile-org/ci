@@ -301,7 +301,7 @@ const (
 	BoolFalse = "false"
 )
 
-// Action tokens name the ci-actions library paths a tool's `action:` field
+// Action tokens name the action-library paths a tool's `action:` field
 // dispatches to. The MODEL owns this vocabulary so the lowering (render) and the
 // image-ref validator (ValidateImage) agree on ONE token — never a magic string
 // duplicated across packages. render aliases these.
@@ -339,7 +339,7 @@ type Manifest struct {
 	// a daemon-native target (m6e) fused members stay separate recipes. Empty => the
 	// tool is its own job.
 	Fuse string `json:"fuse"`
-	// Action names a ci-actions library path (e.g. `container-build`) the tool lowers
+	// Action names an action-library path (e.g. `container-build`) the tool lowers
 	// to on a forge — the PRAGMATIC remainder of "not yet a plain container tool"
 	// (checkout, build, publish). It is NOT a capability: equality is the goal, and
 	// each will become an ordinary image tool when its image lands. Empty => the tool
@@ -553,13 +553,20 @@ type Platform struct {
 	Credentials map[string]string
 	// Actions overrides the helper-action `uses:` refs the renderer otherwise takes
 	// from the per-target adapter defaults (render.Target). It is a {slot: full-ref}
-	// map — slot one of checkout|download-artifact|upload-artifact|ci-actions, value a
+	// map — slot one of checkout|download-artifact|upload-artifact, value a
 	// pinned `name@ref` exactly as you'd hand-write it (`actions/checkout@v7`). An
 	// absent slot keeps the adapter default, so no overlay renders byte-identical to
 	// before. Engine-concrete by design (a `uses:` token is GHA/Forgejo vocabulary, not
 	// abstract DAG) — hence here, not in the model. Author it ONCE in a shared include
 	// so the fleet stays single-source rather than drifting per projectfile.
 	Actions map[string]string
+	// Library overrides the ACTION-LIBRARY coordinate the renderer otherwise takes from
+	// the per-target adapter default: a `repo@tag` PREFIX the lowering recomposes per
+	// action path (`<repo>/<provider>@<tag>`). NOT an Actions slot — those are whole
+	// pinned refs — hence its own field. Needed because a mirror of the library rarely
+	// lands under the same OWNER on every forge, so the coordinate is a per-target
+	// deployment fact. Author it ONCE in a shared include, like Actions.
+	Library string
 	// CheckoutToken opts the checkout step into the ROBOT-ACCOUNT token, so a job
 	// reaches a repository the run-scoped token cannot. The forge mints its per-run
 	// token for ONE repository; a submodule — above all one with a RELATIVE url, which
@@ -756,7 +763,8 @@ type rawPlatform struct {
 	Concurrency    *rawConcurrency   `json:"concurrency"`
 	Builder        string            `json:"builder"`        // container-build backend override (buildx|buildah)
 	Credentials    map[string]string `json:"credentials"`    // {ENV_NAME: <secret-ref>} bound to a tool's env name at render
-	Actions        map[string]string `json:"actions"`        // {slot: name@ref} helper-action ref overrides (checkout|download-artifact|upload-artifact|ci-actions)
+	Actions        map[string]string `json:"actions"`        // {slot: name@ref} helper-action ref overrides (checkout|download-artifact|upload-artifact)
+	Library        string            `json:"library"`        // action-library `repo@tag` prefix; recomposed as <repo>/<provider>@<tag>
 	CheckoutToken  bool              `json:"checkout-token"` // opt the checkout step into the fleet-wide robot-account secret (private submodules)
 }
 
@@ -1950,6 +1958,7 @@ func (rp *rawPlatform) normalise() (Platform, error) {
 		Builder:        rp.Builder,
 		Credentials:    rp.Credentials,
 		Actions:        rp.Actions,
+		Library:        rp.Library,
 		CheckoutToken:  rp.CheckoutToken,
 	}
 	if c := rp.Concurrency; c != nil {

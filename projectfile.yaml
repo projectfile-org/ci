@@ -14,9 +14,9 @@ identity:
     uk: Перетворює DAG org.projectfile.ci на CI-робочі процеси
   title: Projectfile CI Resolver
   description:
-    en: pf-ci lowers the vendor-neutral org.projectfile.ci signal DAG to concrete CI workflow files for Forgejo Actions and GitHub Actions, dispatching each provider leaf to its recipe in projectfile/ci-actions. Companion binary to pf-cli for the projectfile.org tooling.
-    es: pf-ci convierte el DAG de señales neutro respecto al proveedor org.projectfile.ci en archivos de flujo de trabajo de CI concretos para Forgejo Actions y GitHub Actions, despachando cada hoja de proveedor a su receta en projectfile/ci-actions. Binario compañero de pf-cli para las herramientas de projectfile.org.
-    uk: pf-ci перетворює незалежний від постачальників сигнальний DAG org.projectfile.ci на конкретні файли CI-робочих процесів для Forgejo Actions і GitHub Actions, диспетчеризуючи кожен лист провайдера до його рецепту в projectfile/ci-actions. Бінарник-компаньйон pf-cli в інструментарії projectfile.org.
+    en: pf-ci lowers the vendor-neutral org.projectfile.ci signal DAG to concrete CI workflow files for Forgejo Actions and GitHub Actions, dispatching each provider leaf to its recipe in projectfile/actions. Companion binary to pf-cli for the projectfile.org tooling.
+    es: pf-ci convierte el DAG de señales neutro respecto al proveedor org.projectfile.ci en archivos de flujo de trabajo de CI concretos para Forgejo Actions y GitHub Actions, despachando cada hoja de proveedor a su receta en projectfile/actions. Binario compañero de pf-cli para las herramientas de projectfile.org.
+    uk: pf-ci перетворює незалежний від постачальників сигнальний DAG org.projectfile.ci на конкретні файли CI-робочих процесів для Forgejo Actions і GitHub Actions, диспетчеризуючи кожен лист провайдера до його рецепту в projectfile/actions. Бінарник-компаньйон pf-cli в інструментарії projectfile.org.
 includes:
   - .makefile/b19/ci.yaml
   - .makefile/b19/images/go.yaml

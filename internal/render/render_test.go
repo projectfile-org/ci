@@ -24,7 +24,6 @@ const (
 	testImageBuilt      = "image-built"
 	testImageMatrixStem = "image-${{ matrix.B19_UBUNTU_SERIES }}" + artifactScopeSuffix
 	testUploadArtifact  = "upload-artifact"
-	testCIActions       = "ci-actions"
 	testUbuntuVersion   = "B19_UBUNTU_VERSION"
 	testUbuntuSeries    = "B19_UBUNTU_SERIES"
 	testUbuntuHash      = "B19_UBUNTU_HASH"
@@ -537,7 +536,7 @@ func TestGuardIsNotLowered(t *testing.T) {
 	s := string(out)
 	// The guard is dropped: the image tool reaches its image via run-tool with a clean
 	// `run:` input, exactly as an UNGUARDED image tool would render (no prelude wrapping).
-	if !strings.Contains(s, "uses: projectfile/ci-actions/run-tool@v1") || !strings.Contains(s, "\n          run: auto-hadolint\n") {
+	if !strings.Contains(s, "uses: projectfile/actions/run-tool@v1") || !strings.Contains(s, "\n          run: auto-hadolint\n") {
 		t.Errorf("guarded image tool should render a plain run-tool action\ngot:\n%s", s)
 	}
 	// No inline prelude leaked through, and no block scalar was emitted for it.
@@ -1168,7 +1167,7 @@ const providerSubtree = `{
 
 // TestProviderLeafRenders proves a container-build PROVIDER leaf lowers to the
 // EXTERNAL provider action ref (Q3) + its `with:` inputs, NOT an inline buildx
-// recipe and NOT `make` in the cloud. The recipe now lives in projectfile/ci-actions.
+// recipe and NOT `make` in the cloud. The recipe now lives in projectfile/actions.
 func TestProviderLeafRenders(t *testing.T) {
 	st, err := ci.Parse([]byte(providerSubtree))
 	if err != nil {
@@ -1184,7 +1183,7 @@ func TestProviderLeafRenders(t *testing.T) {
 	}
 	s := string(out)
 	for _, want := range []string{
-		"uses: projectfile/ci-actions/container-build/buildx@v1", // externalised, pinned, backend-keyed ref
+		"uses: projectfile/actions/container-build/buildx@v1", // externalised, pinned, backend-keyed ref
 		"with:",
 		"artifact-name: image-${{ matrix.B19_UBUNTU_SERIES }}", // cell-keyed hand-off stem
 		"build-args: |-", // NAME=VALUE block (value rides the input — composite can't read job env:)
@@ -1216,14 +1215,14 @@ func TestProviderLeafRenders(t *testing.T) {
 	if strings.Contains(s, "make container-build") {
 		t.Errorf("container-build provider leaked `make` into the cloud workflow:\n%s", s)
 	}
-	// init-shared-scripts was REMOVED: ci-actions is now self-contained — labels
+	// init-shared-scripts was REMOVED: the action library is now self-contained — labels
 	// and version come from the pf-cli/git resolvers vendored at lib/, and the
 	// standard m6e build-args are added inline, so the container-build action no
 	// longer clones the m6e submodule. The build action step itself must remain.
 	if strings.Contains(s, "init-shared-scripts") {
 		t.Errorf("container-build job still emits the removed init-shared-scripts step:\n%s", s)
 	}
-	if !strings.Contains(s, "\n      - name: container-build\n        uses: projectfile/ci-actions/container-build/buildx@v1") {
+	if !strings.Contains(s, "\n      - name: container-build\n        uses: projectfile/actions/container-build/buildx@v1") {
 		t.Errorf("container-build provider body lost its 6-space indent under steps:\n%s", s)
 	}
 	// The portable scanner still takes the default path: an image tool reaches its
@@ -1620,7 +1619,7 @@ func TestImageScanConsumesBuildTar(t *testing.T) {
 		"        with:\n" +
 		"          name: " + testImageMatrixStem + "\n" +
 		"      - name: grype-scan-image\n" +
-		"        uses: projectfile/ci-actions/run-tool@v1\n" +
+		"        uses: projectfile/actions/run-tool@v1\n" +
 		"        with:\n" +
 		"          image: reg.example/go-tools\n" +
 		"          version: latest\n" +
@@ -1927,7 +1926,7 @@ func TestForgejoReleaseAction(t *testing.T) {
 	// assert the key lines are present and ordered rather than an exact multi-line match.
 	for _, line := range []string{
 		"- name: forgejo-release",
-		"uses: projectfile/ci-actions/forgejo-release@v1",
+		"uses: projectfile/actions/forgejo-release@v1",
 		"version: ${{ github.ref_name }}",
 		"release-asset-path: dist/pf",
 	} {
@@ -2107,7 +2106,7 @@ func TestScannerCacheLowering(t *testing.T) {
 		"          restore-keys: |\n" +
 		"            ci-cache-grype-db-\n" +
 		"      - name: auto-grype\n" +
-		"        uses: projectfile/ci-actions/run-tool@v1\n"
+		"        uses: projectfile/actions/run-tool@v1\n"
 	if s := string(gha); !strings.Contains(s, want) {
 		t.Errorf("gha: missing the ordered restore→run-tool body:\n%s", s)
 	}
@@ -2333,7 +2332,7 @@ func TestContainerExecLowering(t *testing.T) {
 		}
 		s := string(out)
 		block := "      - name: container-test\n" +
-			"        uses: projectfile/ci-actions/container-exec@v1\n" +
+			"        uses: projectfile/actions/container-exec@v1\n" +
 			"        with:\n" +
 			"          container: ${{ env.M6E_CONTAINER_INSTANCE }}\n" +
 			"          run: test.d\n"
@@ -2377,7 +2376,7 @@ var secretsBuild = &ci.Build{
 
 // TestSecretsProvisionStep pins the cloud half of org.projectfile.ci.secrets: a
 // declared secrets subtree injects a SYNTHETIC secrets-provision step BEFORE dc-up-d in
-// the live (fused) job, dispatching to the external ci-actions library with the RAW
+// the live (fused) job, dispatching to the external action library with the RAW
 // declarations JSON + the misc-tools default-image + the project's own image. The step
 // is invisible to the matrix/env/cred folds (it carries none of those), and a nil/empty
 // Secrets injects NOTHING — the empty-subtree no-op invariant.
@@ -2440,7 +2439,7 @@ func TestSecretsProvisionStep(t *testing.T) {
 		}
 		s := string(out)
 		uses := "      - name: secrets-provision\n" +
-			"        uses: projectfile/ci-actions/secrets-provision@v1\n"
+			"        uses: projectfile/actions/secrets-provision@v1\n"
 		if !strings.Contains(s, uses) {
 			t.Errorf("%s: missing secrets-provision step:\n%s", tgt, s)
 		}
@@ -2520,7 +2519,7 @@ const ociPushSubtree = `{
 }`
 
 // TestOciPushLowers pins the §9 publish-image branch: oci-push is an ACTION leaf
-// (lowers to the externalised ci-actions ref, never `make` in the cloud), yet it is
+// (lowers to the externalised action-library ref, never `make` in the cloud), yet it is
 // a tar CONSUMER — it carries the SAME derived download as the image scans (the
 // edge to container-build), pushes the basename the producer stamped, and binds the
 // registry-login secrets by NAME via the credentials overlay (Task-1 surface reuse).
@@ -2574,7 +2573,7 @@ func TestOciPushLowers(t *testing.T) {
 	}
 	s := string(out)
 	for _, want := range []string{
-		"uses: projectfile/ci-actions/oci-push@v1",             // externalised, pinned ref
+		"uses: projectfile/actions/oci-push@v1",                // externalised, pinned ref
 		"      - uses: actions/download-artifact@v8",           // tar pulled first
 		"          name: image" + artifactScopeSuffix,          // this cell's stem
 		"          artifact-name: image" + artifactScopeSuffix, // handed to the action
@@ -2629,7 +2628,7 @@ func TestOciPushRegistryVar(t *testing.T) {
 }
 
 // TestUnprovidedActionErrors is the defect guard: an `action:` tool with no
-// registered ci-actions partial must HARD-FAIL the render, never silently emit `make`.
+// registered action-library partial must HARD-FAIL the render, never silently emit `make`.
 func TestUnprovidedActionErrors(t *testing.T) {
 	const deferred = `{
   "tools": {"dc-up-d": {"action": "service-up"}},
@@ -2774,9 +2773,10 @@ func TestCheckoutTokenOverride(t *testing.T) {
 	}
 }
 
-// TestActionRefOverride proves the org.projectfile.ci.<target>.actions overlay
-// replaces the per-target adapter action refs (checkout + the ci-actions library),
-// that an absent overlay keeps the defaults, and that an unknown slot fails fast.
+// TestActionRefOverride proves the org.projectfile.ci.<target> overlays replace the
+// per-target adapter action refs — `actions` for the pinned slots, `library` for the
+// action-library prefix — that an absent overlay keeps the defaults, and that an
+// unknown slot fails fast.
 func TestActionRefOverride(t *testing.T) {
 	st, err := ci.Parse([]byte(providerSubtree))
 	if err != nil {
@@ -2788,26 +2788,28 @@ func TestActionRefOverride(t *testing.T) {
 	}
 	model := Build(rm, st, nil)
 
-	// Default (no overlay): adapter constants — checkout@v7 + projectfile/ci-actions@v1.
+	// Default (no overlay): adapter constants — checkout@v7 + projectfile/actions@v1.
 	def, err := Workflow(model, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(def), "actions/checkout@v7") ||
-		!strings.Contains(string(def), "projectfile/ci-actions/container-build/buildx@v1") {
+		!strings.Contains(string(def), "projectfile/actions/container-build/buildx@v1") {
 		t.Fatalf("default refs missing:\n%s", def)
 	}
 
-	// Overlay: every slot set. checkout is swapped wholesale; the ci-actions `repo@tag`
-	// ref splits at the final `@` into library + version, recomposed per action path.
-	// download/upload arms are exercised here too (same shape) even though this model
-	// emits no artifact step to print them.
-	over := ci.Platform{Actions: map[string]string{
-		SlotCheckout:         "actions/checkout@v99",
-		SlotDownloadArtifact: "actions/download-artifact@v42",
-		SlotUploadArtifact:   "actions/upload-artifact@v41",
-		SlotCIActions:        "acme/actions@v5",
-	}}
+	// Overlay: every slot set plus the library. checkout is swapped wholesale; the
+	// library `repo@tag` splits at the final `@` into repo + version, recomposed per
+	// action path. download/upload arms are exercised here too (same shape) even though
+	// this model emits no artifact step to print them.
+	over := ci.Platform{
+		Actions: map[string]string{
+			SlotCheckout:         "actions/checkout@v99",
+			SlotDownloadArtifact: "actions/download-artifact@v42",
+			SlotUploadArtifact:   "actions/upload-artifact@v41",
+		},
+		Library: "acme/actions@v5",
+	}
 	out, err := Workflow(model, Targets[TargetGHA], over)
 	if err != nil {
 		t.Fatal(err)
@@ -2816,17 +2818,17 @@ func TestActionRefOverride(t *testing.T) {
 		t.Errorf("checkout override not applied:\n%s", out)
 	}
 	if !strings.Contains(string(out), "acme/actions/container-build/buildx@v5") {
-		t.Errorf("ci-actions library override (repo@tag split) not applied:\n%s", out)
+		t.Errorf("library override (repo@tag split) not applied:\n%s", out)
 	}
 	if strings.Contains(string(out), "actions/checkout@v7") ||
-		strings.Contains(string(out), "projectfile/ci-actions") {
+		strings.Contains(string(out), "projectfile/actions") {
 		t.Errorf("defaults leaked past the override:\n%s", out)
 	}
 
-	// A `ci-actions` value with no `@tag` is a config error, not a dangling ref.
-	_, err = Workflow(model, Targets[TargetGHA], ci.Platform{Actions: map[string]string{SlotCIActions: "acme/actions"}})
+	// A `library` value with no `@tag` is a config error, not a dangling ref.
+	_, err = Workflow(model, Targets[TargetGHA], ci.Platform{Library: "acme/actions"})
 	if err == nil || !strings.Contains(err.Error(), "repo@tag") {
-		t.Fatalf("a tagless ci-actions ref must fail naming the expected form, got: %v", err)
+		t.Fatalf("a tagless library ref must fail naming the expected form, got: %v", err)
 	}
 
 	// An unknown slot fails fast and names itself (deterministic — sorted iteration).
@@ -2994,7 +2996,7 @@ func TestLiveLeavesFuse(t *testing.T) {
 		"container-tested:", // the NODE-job hosting the fused live steps
 		"uses: actions/download-artifact@v8",
 		"name: " + testImageMatrixStem,
-		"uses: projectfile/ci-actions/container-load@v1",
+		"uses: projectfile/actions/container-load@v1",
 		"archive: " + testImageMatrixStem + ".tar",
 		"run: docker compose up -d --wait",
 		`run: docker exec "${M6E_CONTAINER_INSTANCE}" test.d`,
@@ -3010,7 +3012,7 @@ func TestLiveLeavesFuse(t *testing.T) {
 		}
 	}
 	// The dissolved live job no longer dispatches to an external action.
-	if strings.Contains(s, "ci-actions/live") {
+	if strings.Contains(s, "projectfile/actions/live") {
 		t.Errorf("fused live must be plain run-steps, not a live action ref:\n%s", s)
 	}
 	if strings.Contains(s, "\n  dc-up-d:") {
