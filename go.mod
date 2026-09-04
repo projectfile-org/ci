@@ -4,7 +4,7 @@
 
 module projectfile.org/projectfile/ci
 
-go 1.26.6
+go 1.26.7
 
 require (
 	go.yaml.in/yaml/v3 v3.0.5
