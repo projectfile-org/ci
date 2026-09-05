@@ -36,6 +36,9 @@ const (
 	testDCDown          = "dc-down"
 	testB19GoImage      = "${{ vars.B19_DOCKER_REGISTRY }}/b19/go"
 	testDist            = "dist"
+	testLinux           = "linux"
+	testAmd64           = "amd64"
+	testArm64           = "arm64"
 )
 
 // matrixSubtree is the canonical exercise from the build order: a single axis,
@@ -5131,5 +5134,131 @@ func TestAdvisoryLowering(t *testing.T) {
 		if n := strings.Count(s, "\n        continue-on-error: "); n != 1 {
 			t.Errorf("%s: want exactly 1 continue-on-error, got %d", tgt, n)
 		}
+	}
+}
+
+// singleTorrentSubtree is the one-torrent-per-release shape: a MATRIXED producer, a
+// consumer that DROPPED the matrix to bundle every cell into one artifact, and a
+// matrixed release that consumes that single artifact back. Both fan-in directions
+// meet on one DAG, which is the only place they can disagree.
+const singleTorrentSubtree = `{
+  "matrix": {
+    "axes": {"GOOS": ["linux", "darwin"], "GOARCH": ["amd64", "arm64"]},
+    "exclude": [{"GOARCH": "arm64", "GOOS": "darwin"}]
+  },
+  "tools": {
+    "build-binaries": {"run": "go build -o dist/pf .", "artifact": "dist"},
+    "torrent-create": {"run": "torrent.sh create", "artifact": "dist"},
+    "gh-release": {"run": "gh release create"}
+  },
+  "nodes": {
+    "binaries-built": {"matrix": true, "needs": {"build-binaries": true}},
+    "binaries-are-torrented": {"needs": {"binaries-built": true, "torrent-create": true}},
+    "binaries-released": {"matrix": true, "needs": {"binaries-are-torrented": true, "gh-release": true}},
+    "published": {"goal": true, "needs": {"binaries-released": true}}
+  }
+}`
+
+// TestArtifactHandoffAcrossDroppedAxes pins the axis-drop fan-in on the GENERIC
+// build-artifact edge: a node that dropped its producer's axes downloads EVERY
+// realised cell's artifact into one path, and a node that fans where its producer
+// did not asks for the producer's single unmatrixed name. Excluded cells are asked
+// for by nobody — Cells is the one definition of which cells exist.
+func TestArtifactHandoffAcrossDroppedAxes(t *testing.T) {
+	st, err := ci.Parse([]byte(singleTorrentSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+
+	// The bundling node dropped both axes, so it takes all THREE surviving cells.
+	bundle := jobOf(m, "torrent-create")
+	if len(bundle.Matrix) != 0 {
+		t.Errorf("the bundling node must not fan, got matrix %+v", bundle.Matrix)
+	}
+	want := []string{
+		"build-binaries-amd64-linux" + artifactScopeSuffix,
+		"build-binaries-amd64-darwin" + artifactScopeSuffix,
+		"build-binaries-arm64-linux" + artifactScopeSuffix,
+	}
+	if len(bundle.Downloads) != len(want) {
+		t.Fatalf("bundling node Downloads = %+v, want %d (one per realised cell)", bundle.Downloads, len(want))
+	}
+	got := make(map[string]string, len(bundle.Downloads))
+	for _, d := range bundle.Downloads {
+		got[d.Name] = d.Path
+	}
+	for _, name := range want {
+		path, ok := got[name]
+		if !ok {
+			t.Errorf("bundling node never downloads %q, got %+v", name, bundle.Downloads)
+			continue
+		}
+		// One path for every cell: the five uploads carry distinct file names, so
+		// restoring them together merges into one tree instead of colliding.
+		if path != testDist {
+			t.Errorf("download %q restores to %q, want %q", name, path, testDist)
+		}
+	}
+	// The EXCLUDED cell must not be asked for — nothing ever uploaded it.
+	if _, ok := got["build-binaries-arm64-darwin"+artifactScopeSuffix]; ok {
+		t.Errorf("the excluded arm64/darwin cell was downloaded, got %+v", bundle.Downloads)
+	}
+
+	// The release fans where its producer does not: ONE unmatrixed name, per cell.
+	rel := jobOf(m, "gh-release")
+	if len(rel.Matrix) == 0 {
+		t.Errorf("the release node must still fan, got no matrix")
+	}
+	const single = "torrent-create" + artifactScopeSuffix
+	if len(rel.Downloads) != 1 || rel.Downloads[0].Name != single {
+		t.Errorf("release Downloads = %+v, want one named %q", rel.Downloads, single)
+	}
+}
+
+// TestArtifactStemsBindOnlyDroppedAxes pins the partial drop: an axis the consumer
+// still carries stays a matrix expression (the two ends share that cell), and only a
+// DROPPED axis is bound to a literal. Cells differing solely in a kept axis collapse
+// to one name rather than one download per producer cell.
+func TestArtifactStemsBindOnlyDroppedAxes(t *testing.T) {
+	both := []ci.Axis{{Key: "GOARCH", Values: []string{testAmd64, testArm64}}, {Key: "GOOS", Values: []string{testLinux, "darwin"}}}
+	for _, tc := range []struct {
+		name               string
+		producer, consumer []ci.Axis
+		want               []string
+	}{
+		{
+			"equal axes render as today", both, both,
+			[]string{"b-${{ matrix.GOARCH }}-${{ matrix.GOOS }}" + artifactScopeSuffix},
+		},
+		{
+			"producer fans narrower", nil, both,
+			[]string{"b" + artifactScopeSuffix},
+		},
+		{
+			"one axis dropped, the kept one stays an expression", both,
+			[]ci.Axis{both[1]},
+			[]string{"b-amd64-${{ matrix.GOOS }}" + artifactScopeSuffix, "b-arm64-${{ matrix.GOOS }}" + artifactScopeSuffix},
+		},
+		{"both axes dropped", both, nil, []string{
+			"b-amd64-linux" + artifactScopeSuffix, "b-amd64-darwin" + artifactScopeSuffix,
+			"b-arm64-linux" + artifactScopeSuffix, "b-arm64-darwin" + artifactScopeSuffix,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := artifactStems("b", tc.producer, nil, tc.consumer)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d stems %v, want %d %v", len(got), got, len(tc.want), tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("stem %d = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }

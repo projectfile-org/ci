@@ -2196,6 +2196,56 @@ func archArtifactStem(base string, producer []ci.Axis, arch string) string {
 	return s + artifactScopeSuffix
 }
 
+// artifactStems names every artifact ONE consumer job has to download from ONE
+// producer. The stem is the PRODUCER's to name — it uploaded under its own axes —
+// so every axis is read off the producer and never off the consumer, which is what
+// lets the two ends fan differently at all. An axis the consumer ALSO carries stays
+// a matrix expression (both ends sit in the same cell); an axis the consumer DROPPED
+// binds to each realised value instead, because a job that stopped fanning takes
+// every cell's artifact at once. Equal axes therefore reproduce artifactStem exactly,
+// so a producer/consumer pair that fans identically renders byte-for-byte as before.
+// Cells is the one definition of which cells exist, so an `exclude`d row is asked for
+// by nobody.
+func artifactStems(base string, producer []ci.Axis, excludes []ci.Exclusion, consumer []ci.Axis) []string {
+	kept := make(map[string]bool, len(consumer))
+	for _, a := range consumer {
+		kept[a.Key] = true
+	}
+	dropped := false
+	for _, a := range producer {
+		if !kept[a.Key] {
+			dropped = true
+			break
+		}
+	}
+	// Nothing dropped covers BOTH the equal-axes case and a producer that fans
+	// NARROWER than its consumer (the single release torrent five release cells
+	// each attach) — one name either way, built from the producer's axes.
+	if !dropped {
+		return []string{artifactStem(base, AxisMap(producer))}
+	}
+	var out []string
+	seen := make(map[string]bool)
+	for _, cell := range ci.Cells(producer, excludes) {
+		s := base
+		for _, a := range producer {
+			if kept[a.Key] {
+				s += "-${{ matrix." + a.Key + " }}"
+				continue
+			}
+			s += "-" + cell[a.Key]
+		}
+		s += artifactScopeSuffix
+		// Cells differing ONLY in an axis the consumer kept collapse to one name —
+		// that cell resolves it through its own matrix binding.
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // stepCtx is the data a JOB partial (steps/node or steps/gate) renders against: the
 // per-vendor adapter tokens plus the one node-job being lowered.
 type stepCtx struct {
@@ -3137,10 +3187,16 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					break
 				}
 				if path, ok := produces[need]; ok {
-					name := artifactStem(need, AxisMap(j.Axes))
-					if !dlSeen[name] {
-						dlSeen[name] = true
-						job.Downloads = append(job.Downloads, DownloadView{Name: name, Path: path})
+					// The producer may fan over axes this node DROPPED (one torrent over
+					// every cell's binaries), or over FEWER than it (five release cells
+					// attaching that one torrent). Both ends are named off the PRODUCER,
+					// so neither shape needs the other to agree about a matrix it does
+					// not have; several names restore into the SAME path and merge there.
+					for _, name := range artifactStems(need, byName[need].Axes, byName[need].Excludes, j.Axes) {
+						if !dlSeen[name] {
+							dlSeen[name] = true
+							job.Downloads = append(job.Downloads, DownloadView{Name: name, Path: path})
+						}
 					}
 					break
 				}
