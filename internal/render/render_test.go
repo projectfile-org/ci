@@ -212,7 +212,7 @@ func TestWorkflowRenders(t *testing.T) {
 		`B19_UBUNTU_SERIES: ["resolute", "noble"]`,
 		"B19_UBUNTU_SERIES: ${{ matrix.B19_UBUNTU_SERIES }}",
 		"runs-on: ubuntu-latest",
-		"uses: actions/checkout@v7",
+		"uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
 		"run: make container-build",
 	} {
 		if !strings.Contains(s, want) {
@@ -226,7 +226,7 @@ func TestWorkflowRenders(t *testing.T) {
 	// INDENT GUARD: the dispatched step body must sit at 6 spaces under `steps:`
 	// (a template-trim slip once flattened the first item to column 0, and the
 	// Contains assertions above could not see it). Assert the exact block.
-	if !strings.Contains(s, "\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          submodules: true\n      - name: container-build\n        run: ") {
+	if !strings.Contains(s, "\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n        with:\n          submodules: true\n          persist-credentials: false\n      - name: container-build\n        run: ") {
 		t.Errorf("portable step body lost its 6-space indent under steps:\n%s", s)
 	}
 }
@@ -539,7 +539,7 @@ func TestGuardIsNotLowered(t *testing.T) {
 	s := string(out)
 	// The guard is dropped: the image tool reaches its image via run-tool with a clean
 	// `run:` input, exactly as an UNGUARDED image tool would render (no prelude wrapping).
-	if !strings.Contains(s, "uses: projectfile/actions/run-tool@v1") || !strings.Contains(s, "\n          run: auto-hadolint\n") {
+	if !strings.Contains(s, "uses: projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") || !strings.Contains(s, "\n          run: auto-hadolint\n") {
 		t.Errorf("guarded image tool should render a plain run-tool action\ngot:\n%s", s)
 	}
 	// No inline prelude leaked through, and no block scalar was emitted for it.
@@ -964,9 +964,12 @@ func TestPlatformOverlay(t *testing.T) {
 	if strings.Contains(s, "runs-on: ubuntu-latest") {
 		t.Errorf("runs-on override leaked the adapter default ubuntu-latest:\n%s", s)
 	}
-	// An absent overlay is a no-op: no permissions/concurrency/timeout appear.
+	// An absent overlay adds no concurrency/timeout, but still floors permissions.
 	base, _ := Workflow(m, Targets[TargetGHA], ci.Platform{})
-	for _, absent := range []string{"permissions:", "concurrency:", "timeout-minutes:"} {
+	if !strings.Contains(string(base), "permissions:\n  contents: read\n") {
+		t.Errorf("empty overlay should floor permissions at contents: read:\n%s", base)
+	}
+	for _, absent := range []string{"concurrency:", "timeout-minutes:"} {
 		if strings.Contains(string(base), absent) {
 			t.Errorf("empty overlay should emit no %q", absent)
 		}
@@ -1011,8 +1014,8 @@ func TestNodeConcurrency(t *testing.T) {
 // TestTargetsDifferOnlyByAdapter is the "implement GHA + Forgejo at once" proof:
 // the two outputs differ ONLY in the adapter tokens (runner label, regenerate
 // hint, artifact action versions) — the job graph, ordering and matrix are
-// identical. (Checkout is now actions/checkout@v7 on both; it used to be a
-// divergence. The artifact actions DO still diverge: gha rides the v2 protocol
+// identical. (Checkout diverges again: gha pins the commit, forgejo keeps the tag
+// its own mirror org resolves. The artifact actions DO still diverge: gha rides the v2 protocol
 // majors — download@v8 / upload@v7 — while forgejo is pinned to @v3, because
 // Forgejo's backend only speaks the v1 artifact protocol; both fold to one token.)
 func TestTargetsDifferOnlyByAdapter(t *testing.T) {
@@ -1024,11 +1027,14 @@ func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 		r := strings.NewReplacer(
 			"ubuntu-latest", "RUNNER",
 			"docker", "RUNNER",
+			"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "CHECKOUT",
 			"actions/checkout@v7", "CHECKOUT",
-			"actions/download-artifact@v8", "DOWNLOAD",
+			"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", "DOWNLOAD",
 			"actions/download-artifact@v3", "DOWNLOAD",
-			"actions/upload-artifact@v7", "UPLOAD",
+			"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7", "UPLOAD",
 			"actions/upload-artifact@v3", "UPLOAD",
+			"projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1", "LIBREF",
+			"projectfile/actions/run-tool@v1", "LIBREF",
 			"--target gha", "--target T",
 			"--target forgejo", "--target T",
 		)
@@ -1046,7 +1052,7 @@ func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 // runner hit — keep it a per-target default, never a forced downgrade of GitHub.
 func TestArtifactProtocolPerTarget(t *testing.T) {
 	for _, c := range []struct{ key, download, upload string }{
-		{TargetGHA, "actions/download-artifact@v8", "actions/upload-artifact@v7"},
+		{TargetGHA, "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7"},
 		{TargetForgejo, "actions/download-artifact@v3", "actions/upload-artifact@v3"},
 	} {
 		tg := Targets[c.key]
@@ -1186,7 +1192,7 @@ func TestProviderLeafRenders(t *testing.T) {
 	}
 	s := string(out)
 	for _, want := range []string{
-		"uses: projectfile/actions/container-build/buildx@v1", // externalised, pinned, backend-keyed ref
+		"uses: projectfile/actions/container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1", // externalised, pinned, backend-keyed ref
 		"with:",
 		"artifact-name: image-${{ matrix.B19_UBUNTU_SERIES }}", // cell-keyed hand-off stem
 		"build-args: |-", // NAME=VALUE block (value rides the input — composite can't read job env:)
@@ -1225,7 +1231,7 @@ func TestProviderLeafRenders(t *testing.T) {
 	if strings.Contains(s, "init-shared-scripts") {
 		t.Errorf("container-build job still emits the removed init-shared-scripts step:\n%s", s)
 	}
-	if !strings.Contains(s, "\n      - name: container-build\n        uses: projectfile/actions/container-build/buildx@v1") {
+	if !strings.Contains(s, "\n      - name: container-build\n        uses: projectfile/actions/container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") {
 		t.Errorf("container-build provider body lost its 6-space indent under steps:\n%s", s)
 	}
 	// The portable scanner still takes the default path: an image tool reaches its
@@ -1615,14 +1621,15 @@ func TestImageScanConsumesBuildTar(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "    steps:\n" +
-		"      - uses: actions/checkout@v7\n" +
+		"      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n" +
 		"        with:\n" +
 		"          submodules: true\n" +
-		"      - uses: actions/download-artifact@v8\n" +
+		"          persist-credentials: false\n" +
+		"      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8\n" +
 		"        with:\n" +
 		"          name: " + testImageMatrixStem + "\n" +
 		"      - name: grype-scan-image\n" +
-		"        uses: projectfile/actions/run-tool@v1\n" +
+		"        uses: projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1\n" +
 		"        with:\n" +
 		"          image: reg.example/go-tools\n" +
 		"          version: latest\n" +
@@ -1834,7 +1841,7 @@ func TestBuildArtifactHandoff(t *testing.T) {
 	}
 	wantUp := "      - name: build-binaries\n" +
 		"        run: go build -o dist/pf .\n" +
-		"      - uses: actions/upload-artifact@v7\n" +
+		"      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\n" +
 		"        with:\n" +
 		"          name: " + name + "\n" +
 		"          path: dist\n" +
@@ -1852,7 +1859,7 @@ func TestBuildArtifactHandoff(t *testing.T) {
 	if strings.Contains(string(fout), "overwrite:") {
 		t.Errorf("forgejo upload must not carry overwrite (unsupported by @v3):\n%s", fout)
 	}
-	wantDown := "      - uses: actions/download-artifact@v8\n" +
+	wantDown := "      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8\n" +
 		"        with:\n" +
 		"          name: " + name + "\n" +
 		"          path: dist\n" +
@@ -2032,7 +2039,7 @@ func TestReportUploadAlways(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "      - uses: actions/upload-artifact@v7\n" +
+	want := "      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\n" +
 		"        if: ${{ always() }}\n" +
 		"        with:\n" +
 		"          name: " + name + "\n" +
@@ -2102,14 +2109,14 @@ func TestScannerCacheLowering(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "      - name: restore grype-db\n" +
-		"        uses: actions/cache/restore@v4\n" +
+		"        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
 		"          key: ci-cache-grype-db-\n" +
 		"          restore-keys: |\n" +
 		"            ci-cache-grype-db-\n" +
 		"      - name: auto-grype\n" +
-		"        uses: projectfile/actions/run-tool@v1\n"
+		"        uses: projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1\n"
 	if s := string(gha); !strings.Contains(s, want) {
 		t.Errorf("gha: missing the ordered restore→run-tool body:\n%s", s)
 	}
@@ -2155,7 +2162,7 @@ func TestScannerCacheWriterSave(t *testing.T) {
 		t.Errorf("gha: missing the RW writer mount:\n%s", gha)
 	}
 	wantSave := "      - name: save grype-db\n" +
-		"        uses: actions/cache/save@v4\n" +
+		"        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
 		"          key: ci-cache-grype-db-${{ github.run_id }}\n"
@@ -2335,7 +2342,7 @@ func TestContainerExecLowering(t *testing.T) {
 		}
 		s := string(out)
 		block := "      - name: container-test\n" +
-			"        uses: projectfile/actions/container-exec@v1\n" +
+			"        uses: projectfile/actions/container-exec@" + Targets[tgt].ActionVer + "\n" +
 			"        with:\n" +
 			"          container: ${{ env.M6E_CONTAINER_INSTANCE }}\n" +
 			"          run: test.d\n"
@@ -2442,7 +2449,7 @@ func TestSecretsProvisionStep(t *testing.T) {
 		}
 		s := string(out)
 		uses := "      - name: secrets-provision\n" +
-			"        uses: projectfile/actions/secrets-provision@v1\n"
+			"        uses: projectfile/actions/secrets-provision@" + Targets[tgt].ActionVer + "\n"
 		if !strings.Contains(s, uses) {
 			t.Errorf("%s: missing secrets-provision step:\n%s", tgt, s)
 		}
@@ -2576,13 +2583,13 @@ func TestOciPushLowers(t *testing.T) {
 	}
 	s := string(out)
 	for _, want := range []string{
-		"uses: projectfile/actions/oci-push@v1",                // externalised, pinned ref
-		"      - uses: actions/download-artifact@v8",           // tar pulled first
-		"          name: image" + artifactScopeSuffix,          // this cell's stem
-		"          artifact-name: image" + artifactScopeSuffix, // handed to the action
-		"          image: projectfile/cli:",                    // basename the producer stamped
-		"          version: ${{ github.ref_name }}",            // git tag -> action's semver cascade
-		"REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}",  // credentials overlay binding
+		"uses: projectfile/actions/oci-push@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1",      // externalised, pinned ref
+		"      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", // tar pulled first
+		"          name: image" + artifactScopeSuffix,                                           // this cell's stem
+		"          artifact-name: image" + artifactScopeSuffix,                                  // handed to the action
+		"          image: projectfile/cli:",                                                     // basename the producer stamped
+		"          version: ${{ github.ref_name }}",                                             // git tag -> action's semver cascade
+		"REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}",                                   // credentials overlay binding
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("oci-push workflow missing %q\n---\n%s", want, s)
@@ -2669,7 +2676,7 @@ func TestContainerBuildBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(def), "container-build/buildx@v1") {
+	if !strings.Contains(string(def), "container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") {
 		t.Errorf("default backend should be buildx:\n%s", def)
 	}
 
@@ -2693,10 +2700,10 @@ func TestContainerBuildBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(bah), "container-build/buildah@v1") {
+	if !strings.Contains(string(bah), "container-build/buildah@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") {
 		t.Errorf("builder: buildah should select the buildah entry:\n%s", bah)
 	}
-	if strings.Contains(string(bah), "container-build/buildx@v1") {
+	if strings.Contains(string(bah), "container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") {
 		t.Errorf("buildah override must not leave a buildx ref:\n%s", bah)
 	}
 
@@ -2796,8 +2803,8 @@ func TestActionRefOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(def), "actions/checkout@v7") ||
-		!strings.Contains(string(def), "projectfile/actions/container-build/buildx@v1") {
+	if !strings.Contains(string(def), "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7") ||
+		!strings.Contains(string(def), "projectfile/actions/container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") {
 		t.Fatalf("default refs missing:\n%s", def)
 	}
 
@@ -2823,7 +2830,7 @@ func TestActionRefOverride(t *testing.T) {
 	if !strings.Contains(string(out), "acme/actions/container-build/buildx@v5") {
 		t.Errorf("library override (repo@tag split) not applied:\n%s", out)
 	}
-	if strings.Contains(string(out), "actions/checkout@v7") ||
+	if strings.Contains(string(out), "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7") ||
 		strings.Contains(string(out), "projectfile/actions") {
 		t.Errorf("defaults leaked past the override:\n%s", out)
 	}
@@ -2997,9 +3004,9 @@ func TestLiveLeavesFuse(t *testing.T) {
 	s := string(gha)
 	for _, want := range []string{
 		"container-tested:", // the NODE-job hosting the fused live steps
-		"uses: actions/download-artifact@v8",
+		"uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8",
 		"name: " + testImageMatrixStem,
-		"uses: projectfile/actions/container-load@v1",
+		"uses: projectfile/actions/container-load@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1",
 		"archive: " + testImageMatrixStem + ".tar",
 		"run: docker compose up -d --wait",
 		`run: docker exec "${M6E_CONTAINER_INSTANCE}" test.d`,
@@ -3023,7 +3030,7 @@ func TestLiveLeavesFuse(t *testing.T) {
 	}
 	// INDENT GUARD: the fused body lands at 6 spaces under steps: — checkout, then
 	// the build-tar download, then the load + member run-steps (same column).
-	if !strings.Contains(s, "\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          submodules: true\n      - uses: actions/download-artifact@v8") {
+	if !strings.Contains(s, "\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n        with:\n          submodules: true\n          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8") {
 		t.Errorf("fused live body lost its 6-space indent under steps:\n%s", s)
 	}
 	for _, gone := range []string{"make dc-up-d", "make container-test", "run: dc-up-d\n", "run: container-test\n"} {
@@ -5360,5 +5367,48 @@ func TestArtifactStemsBindOnlyDroppedAxes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+const permissionsSubtree = `{
+  "tools": {
+    "push-image": {"image": "reg/skopeo:latest", "permissions": {"packages": "write", "contents": "read"}},
+    "cut-release": {"image": "reg/gh:latest", "permissions": {"contents": "write"}},
+    "shellcheck": {"image": "reg/misc:latest"}
+  },
+  "nodes": {
+    "linted": {"needs": {"shellcheck": true}},
+    "published": {"goal": true, "needs": {"push-image": true, "cut-release": true, "linted": true}}
+  }
+}`
+
+// TestJobPermissions pins the least-privilege lowering: the workflow floors at
+// `contents: read`, a job unions its member tools' declared scopes keeping the widest
+// level, and a job whose members declare none stays on the floor with no block at all.
+func TestJobPermissions(t *testing.T) {
+	st, err := ci.Parse([]byte(permissionsSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	// The floor sits at workflow level, so a job declaring nothing still cannot write.
+	if !strings.Contains(s, "permissions:\n  contents: read\n") {
+		t.Errorf("workflow-level least-privilege floor missing:\n%s", s)
+	}
+	// contents: write beats the read another member asked for; packages rides along.
+	if !strings.Contains(s, "    permissions:\n      contents: write\n      packages: write\n") {
+		t.Errorf("published job missing the unioned scopes:\n%s", s)
+	}
+	// A job with no declaring member emits no block — it inherits the floor.
+	if strings.Count(s, "    permissions:") != 1 {
+		t.Errorf("want exactly 1 job-level permissions block, got %d:\n%s", strings.Count(s, "    permissions:"), s)
 	}
 }

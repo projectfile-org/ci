@@ -70,6 +70,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
       - uses: {{ .Target.Checkout }}
         with:
           submodules: true
+          persist-credentials: false
 {{- if .Target.CheckoutToken }}
           token: {{ .Target.CheckoutToken }}
 {{- end }}

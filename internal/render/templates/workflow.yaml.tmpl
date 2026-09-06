@@ -82,6 +82,12 @@ jobs:
 {{- if .Needs }}
     needs: {{ yamlList .Needs }}
 {{- end }}
+{{- with .Permissions }}
+    permissions:
+{{- range . }}
+      {{ .Key }}: {{ .Value }}
+{{- end }}
+{{- end }}
 {{- if .If }}
     if: {{ .If }}
 {{- end }}

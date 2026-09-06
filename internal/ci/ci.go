@@ -356,6 +356,8 @@ type Manifest struct {
 	// Inert without org.projectfile.events — that block supplies the webhook var the
 	// step is gated on, so a project that has not opted in renders no step.
 	Emit string `json:"emit"`
+	// Permissions are the GITHUB_TOKEN scopes this tool needs, unioned onto its job.
+	Permissions map[string]string `json:"permissions"`
 	// ReleaseAssetPath is the forgejo-release action's resolved binary path — the
 	// unsuffixed org.projectfile.artifacts entry with kind=binary (e.g. dist/pf-cli),
 	// looked up once during Load against the merged doc. The action suffixes it per

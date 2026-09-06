@@ -134,13 +134,13 @@ const (
 const (
 	// CacheActionRestore is GitHub's restore-ONLY cache sub-action (the ephemeral-runner
 	// half of the lowering). Restore-only — a scan READS the DB; the refresh pipeline
-	// owns the save (the cache-key roll). Pinned major, Node-24-native.
-	CacheActionRestore = "actions/cache/restore@v4"
+	// owns the save (the cache-key roll). Pinned by commit, Node-24-native.
+	CacheActionRestore = "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4"
 	// CacheActionSave is GitHub's save-ONLY cache sub-action — the other ephemeral-runner
 	// half. Emitted after a `*-db-update` writer step (rw mount) so the refreshed DB is
 	// persisted under a UNIQUE rolled key the scan's restore-keys prefix later picks up;
-	// without it an ephemeral refresh is discarded at job end. Pinned major, Node-24-native.
-	CacheActionSave = "actions/cache/save@v4"
+	// without it an ephemeral refresh is discarded at job end. Pinned by commit, Node-24-native.
+	CacheActionSave = "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4"
 	// CacheDirForge is the persistent runner dir a self-hosted runner binds a named cache
 	// from. Populated out-of-band by the refresh pipeline (a scanner DB) or accumulated
 	// in place across runs (a package cache), and provisioned in the runner compose
@@ -1385,11 +1385,11 @@ var Targets = map[string]Target{
 	// tar — gha→buildx (upload@v7), forgejo→buildah (upload@v3); the backend split is
 	// also the forge split, so each composite carries its own paired version.
 	TargetGHA: {
-		Key: TargetGHA, RunsOn: "ubuntu-latest", Checkout: "actions/checkout@v7",
-		Download: "actions/download-artifact@v8", Upload: "actions/upload-artifact@v7",
+		Key: TargetGHA, RunsOn: "ubuntu-latest", Checkout: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
+		Download: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", Upload: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7",
 		UploadOverwrite: true,
 		OutDir:          ".github/workflows", Ext: workflowExt(), Template: "workflow.yaml.tmpl",
-		ActionLib: "projectfile/actions", ActionVer: "v1", Builder: BackendBuildx,
+		ActionLib: "projectfile/actions", ActionVer: "afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1", Builder: BackendBuildx,
 		CacheRestore: CacheActionRestore, CacheSave: CacheActionSave, CacheDir: CacheDirGHA,
 	},
 	TargetForgejo: {
@@ -1782,6 +1782,8 @@ type JobView struct {
 	// resolves against the target's `credentials` overlay at Workflow time (a match →
 	// secret ref appended to Env; no match → left to the inherited runner env).
 	EnvNames []string `json:"-"`
+	// Permissions is the union of the member tools' declared GITHUB_TOKEN scopes, key-sorted.
+	Permissions []KV `json:"-"`
 	// Env is the node-job `env:` block (render-only): the UNION of the steps' env VALUES
 	// (matrix axis bindings, container-build var/get/ci values, the image-archive path)
 	// plus the credentials bindEnv appends. A run-tool step forwards NAMES from it.
@@ -2331,6 +2333,27 @@ type ConcurrencyView struct {
 	CancelInProgress bool
 }
 
+// GITHUB_TOKEN scope levels and the one scope every job needs to read its own checkout.
+const (
+	permNone          = "none"
+	permRead          = "read"
+	permWrite         = "write"
+	permScopeContents = "contents"
+)
+
+// permRank orders a scope level so a union keeps the widest one any member tool asked for.
+func permRank(level string) int {
+	switch level {
+	case permWrite:
+		return 3
+	case permRead:
+		return 2
+	case permNone:
+		return 1
+	}
+	return 0
+}
+
 // buildPlatform resolves the overlay for one target. The runner falls back to the
 // adapter default when the overlay does not set runs-on, so the existing tests
 // (no overlay) keep emitting `runs-on: <target default>`.
@@ -2344,6 +2367,9 @@ func buildPlatform(target Target, p ci.Platform) PlatformView {
 	}
 	for _, k := range sortedKeys(p.Permissions) {
 		pv.Permissions = append(pv.Permissions, KV{Key: k, Value: p.Permissions[k]})
+	}
+	if len(pv.Permissions) == 0 {
+		pv.Permissions = []KV{{Key: permScopeContents, Value: permRead}}
 	}
 	if c := p.Concurrency; c != nil {
 		pv.Concurrency = &ConcurrencyView{Group: c.Group, CancelInProgress: c.CancelInProgress}
@@ -3083,6 +3109,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		// share the same axes (or none) — they fan as ONE strategy.matrix.
 		envSeen := map[string]bool{}
 		credSeen := map[string]bool{}
+		permSeen := map[string]string{}
 		dlSeen := map[string]bool{}
 		// The daemon-side arch this job's loaded image is named under, resolved where the
 		// build hand-off is (empty until then, and on a job that consumes no build).
@@ -3221,6 +3248,11 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			for _, n := range step.EnvNames {
 				credSeen[n] = true
 			}
+			for scope, level := range man.Permissions {
+				if permRank(level) > permRank(permSeen[scope]) {
+					permSeen[scope] = level
+				}
+			}
 			job.Steps = append(job.Steps, step)
 		}
 		// secrets-provision SYNTHETIC step (cloud half of org.projectfile.ci.secrets):
@@ -3270,6 +3302,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			}
 			sort.Strings(names)
 			job.EnvNames = names
+		}
+		for _, scope := range sortedKeys(permSeen) {
+			job.Permissions = append(job.Permissions, KV{Key: scope, Value: permSeen[scope]})
 		}
 		// ONE reports upload for the whole job: a single per-job artifact (the entire
 		// `reports/` dir) instead of one zip per scanner. Cell-keyed so per-series cells
