@@ -3,8 +3,6 @@
 #
 # SPDX-License-Identifier: MIT
 $schema: https://projectfile.org/schema/v1.json
-copyright:
-  year: 2026
 identity:
   created: "2026-06-01"
   name: ci
@@ -25,7 +23,17 @@ includes:
   - .makefile/library/traits/go-binary.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml
   - https://kiota.ch/projectfile/metadata/raw/branch/main/include.yaml
+keywords:
+  - pf-ci
+  - projectfile
+  - dag
+  - workflow
+  - forgejo
+  - go
 kind: SoftwareSourceCode
+license:
+  covers: project
+  spdx: ""
 links:
   - label:
       en: Projectfile CI Resolver on Codeberg
@@ -77,12 +85,7 @@ org:
         command: pf-ci
         kind: binary
         path: dist/pf-ci
-    build:
-      args:
-        GOPROXY: ""
     ci:
-      env:
-        GOPROXY: https://kiota.ch/api/packages/projectfile/go,direct
       forgejo:
         credentials:
           FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN }}
@@ -146,15 +149,5 @@ repositories:
     role: origin
     type: git
     url: ssh://git@kiota.ch/projectfile/ci.git
-keywords:
-  - pf-ci
-  - projectfile
-  - dag
-  - workflow
-  - forgejo
-  - go
 technologies:
   - go
-license:
-  covers: project
-  spdx: "MIT"
