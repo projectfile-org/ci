@@ -307,15 +307,19 @@ const PfCliImageVar = "PF_CLI_IMAGE"
 // declares no PF_CLI_IMAGE var, so the input is omitted and the action degrades to host
 // pf-cli or a logged label skip — never a bare, unqualified ${{ vars.PF_CLI_IMAGE }}.
 func pfCliImageRef(b *ci.Build) string {
-	if b == nil || b.Images[PfCliImageVar] == "" {
-		return ""
+	ref, _ := declaredImageRef(PfCliImageVar, b)
+	return ref
+}
+
+// declaredImageRef renders a declared image as a full path:tag ref; ok=false when name matches nothing declared.
+func declaredImageRef(name string, b *ci.Build) (ref string, ok bool) {
+	if b == nil || b.Images[name] == "" { // unset var: caller keeps its own fallback
+		return "", false
 	}
-	if head, ok := b.ImageHeads[PfCliImageVar]; ok {
-		// Sink-composed, FULL ref (the entry's own tag part lowers inside the
-		// one expression); the per-image override is full-ref scoped.
-		return sinkImageExpr(PfCliImageVar, head, b.Images[PfCliImageVar], nil, nil, nil) + tagFallback(b.Images[PfCliImageVar])
+	if head, sank := b.ImageHeads[name]; sank { // sink-composed: full ref, SOURCE_DOCKER_REGISTRY fallback tier included
+		return sinkImageExpr(name, head, b.Images[name], nil, nil, nil) + tagFallback(b.Images[name]), true
 	}
-	return imageExpr(PfCliImageVar, b) + ":" + imageTagExpr()
+	return imageExpr(name, b) + ":" + imageTagExpr(), true // plain lowered path + shared tag expr
 }
 
 // tagFallback appends the flip-var tag only when the composed value carries none,
@@ -343,13 +347,8 @@ const MiscToolsImageVar = "D9T_MISC_TOOLS_IMAGE"
 // PF_CLI_IMAGE. Empty when the build declares no such var (provision.sh then fails
 // closed on a `docker:` declaration with no default-image, matching the m6e recipe).
 func miscToolsImageRef(b *ci.Build) string {
-	if b == nil || b.Images[MiscToolsImageVar] == "" {
-		return ""
-	}
-	if head, ok := b.ImageHeads[MiscToolsImageVar]; ok {
-		return sinkImageExpr(MiscToolsImageVar, head, b.Images[MiscToolsImageVar], nil, nil, nil) + tagFallback(b.Images[MiscToolsImageVar])
-	}
-	return imageExpr(MiscToolsImageVar, b) + ":" + imageTagExpr()
+	ref, _ := declaredImageRef(MiscToolsImageVar, b)
+	return ref
 }
 
 // OutputRegistryVar is the SINGLE forge variable supplying the PUSH (output) registry
@@ -3333,7 +3332,11 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	if len(st.Env) > 0 {
 		defs := buildArgDefaults(b)
 		for _, k := range sortedKeys(st.Env) {
-			env = append(env, KV{Key: k, Value: inlineHoists(lowerMakeExpr(st.Env[k], defs, nil, nil))})
+			val := lowerMakeExpr(st.Env[k], defs, nil, nil)
+			if ref, ok := declaredImageRef(k, b); ok { // a declared image outranks its own authored literal
+				val = ref
+			}
+			env = append(env, KV{Key: k, Value: inlineHoists(val)})
 		}
 	}
 	return Model{

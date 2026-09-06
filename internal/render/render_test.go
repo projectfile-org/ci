@@ -4373,6 +4373,41 @@ func TestWorkflowEnvLowered(t *testing.T) {
 	}
 }
 
+// TestWorkflowEnvUsesDeclaredImage guards the fix for the bare-SOURCE_DOCKER_REGISTRY
+// bug TestWorkflowEnvLowered documents: a ci.env KEY that also names a declared image
+// (org.projectfile.images/ci.images) must render as that image's sink-composed
+// expression, carrying the SOURCE_DOCKER_REGISTRY fallback tier, instead of lowering
+// its own authored literal bare.
+func TestWorkflowEnvUsesDeclaredImage(t *testing.T) {
+	const src = `{
+	  "image": "d9t/opencode",
+	  "env": {"D9T_DIND_IMAGE": "${SOURCE_DOCKER_REGISTRY}/d9t/dind:${M6E_BASE_IMAGE_DEFAULT_VERSION}"},
+	  "tools": {"build": {"run": "echo"}},
+	  "nodes": {"ready": {"goal": true, "needs": {"build": true}}}
+	}`
+	st, err := ci.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	b := &ci.Build{
+		Images:     map[string]string{"D9T_DIND_IMAGE": "kiota.ch/d9t/dind:${M6E_BASE_IMAGE_DEFAULT_VERSION}"},
+		ImageHeads: map[string]string{"D9T_DIND_IMAGE": "kiota.ch"},
+	}
+	out, err := Workflow(Build(rm, st, b), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatalf("workflow: %v", err)
+	}
+	s := string(out)
+	const want = "  D9T_DIND_IMAGE: ${{ vars.D9T_DIND_IMAGE || format('{0}/d9t/dind:{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.BASE_IMAGE_DEFAULT_VERSION || 'latest') }}"
+	if !strings.Contains(s, want) {
+		t.Errorf("workflow env not routed through the declared image, want %q\n---\n%s", want, s)
+	}
+}
+
 // TestEnvBlocksNeverReadEnvContext guards the ONE rule the resolverEnv hoists can break:
 // `${{ env.* }}` is ILLEGAL inside a workflow-level or job-level `env:` block. Both are
 // evaluated before the env context exists, so a forge does not resolve it to an empty
