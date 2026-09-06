@@ -569,7 +569,7 @@ Scan Go code for security issues
 
 Analyze Go binary size (go-size-analyzer)
 
-`auto-gsa ${org.projectfile.artifacts.go-binary.path}`
+`.makefile/library/scripts/gsa-cell.sh ${org.projectfile.artifacts.go-binary.path}`
 
 > Image: D9T_GO_TOOLS_IMAGE
 
@@ -1396,6 +1396,14 @@ Scan the live built image for vulnerabilities (grype)
 ### `grype-scan-source`
 
 Scan project source for vulnerabilities (grype)
+
+`auto-grype`
+
+> Image: D9T_GO_TOOLS_IMAGE
+
+### `grype-scan-source-gha`
+
+Scan project source for vulnerabilities (grype), self-healing its own GHA cache
 
 `auto-grype`
 
