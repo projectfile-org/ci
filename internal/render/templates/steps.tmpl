@@ -121,8 +121,8 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "frag/run" }}
       - name: {{ .Step.Name }}
-{{- if .Step.If }}
-        if: {{ .Step.If }}
+{{- with .Step.Gate }}
+        if: {{ . }}
 {{- end }}
 {{- if .Step.Advisory }}
         # `advisory: true` — this step RUNS and its failure is REPORTED, but the job and
@@ -155,6 +155,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- end }}
 {{- end }}
       - name: {{ .Step.Name }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
         uses: {{ actionRef .Target "run-tool" }}
         with:
           image: {{ .Step.RunToolImage }}

@@ -1694,6 +1694,18 @@ type StepView struct {
 	Caches []Cache `json:"caches,omitempty"`
 }
 
+// Gate is the step's `if:`, whichever guard it carries: its OWN (a `when: always`
+// teardown) or, on a publish cell, the destination gate publishCells hung on every
+// member. The two never coexist — a teardown is exempted from the cell gate — so this
+// is a choice, not a conjunction, and neither needs `${{ }}` normalising to reach the
+// other. Empty => no `if:`, i.e. the runner's implicit success().
+func (s StepView) Gate() string {
+	if s.If != "" {
+		return s.If
+	}
+	return s.PublishIf
+}
+
 // Cache is one named run-time cache a tool reads (Manifest.Caches): the NAME (the
 // host-dir segment and the actions/cache key stem) and the CONTAINER PATH it mounts
 // at. Vendor-neutral — the host side and the restore strategy are applied per target
@@ -3675,6 +3687,17 @@ func publishCells(j JobView, targetKey string) JobView {
 	}
 	if len(sinks) == 0 {
 		return j
+	}
+	// The gate belongs to the CELL, not to the push step: every member of a withheld
+	// destination must skip with it. A member that READS what the push wrote — cosign
+	// signing the digest oci-push recorded — otherwise runs in a cell that published
+	// nothing and fails on the absent file, reporting a missing digest for what is
+	// really a destination the operator withheld. A `when: always` teardown keeps its
+	// own guard: it reaps what the cell itself created, published or not.
+	for si := range j.Steps {
+		if j.Steps[si].If == "" {
+			j.Steps[si].PublishIf = sinkGate()
+		}
 	}
 	genlog.Decision("publish_cells", j.Name+" -> "+strings.Join(sinks, ","),
 		"org.projectfile.publish (lowering "+targetKey+")", "org.projectfile.sinks · vars."+PublishSinksVar)

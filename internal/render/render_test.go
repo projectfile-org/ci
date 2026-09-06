@@ -4527,6 +4527,13 @@ func TestSelfImageToolStep(t *testing.T) {
 // them, and the archive stays keyed by the BUILD cell — one build is published to
 // every destination, so a sink in the artifact name would name a file no build
 // ever uploaded.
+// ghcrSink / ghcrRef are the one GitHub destination the publish tests route to — shared
+// so the sink NAME and the reference it composes cannot drift apart across them.
+const (
+	ghcrSink = "ghcr"
+	ghcrRef  = "ghcr.io/damian-buho/p:latest"
+)
+
 func TestPublishFansOutOverDestinations(t *testing.T) {
 	st, err := ci.Parse([]byte(publishSubtree))
 	if err != nil {
@@ -4538,7 +4545,7 @@ func TestPublishFansOutOverDestinations(t *testing.T) {
 	}
 	b := &ci.Build{PublishRefs: map[string][]ci.SinkRef{
 		ci.LoweringGHA: {
-			{Sink: "ghcr", Ref: "ghcr.io/damian-buho/b19/ubuntu-{B19_UBUNTU_SERIES}:latest"},
+			{Sink: ghcrSink, Ref: "ghcr.io/damian-buho/b19/ubuntu-{B19_UBUNTU_SERIES}:latest"},
 			{Sink: "hub-main", Ref: "docker.io/damianbuho/b19-ubuntu-{B19_UBUNTU_SERIES}:latest"},
 		},
 		ci.LoweringForgejo: {{Sink: "kiota", Ref: "kiota.ch/b19/ubuntu-{B19_UBUNTU_SERIES}:latest"}},
@@ -4577,7 +4584,7 @@ func TestPublishCellsAreScopedToTheirLowering(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	m := Build(rm, st, &ci.Build{PublishRefs: map[string][]ci.SinkRef{
-		ci.LoweringGHA: {{Sink: "ghcr", Ref: "ghcr.io/damian-buho/p:latest"}},
+		ci.LoweringGHA: {{Sink: ghcrSink, Ref: ghcrRef}},
 	}})
 	gha, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
@@ -4667,9 +4674,9 @@ func TestPublishCellsCarryTheRunTimeSinkGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	const sink = "ghcr"
+	const sink = ghcrSink
 	m := Build(rm, st, &ci.Build{PublishRefs: map[string][]ci.SinkRef{
-		ci.LoweringGHA: {{Sink: sink, Ref: "ghcr.io/damian-buho/p:latest"}},
+		ci.LoweringGHA: {{Sink: sink, Ref: ghcrRef}},
 	}})
 	gha, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
@@ -4690,6 +4697,64 @@ func TestPublishCellsCarryTheRunTimeSinkGate(t *testing.T) {
 	}
 	if strings.Contains(string(forgejo), PublishSinksVar) {
 		t.Errorf("forgejo declares no route but carries the sink gate\n---\n%s", forgejo)
+	}
+}
+
+// publishCellSubtree is publishSubtree plus the two members that run AFTER the push in
+// the same cell — a host step that materialises a credential and a containerised step
+// that consumes what the push wrote. The supply-chain trait's exact shape (cosign-key-file
+// + cosign-sign), named to sort after oci-push.
+const publishCellSubtree = `{
+  "image": "b19/ubuntu",
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "oci-push": {"action": "oci-push"},
+    "sign-key-file": {},
+    "sign-image": {"image": "reg.example/go-tools:latest"}
+  },
+  "nodes": {
+    "image-built": {"needs": {"container-build": true}},
+    "published": {"goal": true, "needs": {"image-built": true, "oci-push": true, "sign-key-file": true, "sign-image": true}}
+  }
+}`
+
+// TestPublishCellGateReachesEveryMember pins the gate's SCOPE: it belongs to the cell,
+// not to the push step. A withheld destination skips the push, and a member that reads
+// what the push wrote — cosign, reading the digest file — must skip with it. Ungated it
+// runs in a cell that published nothing and fails on the absent file, reporting a
+// missing digest for what is really a destination the operator chose not to publish to.
+func TestPublishCellGateReachesEveryMember(t *testing.T) {
+	st, err := ci.Parse([]byte(publishCellSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, &ci.Build{PublishRefs: map[string][]ci.SinkRef{
+		ci.LoweringGHA: {{Sink: ghcrSink, Ref: ghcrRef}},
+	}})
+	gha, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatalf("gha: %v", err)
+	}
+	s := string(gha)
+	t.Logf("rendered workflow:\n%s", s)
+	// One gate per member of the publish job, the push included.
+	if got, want := strings.Count(s, "if: "+sinkGate()), 3; got != want {
+		t.Errorf("gated steps = %d, want %d (push + host member + containerised member)\n---\n%s", got, want, s)
+	}
+	// The containerised member is the regression that started this: run-tool rendered no
+	// `if:` at all, so the gate had nowhere to land even once publishCells set it.
+	for _, want := range []string{"- name: sign-key-file", "- name: sign-image"} {
+		i := strings.Index(s, want)
+		if i < 0 {
+			t.Fatalf("step %q absent\n---\n%s", want, s)
+		}
+		if !strings.Contains(s[i:i+len(want)+len(sinkGate())+16], "if: "+sinkGate()) {
+			t.Errorf("step %q does not carry the cell gate on its own line\n---\n%s", want, s)
+		}
 	}
 }
 
