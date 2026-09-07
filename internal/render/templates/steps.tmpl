@@ -211,7 +211,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
         # GHA-hosted docker lacks the containerd snapshotter the docker/image exporter needs; self-hosted forgejo runners ship it enabled already.
         run: |
           echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
+          if [ -d /run/systemd/system ]; then sudo systemctl restart docker; else sudo service docker restart; fi
 {{- end }}
       - name: {{ .Step.Name }}
         uses: {{ actionRef .Target (printf "%s/%s" .Step.Action .Target.Builder) }}
