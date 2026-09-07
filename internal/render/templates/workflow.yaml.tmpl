@@ -51,10 +51,12 @@ name: {{ .Name }}
     - cron: "{{ . }}"
 {{- end }}
 {{- end }}
+{{- if eq $.Target.Key "gha" }}
 {{- with $.Platform.Permissions }}
 permissions:
 {{- range . }}
   {{ .Key }}: {{ .Value }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- with $.Platform.Concurrency }}
@@ -82,10 +84,12 @@ jobs:
 {{- if .Needs }}
     needs: {{ yamlList .Needs }}
 {{- end }}
+{{- if eq $.Target.Key "gha" }}
 {{- with .Permissions }}
     permissions:
 {{- range . }}
       {{ .Key }}: {{ .Value }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- if .If }}

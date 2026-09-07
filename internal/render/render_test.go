@@ -6,6 +6,7 @@ package render
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -1018,6 +1019,14 @@ func TestNodeConcurrency(t *testing.T) {
 // its own mirror org resolves. The artifact actions DO still diverge: gha rides the v2 protocol
 // majors — download@v8 / upload@v7 — while forgejo is pinned to @v3, because
 // Forgejo's backend only speaks the v1 artifact protocol; both fold to one token.)
+// permissionsBlocks matches a `permissions:` line plus its indented child scopes, at
+// workflow level (0 indent) and job level (4 indent) — Forgejo renders neither. RE2
+// has no backreferences, so each indent depth gets its own fixed pattern.
+var permissionsBlocks = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)^permissions:\n(?:  .+\n)*`),
+	regexp.MustCompile(`(?m)^    permissions:\n(?:      .+\n)*`),
+}
+
 func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 	m, _ := mustModel(t)
 	gha, _ := Workflow(m, Targets[TargetGHA], ci.Platform{})
@@ -1038,7 +1047,13 @@ func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 			"--target gha", "--target T",
 			"--target forgejo", "--target T",
 		)
-		return r.Replace(string(b))
+		// permissions is GHA-only: Forgejo has no such workflow concept and only warns
+		// on it, so a present-on-gha/absent-on-forgejo block is expected, not drift.
+		out := r.Replace(string(b))
+		for _, re := range permissionsBlocks {
+			out = re.ReplaceAllString(out, "")
+		}
+		return out
 	}
 	if normalise(gha) != normalise(forgejo) {
 		t.Errorf("targets diverge beyond the adapter tokens:\nGHA:\n%s\nForgejo:\n%s", gha, forgejo)
@@ -5394,7 +5409,8 @@ func TestJobPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	out, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	built := Build(rm, st, nil)
+	out, err := Workflow(built, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5410,5 +5426,14 @@ func TestJobPermissions(t *testing.T) {
 	// A job with no declaring member emits no block — it inherits the floor.
 	if strings.Count(s, "    permissions:") != 1 {
 		t.Errorf("want exactly 1 job-level permissions block, got %d:\n%s", strings.Count(s, "    permissions:"), s)
+	}
+	// Forgejo has no `permissions:` concept (warns and ignores it), so the same
+	// subtree must render with the concept dropped entirely, not merely unsupported.
+	fout, err := Workflow(built, Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(fout), "permissions:") {
+		t.Errorf("forgejo render must never emit permissions::\n%s", fout)
 	}
 }
