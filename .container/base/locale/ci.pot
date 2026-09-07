@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Damián Búho <damian.buho@proton.me>
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+#
+# SPDX-License-Identifier: MIT
+msgid ""
+msgstr ""
+"Project-Id-Version: ci 1.6.0\n"
+"Report-Msgid-Bugs-To: https://codeberg.org/projectfile/ci/issues\n"
+"POT-Creation-Date: 2026-09-07 03:49+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: .container/compile-go/build.d/compile-go/post/500-build-ci.sh:14
+msgid "Download modules"
+msgstr ""
+
+#: .container/compile-go/build.d/compile-go/post/500-build-ci.sh:17
+msgid "Build pf-ci"
+msgstr ""
+
+#: .container/compile-go/build.d/compile-go/post/500-build-ci.sh:22
+msgid "Copy binary to export"
+msgstr ""
+
+#: .container/compile-go/build.d/compile-go/post/500-build-ci.sh:25
+msgid "Copy %s to %s"
+msgstr ""
+
+#: .container/user/entrypoint.d/5000-start.sh:8
+msgid "Starting"
+msgstr ""
