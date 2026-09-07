@@ -2732,6 +2732,48 @@ func TestContainerBuildBackend(t *testing.T) {
 	}
 }
 
+// TestContainerBuildContainerdSnapshotter proves the docker-exporter fix is scoped to
+// exactly the case that needs it: GHA-hosted runners default to the classic docker
+// driver, which refuses the docker-format exporter buildx uses without the containerd
+// image store — self-hosted forgejo runners already ship it enabled, and a buildah
+// build never touches buildx or the exporter at all.
+func TestContainerBuildContainerdSnapshotter(t *testing.T) {
+	st, err := ci.Parse([]byte(providerSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	model := Build(rm, st, nil)
+	const want = "enable containerd image store"
+
+	gha, err := Workflow(model, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gha), want) {
+		t.Errorf("gha+buildx (the default) must enable the containerd image store:\n%s", gha)
+	}
+
+	fj, err := Workflow(model, Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(fj), want) {
+		t.Errorf("forgejo runners ship the containerd image store already — must not re-configure it:\n%s", fj)
+	}
+
+	bah, err := Workflow(model, Targets[TargetGHA], ci.Platform{Builder: "buildah"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(bah), want) {
+		t.Errorf("buildah never touches buildx's docker exporter — must not configure the daemon:\n%s", bah)
+	}
+}
+
 // TestRobotTokenSecretIsStorable guards the fleet-wide secret name against a rename
 // into a namespace the forge reserves. The `||` fallback would swallow the mistake —
 // an unstorable name renders a clean workflow, the secret can never be created, and
