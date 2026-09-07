@@ -103,6 +103,8 @@ jobs:
   binaries-released:
     runs-on: ubuntu-latest
     needs: ["binaries-ready"]
+    permissions:
+      contents: write
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
@@ -114,6 +116,7 @@ jobs:
     env:
       GOARCH: ${{ matrix.GOARCH }}
       GOOS: ${{ matrix.GOOS }}
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -124,7 +127,7 @@ jobs:
           name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
       - name: gh-release
-        run: .scripts/gh-release.sh "${{ github.ref_name }}"
+        run: .scripts/gh-release.sh "$RELEASE_TAG"
   built:
     runs-on: ubuntu-latest
     needs: ["source-is-ready"]
@@ -497,6 +500,7 @@ jobs:
     env:
       GRYPE_DB_AUTO_UPDATE: true
       OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: /app/.cache/osv
+      TRIVY_DB_AUTO_UPDATE: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -546,15 +550,21 @@ jobs:
           key: ci-cache-trivy-db-
           restore-keys: |
             ci-cache-trivy-db-
-      - name: trivy-scan-source
+      - name: trivy-scan-source-gha
         uses: projectfile-org/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-trivy fs
           env: |-
+            TRIVY_DB_AUTO_UPDATE=true
             TRIVY_CACHE_BACKEND
-          mounts: ${{ runner.temp }}/ci-cache/trivy-db:/app/.cache/trivy:ro
+          mounts: ${{ runner.temp }}/ci-cache/trivy-db:/app/.cache/trivy:rw
+      - name: save trivy-db
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/ci-cache/trivy-db
+          key: ci-cache-trivy-db-${{ github.run_id }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ always() }}
         with:
@@ -663,6 +673,12 @@ jobs:
           image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-yamllint
+      - name: auto-zizmor
+        uses: projectfile-org/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1
+        with:
+          image: ${{ vars.D9T_RUST_TOOLS_IMAGE || format('{0}/d9t/rust-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-zizmor
       - name: restore go
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
