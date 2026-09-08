@@ -3500,6 +3500,12 @@ func TestPreviewGateAndInput(t *testing.T) {
 			t.Errorf("preview lowering missing %q\n---\n%s", want, s)
 		}
 	}
+	// The trunk input belongs to the `primary` gate alone. Without it every branch is a
+	// preview, so a node that never opted in must render exactly what it always did —
+	// which is what keeps the token a per-project opt-in rather than a fleet-wide regen.
+	if strings.Contains(s, "primary:") {
+		t.Errorf("a node without the `primary` token must render no trunk input:\n%s", s)
+	}
 }
 
 // TestPreviewPrimaryBranchIsDeclared pins the override half: a project that records its
@@ -3571,7 +3577,7 @@ const primarySubtree = `{
   },
   "nodes": {
     "image-built":   {"needs": {"container-build": true}},
-    "publish-image": {"when": {"events": ["tag", "preview", "primary"]}, "needs": {"oci-push": true, "image-built": true}},
+    "publish-image": {"when": {"events": ["tag", "primary"]}, "needs": {"oci-push": true, "image-built": true}},
     "done":          {"goal": true, "needs": {"publish-image": true}}
   }
 }`
@@ -3596,12 +3602,13 @@ func TestPrimaryGateAndInput(t *testing.T) {
 	s := string(out)
 
 	for _, want := range []string{
-		// The trunk arm, OR-ed in beside preview's deny-list by decodeWhen's sort order.
-		"(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')",
+		// The trunk arm: an allow-list over the branch set, OR-ed with the release arm.
+		"if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') || " +
+			"(startsWith(github.ref, 'refs/tags/'))",
 		// The FACT: which names count as trunk. The action compares `preview` against it.
 		"primary: main master",
-		// Still handed the branch either way — one input answers "which branch", the
-		// other "is that branch the trunk".
+		// Still handed the branch too — one input answers "which branch", the other
+		// "is that branch the trunk".
 		"preview: ${{ github.ref_type == 'branch' && github.ref_name || '' }}",
 		// A trunk publish is still not a release: no rebuild fact reaches the router.
 		"github.ref_type == 'tag'",
@@ -3673,6 +3680,50 @@ func TestPrimaryBranchIsDeclared(t *testing.T) {
 	// and must earn a preview tag, not the trunk one.
 	if strings.Contains(s, "refs/heads/main") {
 		t.Errorf("a declared primary branch must REPLACE the default set:\n%s", s)
+	}
+}
+
+// TestBranchTokenPairFolds pins the collapse. preview and primary partition the branch
+// refs, so a node carrying both means "any branch push" — and must SAY so. The unfolded
+// spelling is `ref != refs/heads/main || ref == refs/heads/main`: correct, and the exact
+// shape a reviewer reports as a generation bug in a file headed DO NOT EDIT.
+func TestBranchTokenPairFolds(t *testing.T) {
+	const bothTokens = `{
+  "image": "b19/ubuntu",
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "oci-push": {"action": "oci-push"}
+  },
+  "nodes": {
+    "image-built":   {"needs": {"container-build": true}},
+    "publish-image": {"when": {"events": ["tag", "preview", "primary"]}, "needs": {"oci-push": true, "image-built": true}},
+    "done":          {"goal": true, "needs": {"publish-image": true}}
+  }
+}`
+	st, err := ci.Parse([]byte(bothTokens))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "if: (startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))") {
+		t.Errorf("preview+primary must fold to one branch predicate:\n%s", s)
+	}
+	// The tautology must be GONE, not merely reordered.
+	if strings.Contains(s, "github.ref != 'refs/heads/main'") {
+		t.Errorf("the folded gate must not keep preview's deny-list:\n%s", s)
+	}
+	// Folding is a SPELLING, never a meaning: the action still gets the branch set, so a
+	// trunk push is still the one that earns the fixed tag.
+	if !strings.Contains(s, "primary: main master") {
+		t.Errorf("folding the gate must not drop the branch-set input:\n%s", s)
 	}
 }
 

@@ -465,6 +465,8 @@ func eventExpr(e string, primary []string) string {
 	switch e {
 	case ci.EventTag:
 		return "startsWith(github.ref, 'refs/tags/')"
+	case eventAnyBranch:
+		return "startsWith(github.ref, 'refs/heads/')"
 	case ci.EventPreview:
 		// Spelled as "a branch ref, minus the primary names" rather than as a branch
 		// allow-list, because the whole point of the token is that the branch cannot be
@@ -497,11 +499,11 @@ func eventExpr(e string, primary []string) string {
 	return "github.ref == 'refs/heads/" + branch + "'"
 }
 
-// primaryBranches is the project's primary-branch set with the fleet default applied:
-// the branch names a push must be on for `primary` to fire and must NOT be on for
-// `preview`. A nil Build (a project
-// declaring nothing the resolver reads) and a Build that simply records no default
-// branch answer identically, because neither one states anything to the contrary.
+// primaryBranches is the project's primary-branch set with the fleet default applied: the
+// branch names a push must be on for `primary` to fire and must NOT be on for `preview`.
+// A nil Build (a project declaring nothing the resolver reads) and a Build that simply
+// records no default branch answer identically, because neither states anything to the
+// contrary.
 func primaryBranches(b *ci.Build) []string {
 	if b == nil || len(b.PrimaryBranches) == 0 {
 		return ci.DefaultPrimaryBranches
@@ -509,11 +511,59 @@ func primaryBranches(b *ci.Build) []string {
 	return b.PrimaryBranches
 }
 
+// hasEvent reports whether an event set carries one token.
+func hasEvent(events []string, want string) bool {
+	for _, e := range events {
+		if e == want {
+			return true
+		}
+	}
+	return false
+}
+
+// eventAnyBranch is the INTERNAL token the preview+primary pair collapses onto. It sits
+// outside the closed WhenEvents vocabulary, so validEvent rejects it and no document can
+// reach eventExpr's arm for it by spelling it.
+const eventAnyBranch = "any-branch"
+
+// foldBranchTokens replaces the `preview`+`primary` PAIR with the one predicate they
+// partition: preview is "a branch NOT in the set", primary is "a branch IN the set", so
+// their union is "a branch", for any set including an empty one. Rendered unfolded the
+// pair spells `ref != refs/heads/main || ref == refs/heads/main` — correct, and
+// indistinguishable from a generation bug in a file headed DO NOT EDIT. Returns the input
+// untouched unless BOTH are present: neither token alone means "any branch".
+func foldBranchTokens(events []string) []string {
+	var hasPreview, hasPrimary bool
+	for _, e := range events {
+		switch e {
+		case ci.EventPreview:
+			hasPreview = true
+		case ci.EventPrimary:
+			hasPrimary = true
+		}
+	}
+	if !hasPreview || !hasPrimary {
+		return events
+	}
+	out := make([]string, 0, len(events)-1)
+	for _, e := range events {
+		switch e {
+		case ci.EventPrimary:
+			continue // absorbed into the union below
+		case ci.EventPreview:
+			e = eventAnyBranch
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 // jobIf composes a job's `if:` condition from its neutral event set: one event is
 // the bare expression, several are OR-ed (each parenthesised) so the job runs when
 // ANY of its triggers fires. An empty set yields "" — no `if:` line, the job runs
 // whenever the workflow triggers (the back-compatible default).
 func jobIf(events []string, primary []string) string {
+	events = foldBranchTokens(events)
 	switch len(events) {
 	case 0:
 		return ""
@@ -2734,7 +2784,6 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	if publishes {
 		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
 		step.PublishPreview = ciContextExpr[ci.CIKeyPreview]
-		step.PublishPrimary = strings.Join(primaryBranches(b), " ")
 		// Per-cell: a composed ref carries `{AXIS}` verbatim, because composition
 		// never touches a token with no `$`. The same substitution the basename
 		// above gets, so a matrix cell publishes its own series to every sink.
@@ -3162,6 +3211,13 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 				}
 			}
 			step := toolStep(j, st, b, dispatchArgs)
+			// Which names are the trunk — set HERE because only a `primary`-gated node asks,
+			// and toolStep cannot see the gate. A node without the token therefore renders
+			// exactly what it rendered before the input existed. PublishPreview proves this
+			// is a publish step; every publish action carries it.
+			if step.PublishPreview != "" && hasEvent(job.Events, ci.EventPrimary) {
+				step.PublishPrimary = strings.Join(primaryBranches(b), " ")
+			}
 			// Any member that emits a `reports:` glob flags the job for ONE rolled-up
 			// reports upload (set after the loop), not a per-tool upload.
 			if man.Reports != "" && man.Action == "" {

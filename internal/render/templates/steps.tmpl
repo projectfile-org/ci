@@ -271,8 +271,8 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- end }}
 {{- if .Step.PublishPreview }}
           # The branch this run is on, empty on a tag. Non-empty collapses the cascade to
-          # one mutable tag on the primary sink, so a branch build is testable without a
-          # tag and without moving anything a consumer floats on.
+          # one `latest-<branch>` tag on the primary sink, so a branch build is testable
+          # without a tag and without moving anything a consumer floats on.
           preview: {{ .Step.PublishPreview }}
 {{- end }}
 {{- if .Step.PublishPrimary }}
