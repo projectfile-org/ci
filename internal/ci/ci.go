@@ -129,6 +129,8 @@ type Node struct {
 //   - "preview"        a push to a branch that is NOT a primary one (see
 //     primaryBranches) — the pre-release trigger, for a node that
 //     must run on a branch nobody can name ahead of time;
+//   - "primary"        a push to a primary branch — preview's complement, for a node
+//     that must run on the trunk without naming which trunk;
 //   - "push:<branch>"  a push to the named branch (e.g. push:main);
 //   - "dispatch"       a manual run (the dispatch button) — workflow_dispatch;
 //   - "schedule"       a timed run — one of triggers.schedule's crons fired.
@@ -144,6 +146,7 @@ type Node struct {
 const (
 	EventTag        = "tag"      // a tag push (any tag)
 	EventPreview    = "preview"  // a push to a branch that is not a primary one
+	EventPrimary    = "primary"  // a push to a primary branch
 	EventPushPrefix = "push:"    // push:<branch> — a push to the named branch
 	EventDispatch   = "dispatch" // a manual run (the dispatch button)
 	EventSchedule   = "schedule" // a scheduled run (one of triggers.schedule fired)
@@ -158,7 +161,7 @@ const StepWhenAlways = "always"
 // `push:` token must name a non-empty branch; "tag"/"dispatch"/"schedule" stand alone.
 func validEvent(e string) bool {
 	switch e {
-	case EventTag, EventPreview, EventDispatch, EventSchedule:
+	case EventTag, EventPreview, EventPrimary, EventDispatch, EventSchedule:
 		return true
 	}
 	return strings.HasPrefix(e, EventPushPrefix) && len(e) > len(EventPushPrefix)
@@ -2262,8 +2265,8 @@ func decodeWhen(rw *rawWhen) ([]string, error) {
 	seen := make(map[string]bool, len(rw.Events))
 	for _, e := range rw.Events {
 		if !validEvent(e) {
-			return nil, fmt.Errorf("when: unknown event %q (want %q, %q, %q, %q or %q<branch>)",
-				e, EventTag, EventPreview, EventDispatch, EventSchedule, EventPushPrefix)
+			return nil, fmt.Errorf("when: unknown event %q (want %q, %q, %q, %q, %q or %q<branch>)",
+				e, EventTag, EventPreview, EventPrimary, EventDispatch, EventSchedule, EventPushPrefix)
 		}
 		if !seen[e] {
 			seen[e] = true

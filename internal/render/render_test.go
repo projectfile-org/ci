@@ -3561,6 +3561,121 @@ func TestPreviewWidensThePushSurface(t *testing.T) {
 	}
 }
 
+// primarySubtree is previewSubtree plus the trunk token — the shape a project takes to
+// publish a mutable head tag from every trunk push while a tag still cuts the release.
+const primarySubtree = `{
+  "image": "b19/ubuntu",
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "oci-push": {"action": "oci-push", "emit": "ci.image.published"}
+  },
+  "nodes": {
+    "image-built":   {"needs": {"container-build": true}},
+    "publish-image": {"when": {"events": ["tag", "preview", "primary"]}, "needs": {"oci-push": true, "image-built": true}},
+    "done":          {"goal": true, "needs": {"publish-image": true}}
+  }
+}`
+
+// TestPrimaryGateAndInput pins the trunk lowering: the job gate that admits a trunk push,
+// and the branch-set FACT the action needs to tell that push from a feature-branch one.
+// Which tag either earns stays the versioned action's rule, like the semver cascade.
+func TestPrimaryGateAndInput(t *testing.T) {
+	st, err := ci.Parse([]byte(primarySubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	b := &ci.Build{Events: &ci.Events{WebhookVar: ci.DefaultWebhookVar}}
+	out, err := Workflow(Build(rm, st, b), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+
+	for _, want := range []string{
+		// The trunk arm, OR-ed in beside preview's deny-list by decodeWhen's sort order.
+		"(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')",
+		// The FACT: which names count as trunk. The action compares `preview` against it.
+		"primary: main master",
+		// Still handed the branch either way — one input answers "which branch", the
+		// other "is that branch the trunk".
+		"preview: ${{ github.ref_type == 'branch' && github.ref_name || '' }}",
+		// A trunk publish is still not a release: no rebuild fact reaches the router.
+		"github.ref_type == 'tag'",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("primary lowering missing %q\n---\n%s", want, s)
+		}
+	}
+}
+
+// TestPrimaryNarrowsThePushSurface is the `on:` counterpart of the preview test, and the
+// asymmetry is the point: `primary` KNOWS its branch names, so it contributes them
+// instead of widening the file to every branch the way preview must.
+func TestPrimaryNarrowsThePushSurface(t *testing.T) {
+	const trunkOnly = `{
+  "tools": {"publish": {"run": "publish"}},
+  "nodes": {
+    "published": {"goal": true, "when": {"events": ["tag", "primary"]}, "needs": {"publish": true}}
+  }
+}`
+	st, err := ci.Parse([]byte(trunkOnly))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "branches: [\"main\", \"master\"]") {
+		t.Errorf("a [tag, primary] file must name its trunk branches:\n%s", s)
+	}
+	if strings.Contains(s, "branches: [\"**\"]") {
+		t.Errorf("a primary gate must not widen the surface to every branch:\n%s", s)
+	}
+}
+
+// TestPrimaryBranchIsDeclared is the override half, preview's twin: a project that
+// records its default branch gates on THAT name alone, so a fleet convention never
+// overrides a document — and the trunk tag follows the document with it.
+func TestPrimaryBranchIsDeclared(t *testing.T) {
+	st, err := ci.Parse([]byte(primarySubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, &ci.Build{PrimaryBranches: []string{"release"}}),
+		Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"github.ref == 'refs/heads/release'",
+		"primary: release",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("a declared primary branch must drive both halves, missing %q:\n%s", want, s)
+		}
+	}
+	// REPLACE, never join: on a `release` project a push to `main` is an ordinary branch
+	// and must earn a preview tag, not the trunk one.
+	if strings.Contains(s, "refs/heads/main") {
+		t.Errorf("a declared primary branch must REPLACE the default set:\n%s", s)
+	}
+}
+
 // TestWhenRejectsUnknownEvent is the parse guard: a token outside the closed
 // vocabulary fails the parse rather than silently widening (or muting) a trigger.
 func TestWhenRejectsUnknownEvent(t *testing.T) {
@@ -4706,24 +4821,26 @@ func TestJobIfNeverReadsTheMatrixContext(t *testing.T) {
 			}
 		}
 	}
-	// The `preview` gate is the newest job-level predicate, and the longest — sweep it
-	// under the same rule rather than trusting that it reads only `github`.
-	pst, err := ci.Parse([]byte(previewSubtree))
-	if err != nil {
-		t.Fatalf("preview parse: %v", err)
-	}
-	prm, err := resolve.Resolve(pst)
-	if err != nil {
-		t.Fatalf("preview resolve: %v", err)
-	}
-	for _, key := range []string{TargetGHA, TargetForgejo} {
-		out, err := Workflow(Build(prm, pst, nil), Targets[key], ci.Platform{})
+	// The branch gates are the newest job-level predicates, and the longest — sweep both
+	// under the same rule rather than trusting that they read only `github`.
+	for _, subtree := range []string{previewSubtree, primarySubtree} {
+		pst, err := ci.Parse([]byte(subtree))
 		if err != nil {
-			t.Fatalf("preview %s: %v", key, err)
+			t.Fatalf("preview parse: %v", err)
 		}
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.HasPrefix(line, "    if:") && strings.Contains(line, "matrix.") {
-				t.Errorf("preview %s: job-level if reads matrix: %s", key, line)
+		prm, err := resolve.Resolve(pst)
+		if err != nil {
+			t.Fatalf("preview resolve: %v", err)
+		}
+		for _, key := range []string{TargetGHA, TargetForgejo} {
+			out, err := Workflow(Build(prm, pst, nil), Targets[key], ci.Platform{})
+			if err != nil {
+				t.Fatalf("preview %s: %v", key, err)
+			}
+			for _, line := range strings.Split(string(out), "\n") {
+				if strings.HasPrefix(line, "    if:") && strings.Contains(line, "matrix.") {
+					t.Errorf("preview %s: job-level if reads matrix: %s", key, line)
+				}
 			}
 		}
 	}

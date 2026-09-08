@@ -454,6 +454,7 @@ var ciContextExpr = map[string]string{
 // bring its own table over the SAME tokens — the neutral model never names one.
 //   - "tag"           → a tag ref pushed;
 //   - "preview"       → a push to a branch that is not one of `primary`;
+//   - "primary"       → a push to one of `primary`;
 //   - "push:<branch>" → a push whose ref is that branch;
 //   - "dispatch"      → the run was started by the manual button;
 //   - "schedule"      → the run was started by a cron timer.
@@ -475,6 +476,18 @@ func eventExpr(e string, primary []string) string {
 			parts = append(parts, "github.ref != 'refs/heads/"+b+"'")
 		}
 		return strings.Join(parts, " && ")
+	case ci.EventPrimary:
+		// preview's complement, spelled as the allow-list preview spells as a deny-list, so
+		// one push can never satisfy both. An empty set yields `false` rather than an empty
+		// `if:`: this token gates a PUBLISH, and no primary branch must mean no publish.
+		if len(primary) == 0 {
+			return "false"
+		}
+		parts := make([]string, 0, len(primary))
+		for _, b := range primary {
+			parts = append(parts, "github.ref == 'refs/heads/"+b+"'")
+		}
+		return strings.Join(parts, " || ")
 	case ci.EventDispatch:
 		return "github.event_name == 'workflow_dispatch'"
 	case ci.EventSchedule:
@@ -485,7 +498,8 @@ func eventExpr(e string, primary []string) string {
 }
 
 // primaryBranches is the project's primary-branch set with the fleet default applied:
-// the branch names a push must NOT be on for `preview` to fire. A nil Build (a project
+// the branch names a push must be on for `primary` to fire and must NOT be on for
+// `preview`. A nil Build (a project
 // declaring nothing the resolver reads) and a Build that simply records no default
 // branch answer identically, because neither one states anything to the contrary.
 func primaryBranches(b *ci.Build) []string {
@@ -548,7 +562,7 @@ type OnView struct {
 // triggers (tr — the timer/button DATA carried on the goal node), merged in regardless of
 // the push narrowing. The dispatch/schedule TOKENS only drive a job's `if:` (eventExpr),
 // never the push surface — hence they are skipped in the fold.
-func buildOn(jobs []JobView, tr *TriggersView, goalScope []string) OnView {
+func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnView {
 	ov := OnView{}
 	if tr != nil {
 		ov.Dispatch = tr.Dispatch
@@ -569,6 +583,12 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope []string) OnView {
 				tags = true
 			case ci.EventPreview:
 				branchesAll = true
+			case ci.EventPrimary:
+				// The one branch token that CAN name its branches, so it narrows the surface
+				// instead of widening it to `**` the way preview must.
+				for _, b := range primary {
+					branches[b] = true
+				}
 			case ci.EventDispatch, ci.EventSchedule:
 			default:
 				branches[strings.TrimPrefix(e, ci.EventPushPrefix)] = true
@@ -1579,6 +1599,13 @@ type StepView struct {
 	// versioned action owns what tags come out of it. oci-push ONLY — a forge release is
 	// an object built around a tag and has no preview form.
 	PublishPreview string `json:"publish-preview,omitempty"`
+	// PublishPrimary is the oci-push `primary:` input — the project's primary-branch set,
+	// space-separated (a git branch name cannot hold a space). It is the FACT that lets
+	// the action tell a trunk push from a feature-branch one when PublishPreview carries
+	// a branch either way, and therefore which mutable tag the build earns. The names
+	// come from the document (repositories[role=origin].branch); which tag each case
+	// yields is the versioned action's rule, exactly as the semver cascade is.
+	PublishPrimary string `json:"publish-primary,omitempty"`
 	// PublishRefs is the oci-push `refs:` input — one `<sink> <ref>` line per
 	// destination this lowering publishes to, each composed by the document that
 	// declared the sink. It is what lets ONE archive land nested on one registry and
@@ -2707,6 +2734,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	if publishes {
 		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
 		step.PublishPreview = ciContextExpr[ci.CIKeyPreview]
+		step.PublishPrimary = strings.Join(primaryBranches(b), " ")
 		// Per-cell: a composed ref carries `{AXIS}` verbatim, because composition
 		// never touches a token with no `$`. The same substitution the basename
 		// above gets, so a matrix cell publishes its own series to every sink.
@@ -3357,7 +3385,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// force the broad push/PR surface back on and re-break a schedule-only goal (the
 	// exact bug goalScope fixes). It instead rides whatever events the file already
 	// fires for, gated by its own always()+var `if:`.
-	on := buildOn(jobs, triggers, goalScope)
+	on := buildOn(jobs, triggers, goalScope, primaryBranches(b))
 	if b != nil && b.Events != nil {
 		// Stamp the goal into every tool-level emission before the notify job joins them:
 		// a fact event and the goal event describe one run and MUST name the same goal,
