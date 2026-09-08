@@ -90,7 +90,7 @@ org:
         credentials:
           FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN }}
       nodes:
-        binaries-built:
+        binaries-are-built:
           matrix:
             axes:
               GOARCH:
@@ -116,7 +116,7 @@ org:
             exclude:
               - GOARCH: riscv64
                 GOOS: darwin
-        binaries-released:
+        binaries-are-released:
           matrix:
             axes:
               GOARCH:

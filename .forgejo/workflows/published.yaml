@@ -54,7 +54,12 @@ env:
   M6E_RUN_SCOPE: ${{ github.run_id }}-${{ github.run_attempt }}
   GOPROXY: https://kiota.ch/api/packages/projectfile/go,direct
 jobs:
-  binaries-built:
+  artifacts-are-ok:
+    runs-on: docker
+    needs: ["binaries-are-ok", "image-is-ready", "inputs-are-ok"]
+    steps:
+      - run: echo artifacts-are-ok
+  binaries-are-built:
     runs-on: docker
     needs: ["inputs-are-ok"]
     strategy:
@@ -88,14 +93,14 @@ jobs:
         with:
           name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
-  binaries-ready:
+  binaries-are-ok:
     runs-on: docker
-    needs: ["binaries-built", "gsa"]
+    needs: ["binaries-are-built", "gsa"]
     steps:
-      - run: echo binaries-ready
-  binaries-released:
+      - run: echo binaries-are-ok
+  binaries-are-released:
     runs-on: docker
-    needs: ["binaries-ready"]
+    needs: ["binaries-are-ok"]
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
@@ -211,7 +216,7 @@ jobs:
       - run: echo fetched
   gsa:
     runs-on: docker
-    needs: ["binaries-built"]
+    needs: ["binaries-are-built"]
     strategy:
       matrix:
         GOARCH: ["amd64", "arm64", "riscv64"]
@@ -400,7 +405,24 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v3
         with:
-          name: image-${{ github.run_id }}
+          name: build-binaries-amd64-linux-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        with:
+          name: build-binaries-amd64-darwin-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        with:
+          name: build-binaries-arm64-linux-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        with:
+          name: build-binaries-arm64-darwin-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        with:
+          name: build-binaries-riscv64-linux-${{ github.run_id }}
+          path: dist
       - name: oci-push
         # This cell's destination gate — on the STEP because a job `if:` may not read
         # the matrix context, and a forge rejects the whole file when one does.
@@ -431,12 +453,12 @@ jobs:
           sink: ${{ matrix.M6E_PUBLISH_SINK }}
   published:
     runs-on: docker
-    needs: ["binaries-released", "publish-image", "ready-to-publish"]
+    needs: ["binaries-are-released", "publish-image", "ready-to-publish"]
     steps:
       - run: echo published
   ready-to-publish:
     runs-on: docker
-    needs: ["image-is-ready", "inputs-are-ok"]
+    needs: ["artifacts-are-ok"]
     steps:
       - run: echo ready-to-publish
   secrets-ready:
