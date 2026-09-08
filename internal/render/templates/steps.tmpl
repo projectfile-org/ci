@@ -207,11 +207,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "providers/container-build" }}
 {{- if and (eq .Target.Key "gha") (eq .Target.Builder "buildx") }}
-      - name: enable containerd image store
-        # GHA-hosted docker lacks the containerd snapshotter the docker/image exporter needs; self-hosted forgejo runners ship it enabled already.
-        run: |
-          echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
-          if [ -d /run/systemd/system ]; then sudo systemctl restart docker; else sudo service docker restart; fi
+      - name: use an isolated buildx builder
+        # the docker driver's image exporter needs the host's containerd store; docker-container carries its own, so no host config or restart is needed on any GHA runner flavor.
+        run: docker buildx create --name ci --driver docker-container --use
 {{- end }}
       - name: {{ .Step.Name }}
         uses: {{ actionRef .Target (printf "%s/%s" .Step.Action .Target.Builder) }}

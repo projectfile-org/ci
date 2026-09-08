@@ -2732,12 +2732,16 @@ func TestContainerBuildBackend(t *testing.T) {
 	}
 }
 
-// TestContainerBuildContainerdSnapshotter proves the docker-exporter fix is scoped to
+// TestContainerBuildIsolatedBuilder proves the docker-exporter fix is scoped to
 // exactly the case that needs it: GHA-hosted runners default to the classic docker
-// driver, which refuses the docker-format exporter buildx uses without the containerd
-// image store — self-hosted forgejo runners already ship it enabled, and a buildah
-// build never touches buildx or the exporter at all.
-func TestContainerBuildContainerdSnapshotter(t *testing.T) {
+// driver, which refuses buildx's docker-format exporter without the containerd
+// image store. Rather than reconfigure and restart the host daemon — which breaks
+// on any GHA runner flavor that doesn't manage docker via systemd or a service
+// script — gha+buildx switches to an isolated docker-container builder, which
+// carries its own image store and needs no host config at all. Self-hosted
+// forgejo runners already ship the containerd store, and a buildah build never
+// touches buildx or the exporter, so neither needs the isolated builder.
+func TestContainerBuildIsolatedBuilder(t *testing.T) {
 	st, err := ci.Parse([]byte(providerSubtree))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -2747,14 +2751,14 @@ func TestContainerBuildContainerdSnapshotter(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	model := Build(rm, st, nil)
-	const want = "enable containerd image store"
+	const want = "docker buildx create --name ci --driver docker-container --use"
 
 	gha, err := Workflow(model, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(gha), want) {
-		t.Errorf("gha+buildx (the default) must enable the containerd image store:\n%s", gha)
+		t.Errorf("gha+buildx (the default) must use an isolated docker-container builder:\n%s", gha)
 	}
 
 	fj, err := Workflow(model, Targets[TargetForgejo], ci.Platform{})
@@ -2762,7 +2766,7 @@ func TestContainerBuildContainerdSnapshotter(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(fj), want) {
-		t.Errorf("forgejo runners ship the containerd image store already — must not re-configure it:\n%s", fj)
+		t.Errorf("forgejo runners ship the containerd image store already — must not switch builders:\n%s", fj)
 	}
 
 	bah, err := Workflow(model, Targets[TargetGHA], ci.Platform{Builder: "buildah"})
@@ -2770,7 +2774,7 @@ func TestContainerBuildContainerdSnapshotter(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(bah), want) {
-		t.Errorf("buildah never touches buildx's docker exporter — must not configure the daemon:\n%s", bah)
+		t.Errorf("buildah never touches buildx's docker exporter — must not switch builders:\n%s", bah)
 	}
 }
 

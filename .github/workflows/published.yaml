@@ -279,11 +279,9 @@ jobs:
         with:
           submodules: true
           persist-credentials: false
-      - name: enable containerd image store
-        # GHA-hosted docker lacks the containerd snapshotter the docker/image exporter needs; self-hosted forgejo runners ship it enabled already.
-        run: |
-          echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
-          if [ -d /run/systemd/system ]; then sudo systemctl restart docker; else sudo service docker restart; fi
+      - name: use an isolated buildx builder
+        # the docker driver's image exporter needs the host's containerd store; docker-container carries its own, so no host config or restart is needed on any GHA runner flavor.
+        run: docker buildx create --name ci --driver docker-container --use
       - name: container-build
         uses: projectfile-org/actions/container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1
         with:
