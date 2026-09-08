@@ -1533,6 +1533,10 @@ Run the heavy analysis sweep (mutation testing, benchmarks)
 
 > Goal — lowered to its own CI workflow.
 
+### `artifacts-are-ok`
+
+Verify every produced artifact — the image, the binaries, the site
+
 ### `audited`
 
 Re-scan the pinned dependencies and published artifacts for new vulnerabilities
