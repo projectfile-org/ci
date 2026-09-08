@@ -3237,8 +3237,11 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			// `layer for blob … not found` (podman reports it as "payload does not match
 			// any of the supported image formats", exit 125). Cheapest fix for a flake is
 			// not emitting the step that causes it.
+			// One build-tar hand-off per member, then EVERY producing need — not the first.
+			loaded := false
 			for _, need := range j.Needs {
-				if builds[need] {
+				if builds[need] && !loaded {
+					loaded = true
 					// The producer may fan over an axis this node DROPPED, in which case one
 					// cell-keyed stem cannot name what it has to consume: the arch cells each
 					// uploaded their own tar and this job must take all of them. Bind the
@@ -3306,7 +3309,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					} else if man.Fuse == "" && man.Action == "" {
 						step.Env = append(step.Env, EnvVar{Key: ImageArchiveEnv, Value: step.Stem + ".tar"})
 					}
-					break
+					continue
 				}
 				if path, ok := produces[need]; ok {
 					// The producer may fan over axes this node DROPPED (one torrent over
@@ -3320,7 +3323,6 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 							job.Downloads = append(job.Downloads, DownloadView{Name: name, Path: path})
 						}
 					}
-					break
 				}
 			}
 			for _, e := range step.Env {

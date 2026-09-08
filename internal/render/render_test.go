@@ -5651,3 +5651,48 @@ func TestJobPermissions(t *testing.T) {
 		t.Errorf("forgejo render must never emit permissions::\n%s", fout)
 	}
 }
+
+// dualEdgeSubtree is a publish cell reached by BOTH hand-offs: a container-build tar
+// (through image-built) and a generic `artifact:` producer (through binaries-built).
+// The producing tool sorts BEFORE the build one, which is the ordering that used to
+// decide which single download the job got.
+const dualEdgeSubtree = `{
+  "image": "projectfile/cli",
+  "tools": {
+    "build-binaries": {"run": "go build -o dist/pf .", "artifact": "dist"},
+    "container-build": {"action": "container-build"},
+    "oci-push": {"action": "oci-push", "env": ["REGISTRY_USERNAME", "REGISTRY_PASSWORD"]}
+  },
+  "nodes": {
+    "binaries-built": {"needs": {"build-binaries": true}},
+    "image-built": {"needs": {"container-build": true}},
+    "publish-image": {"needs": {"oci-push": true, "image-built": true, "binaries-built": true}},
+    "published": {"goal": true, "needs": {"publish-image": true}}
+  }
+}`
+
+// TestPublishConsumesEveryProducer pins the download edge as a per-need derivation, not a
+// first-match one: a publish job reaching two producers restores BOTH artifacts, so
+// oci-push finds the tar it copies even when a binary producer sorts ahead of the build.
+func TestPublishConsumesEveryProducer(t *testing.T) {
+	st, err := ci.Parse([]byte(dualEdgeSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	got := map[string]string{}
+	for _, d := range jobOf(Build(rm, st, nil), testOCIPush).Downloads {
+		got[d.Name] = d.Path
+	}
+	tar := "image" + artifactScopeSuffix
+	if _, ok := got[tar]; !ok {
+		t.Errorf("publish job must download the build tar %q, got %+v", tar, got)
+	}
+	bins := "build-binaries" + artifactScopeSuffix
+	if got[bins] != testDist {
+		t.Errorf("publish job must restore %q to %q, got %+v", bins, testDist, got)
+	}
+}

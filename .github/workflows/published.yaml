@@ -452,6 +452,9 @@ jobs:
         with:
           name: build-binaries-riscv64-linux-${{ github.run_id }}
           path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: image-${{ github.run_id }}
       - name: oci-push
         # This cell's destination gate — on the STEP because a job `if:` may not read
         # the matrix context, and a forge rejects the whole file when one does.
