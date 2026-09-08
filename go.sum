@@ -42,5 +42,5 @@ golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa h1:QSyA8ishJCyT21kER9KwNt0b7
 golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa/go.mod h1:zeBbvyFKDaLwa7CH/zI8KXt7gTl14SF7sO08Pl5jBCM=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
-kiota.ch/projectfile/core/v2 v2.10.2 h1:UmqshRis+CEWlP6VdOG1KCTbGVx3GlGR52SHkCAAV08=
-kiota.ch/projectfile/core/v2 v2.10.2/go.mod h1:ChpHLJ/O1vF2BwnDang3h2OgfmatlIj8nMHx5/iCnhs=
+kiota.ch/projectfile/core/v2 v2.10.3 h1:Iy0MB3jzefKDnYVbFUQQ4OI8GZqCmkbfuwqZ2p/mPhs=
+kiota.ch/projectfile/core/v2 v2.10.3/go.mod h1:ChpHLJ/O1vF2BwnDang3h2OgfmatlIj8nMHx5/iCnhs=
