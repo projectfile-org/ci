@@ -981,10 +981,6 @@ Format YAML files with yamlfmt
 
 Tear down the compose stack of every matrix variant
 
-### `deep-clean`
-
-Tear down every variant’s stack and volumes, remove built images and the fetch cache
-
 ## Meta
 
 ### `m6e-commit`
