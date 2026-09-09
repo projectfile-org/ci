@@ -5070,10 +5070,11 @@ func TestReleaseWithoutRouteKeepsAmbientForge(t *testing.T) {
 const archSubtree = `{
   "image": "b19/ubuntu",
   "matrix": {"axes": {"M6E_ARCH": ["amd64", "arm64", "riscv64"]}},
-  "tools": {"container-build": {"action": "container-build"}, "oci-push": {"action": "oci-push"}},
+  "tools": {"container-build": {"action": "container-build"}, "grype-scan-tar": {}, "oci-push": {"action": "oci-push"}},
   "nodes": {
     "image-built": {"matrix": true, "needs": {"container-build": true}},
-    "published": {"matrix": {"without": ["M6E_ARCH"]}, "goal": true, "needs": {"image-built": true, "oci-push": true}}
+    "image-scanned": {"matrix": true, "needs": {"image-built": true, "grype-scan-tar": true}},
+    "published": {"matrix": {"without": ["M6E_ARCH"]}, "goal": true, "needs": {"image-built": true, "image-scanned": true, "oci-push": true}}
   }
 }`
 
@@ -5372,6 +5373,34 @@ func TestArchRunnersRouteEachCell(t *testing.T) {
 	// plain runner rather than reading a variable no include row of its own defines.
 	if !strings.Contains(s, "published:\n    runs-on: ubuntu-latest") {
 		t.Errorf("axis-dropping job must keep the workflow default runner:\n%s", s)
+	}
+}
+
+// TestArchRunnersRouteOnlyTheBuild pins that an arch cell picks the ARTIFACT, not the machine: only the build goes native.
+func TestArchRunnersRouteOnlyTheBuild(t *testing.T) {
+	st, err := ci.Parse([]byte(archSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	out, err := Workflow(m, Targets[TargetGHA], archRunnerPlatform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "image-built:\n    runs-on: ${{ matrix.M6E_RUNNER }}") {
+		t.Errorf("the build job must read its runner from the matrix:\n%s", s)
+	}
+	if !strings.Contains(s, "image-scanned:\n    runs-on: ubuntu-latest") {
+		t.Errorf("a non-building arch job must keep the default runner:\n%s", s)
+	}
+	// It keeps the axis: dropping the runner row must not cost it a cell per arch.
+	if !strings.Contains(s, `M6E_ARCH: ["amd64", "arm64", "riscv64"]`) {
+		t.Errorf("the scan job must still fan over every arch:\n%s", s)
 	}
 }
 

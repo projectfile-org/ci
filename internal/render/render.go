@@ -3828,18 +3828,7 @@ func publishCells(j JobView, targetKey string) JobView {
 	return j
 }
 
-// archRunners routes each arch CELL of a job to the runner its target declares for
-// that arch. Per target, beside publishCells, because which arches a forge serves
-// natively is a fact about the forge: GitHub hosts arm64 and riscv64 machines, a
-// single-host Forgejo emulates everything foreign.
-//
-// `runs-on` is one value per JOB and the arch cells share a job, so the choice cannot
-// be made by writing three jobs. It rides a matrix include row keyed by the arch axis
-// — the same lowering publishCells already uses for the per-destination release
-// coordinates — and the job's runs-on reads that row's variable. EVERY arch in the
-// axis gets a row, mapped or not: an unmapped one carries the default label
-// explicitly, because a cell whose M6E_RUNNER resolved to empty would render an
-// invalid `runs-on` rather than falling back.
+// archRunners gives a BUILD job's arch cells their declared runner; every other job keeps the target default.
 func archRunners(j JobView, byArch map[string]string, def string) JobView {
 	if len(byArch) == 0 {
 		return j
@@ -3852,6 +3841,12 @@ func archRunners(j JobView, byArch map[string]string, def string) JobView {
 		}
 	}
 	if len(arches) == 0 {
+		return j
+	}
+	// the arch axis picks which ARTIFACT a cell handles, and only a build executes one
+	if !buildsImage(j) {
+		genlog.Decision("arch_runner", j.Name+" "+strings.Join(arches, ",")+" -> "+def,
+			"runs-on."+ci.RunsOnDefaultKey+" (job reads the artifact, never runs it)", "runs-on.<arch>")
 		return j
 	}
 	rows := make([]MatrixRowView, 0, len(arches))
@@ -3870,6 +3865,16 @@ func archRunners(j JobView, byArch map[string]string, def string) JobView {
 	j.Include = append(append([]MatrixRowView{}, j.Include...), rows...)
 	j.RunsOn = matrixVarExpr(runnerVar, nil, nil)
 	return j
+}
+
+// buildsImage reports whether a job carries the container-build step, the one member that executes its cell's architecture.
+func buildsImage(j JobView) bool {
+	for _, st := range j.Steps {
+		if st.Action == ActionContainerBuild {
+			return true
+		}
+	}
+	return false
 }
 
 // runnerVar carries one cell's chosen runner label, bound beside the arch axis on a
