@@ -5725,3 +5725,47 @@ func TestPublishConsumesEveryProducer(t *testing.T) {
 		t.Errorf("publish job must restore %q to %q, got %+v", bins, testDist, got)
 	}
 }
+
+// A tool that declares M6E_SHARED_CACHE gets the target's capability bound by VALUE, so a
+// composite action receives it without relying on job-env inheritance the runner drops.
+func TestSharedCacheEnvBinding(t *testing.T) {
+	const doc = `{
+	  %s
+	  "tools": {
+	    "scan": {"image": "D9T_GO_TOOLS_IMAGE", "run": "auto-trivy fs", "env": ["M6E_SHARED_CACHE"]},
+	    "lint": {"run": "auto-lint"}
+	  },
+	  "nodes": {
+	    "source-is-secure": {"needs": {"scan": true, "lint": true}},
+	    "published":        {"goal": true, "needs": {"source-is-secure": true}}
+	  }
+	}`
+	render := func(t *testing.T, platform string) string {
+		t.Helper()
+		st, err := ci.Parse([]byte(strings.Replace(doc, "%s", platform, 1)))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		rm, err := resolve.Resolve(st)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		out, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], st.Platforms["gha"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	shared := render(t, `"gha": {"shared-cache": true},`)
+	if !strings.Contains(shared, "M6E_SHARED_CACHE=Y") {
+		t.Errorf("shared-cache: true must bind Y:\n%s", shared)
+	}
+	// Absent field => each tool owns its own freshness, which is the pre-field behaviour.
+	own := render(t, "")
+	if !strings.Contains(own, "M6E_SHARED_CACHE=N") {
+		t.Errorf("absent shared-cache must bind N:\n%s", own)
+	}
+	if n := strings.Count(own, "M6E_SHARED_CACHE"); n != 1 {
+		t.Errorf("only the declaring tool may carry the name, got %d occurrences:\n%s", n, own)
+	}
+}

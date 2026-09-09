@@ -243,6 +243,17 @@ const SourceRegistryVar = "SOURCE_DOCKER_REGISTRY"
 // over the same names).
 const TagEnvVar = "M6E_TAG"
 
+// SharedCacheEnvVar (M6E_SHARED_CACHE) forwards Platform.SharedCache to a tool
+const SharedCacheEnvVar = "M6E_SHARED_CACHE"
+
+// sharedCacheValue spells the capability the way a b19 tool reads a boolean
+func sharedCacheValue(shared bool) string {
+	if shared {
+		return "Y"
+	}
+	return "N"
+}
+
 // imageTagExpr renders the tag expression as the workflow env indirection (`${{ env.M6E_TAG }}`).
 // The definition lives ONCE in the workflow `env:` block (ResolverEnv), so every call
 // site — BASE/TOOL image refs (b19/gcc, d9t/misc-tools, …), the self-image tag, the
@@ -3661,6 +3672,8 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		for _, e := range jobs[i].Env {
 			valOf[e.Key] = e.Value
 		}
+		// bound by VALUE: a composite action never inherits the caller job's env block
+		valOf[SharedCacheEnvVar] = sharedCacheValue(plat.SharedCache)
 		for s := range jobs[i].Steps {
 			st := &jobs[i].Steps[s]
 			st.EnvForward = envPairs(st.EnvArg(), valOf)

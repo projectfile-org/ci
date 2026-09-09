@@ -587,6 +587,8 @@ type Platform struct {
 	// secret enters the document (§8). False => the checkout keeps the run-scoped token,
 	// i.e. no overlay renders byte-identical to before.
 	CheckoutToken bool
+	// SharedCache: this target's runners mount fleet-shared tool caches an external writer keeps warm
+	SharedCache bool
 }
 
 // Concurrency is the workflow-level serialisation group: a second run in the same
@@ -771,6 +773,7 @@ type rawPlatform struct {
 	Actions        map[string]string `json:"actions"`        // {slot: name@ref} helper-action ref overrides (checkout|download-artifact|upload-artifact)
 	Library        string            `json:"library"`        // action-library `repo@tag` prefix; recomposed as <repo>/<provider>@<tag>
 	CheckoutToken  bool              `json:"checkout-token"` // opt the checkout step into the fleet-wide robot-account secret (private submodules)
+	SharedCache    bool              `json:"shared-cache"`   // this target's runners mount fleet-shared tool caches an external writer keeps warm
 }
 
 type rawConcurrency struct {
@@ -1965,6 +1968,7 @@ func (rp *rawPlatform) normalise() (Platform, error) {
 		Actions:        rp.Actions,
 		Library:        rp.Library,
 		CheckoutToken:  rp.CheckoutToken,
+		SharedCache:    rp.SharedCache,
 	}
 	if c := rp.Concurrency; c != nil {
 		p.Concurrency = &Concurrency{Group: c.Group, CancelInProgress: c.CancelInProgress}
