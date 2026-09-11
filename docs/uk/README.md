@@ -27,30 +27,10 @@ pf-cli-managed: yes
 ## Що надає цей проєкт
 
 - **Виконуваний файл** `pf-ci`
-- **Образ контейнера** `ghcr.io/damian-buho/projectfile/ci:latest`
-- **Образ контейнера** `docker.io/damianbuho/projectfile-ci:latest`
 
 ## Встановлення
 
-Завантажте опублікований образ контейнера:
-
-### Завантажити з GHCR
-
-```sh
-docker pull ghcr.io/damian-buho/projectfile/ci:latest
-```
-
-### Завантажити з DockerHub
-
-```sh
-docker pull docker.io/damianbuho/projectfile-ci:latest
-```
-
-Стабільні випуски також публікують теґи `X.Y.Z`, `X.Y` і `X` — завантажте той рівень точності, який хочете зафіксувати.
-
 Якщо наведені вище реєстри недоступні, завантажте з джерела:
-
-### Завантажити з Kiota
 
 ```sh
 docker pull kiota.ch/projectfile/ci:latest

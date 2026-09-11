@@ -27,30 +27,10 @@ Consulta [FEATURES.md](FEATURES.md) para ver la lista completa.
 ## Qué entrega este proyecto
 
 - **Ejecutable** `pf-ci`
-- **Imagen de contenedor** `ghcr.io/damian-buho/projectfile/ci:latest`
-- **Imagen de contenedor** `docker.io/damianbuho/projectfile-ci:latest`
 
 ## Instalación
 
-Descarga la imagen de contenedor publicada:
-
-### Descargar de GHCR
-
-```sh
-docker pull ghcr.io/damian-buho/projectfile/ci:latest
-```
-
-### Descargar de DockerHub
-
-```sh
-docker pull docker.io/damianbuho/projectfile-ci:latest
-```
-
-Las versiones estables también publican las etiquetas `X.Y.Z`, `X.Y` y `X`: descarga el nivel de precisión que quieras fijar.
-
 Si los registros anteriores no están disponibles, descarga desde el origen:
-
-### Descargar de Kiota
 
 ```sh
 docker pull kiota.ch/projectfile/ci:latest

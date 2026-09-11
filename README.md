@@ -25,30 +25,10 @@ See [FEATURES.md](FEATURES.md) for the full list.
 ## What this provides
 
 - **Executable** `pf-ci`
-- **Container image** `ghcr.io/damian-buho/projectfile/ci:latest`
-- **Container image** `docker.io/damianbuho/projectfile-ci:latest`
 
 ## Installation
 
-Pull the published container image:
-
-### Pull from GHCR
-
-```sh
-docker pull ghcr.io/damian-buho/projectfile/ci:latest
-```
-
-### Pull from DockerHub
-
-```sh
-docker pull docker.io/damianbuho/projectfile-ci:latest
-```
-
-Stable releases also publish `X.Y.Z`, `X.Y` and `X` tags — pull the precision you want to pin.
-
 If the registries above are unreachable, pull from the origin instead:
-
-### Pull from Kiota
 
 ```sh
 docker pull kiota.ch/projectfile/ci:latest
