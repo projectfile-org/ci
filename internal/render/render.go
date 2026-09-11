@@ -135,12 +135,12 @@ const (
 	// CacheActionRestore is GitHub's restore-ONLY cache sub-action (the ephemeral-runner
 	// half of the lowering). Restore-only — a scan READS the DB; the refresh pipeline
 	// owns the save (the cache-key roll). Pinned by commit, Node-24-native.
-	CacheActionRestore = "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4"
+	CacheActionRestore = "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5"
 	// CacheActionSave is GitHub's save-ONLY cache sub-action — the other ephemeral-runner
 	// half. Emitted after a `*-db-update` writer step (rw mount) so the refreshed DB is
 	// persisted under a UNIQUE rolled key the scan's restore-keys prefix later picks up;
 	// without it an ephemeral refresh is discarded at job end. Pinned by commit, Node-24-native.
-	CacheActionSave = "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4"
+	CacheActionSave = "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5"
 	// CacheDirForge is the persistent runner dir a self-hosted runner binds a named cache
 	// from. Populated out-of-band by the refresh pipeline (a scanner DB) or accumulated
 	// in place across runs (a package cache), and provisioned in the runner compose

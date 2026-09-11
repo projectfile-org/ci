@@ -2124,7 +2124,7 @@ func TestScannerCacheLowering(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "      - name: restore grype-db\n" +
-		"        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4\n" +
+		"        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
 		"          key: ci-cache-grype-db-\n" +
@@ -2177,7 +2177,7 @@ func TestScannerCacheWriterSave(t *testing.T) {
 		t.Errorf("gha: missing the RW writer mount:\n%s", gha)
 	}
 	wantSave := "      - name: save grype-db\n" +
-		"        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4\n" +
+		"        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
 		"          key: ci-cache-grype-db-${{ github.run_id }}\n"
