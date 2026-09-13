@@ -32,3 +32,4 @@ keywords:
   - workflow
   - forgejo
   - go
+version: 1.8.0
