@@ -7,11 +7,12 @@
 # customise — direct edits here are overwritten on the next generation.
 # pf-cli-managed: yes
 
-# >>> user-include
+# >>> user-patterns
 *.md
 *.out
 *.test
 .compose
+.env
 .fetch
 .forgejo
 .git
@@ -24,17 +25,12 @@ CODEOWNERS
 LICENSE
 LICENSES
 Makefile
-bin/
-dist/
+bin
+dist
 docs
 lefthook.yaml
 lefthook.yml
 reports
 scaffold
-# <<< user-include
-
-# >>> user-extra
-.env
-.secrets/
-# <<< user-extra
+# <<< user-patterns
 
