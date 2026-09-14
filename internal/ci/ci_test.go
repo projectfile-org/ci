@@ -1812,3 +1812,43 @@ func TestPullSinkSpendingNoImagePathIsRefused(t *testing.T) {
 		t.Fatalf("declaredImages heads: got %#v, want none", heads)
 	}
 }
+
+// TestTargetsAbsentRendersNothing pins the gate's default: no org.projectfile.ci.targets
+// means the Subtree carries an empty list, so RendersTarget refuses every lowering.
+func TestTargetsAbsentRendersNothing(t *testing.T) {
+	st, err := Parse([]byte(`{"nodes": {"ready": {"goal": true}}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(st.Targets) != 0 {
+		t.Fatalf("Targets: got %#v, want none", st.Targets)
+	}
+	if st.RendersTarget(LoweringGHA) || st.RendersTarget(LoweringForgejo) {
+		t.Fatalf("RendersTarget: an undeclared target must never render")
+	}
+}
+
+// TestTargetsDedupeAndSort pins the two normalisations decodeTargets performs so the
+// lowering never sees include-merge duplicates or authoring order.
+func TestTargetsDedupeAndSort(t *testing.T) {
+	st, err := Parse([]byte(`{"nodes": {"ready": {"goal": true}}, "targets": ["forgejo", "gha", "forgejo"]}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := []string{LoweringForgejo, LoweringGHA} // sorted: "forgejo" < "gha"
+	if !reflect.DeepEqual(st.Targets, want) {
+		t.Fatalf("Targets: got %#v, want %#v", st.Targets, want)
+	}
+	if !st.RendersTarget(LoweringGHA) || !st.RendersTarget(LoweringForgejo) {
+		t.Fatalf("RendersTarget: a declared target must render")
+	}
+}
+
+// TestTargetsUnknownRejected pins the closed vocabulary: a typo must fail the parse,
+// never silently widen or (worse) silently render nothing forever.
+func TestTargetsUnknownRejected(t *testing.T) {
+	_, err := Parse([]byte(`{"nodes": {"ready": {"goal": true}}, "targets": ["githu"]}`))
+	if err == nil || !strings.Contains(err.Error(), `"githu"`) {
+		t.Fatalf("Parse: got %v, want an error naming the unrecognised target", err)
+	}
+}

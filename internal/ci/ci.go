@@ -615,6 +615,8 @@ type Subtree struct {
 	// generated workflow inherits it — the compose plane's `${D9T_DIND_IMAGE}` lands
 	// here so dc-up-d AND dc-down read it with no per-tool duplication. Empty => none.
 	Env map[string]string
+	// Targets gates which cloud lowering renders at all (org.projectfile.ci.targets); nil/empty => none.
+	Targets []string
 }
 
 // Dispatch is the manual-run trigger: the button plus its optional typed inputs (the
@@ -741,6 +743,7 @@ type rawSubtree struct {
 	Tools   map[string]Manifest `json:"tools"`
 	Gha     *rawPlatform        `json:"gha"`     // GitHub Actions deployment overlay
 	Forgejo *rawPlatform        `json:"forgejo"` // Forgejo Actions deployment overlay
+	Targets []string            `json:"targets"` // opt-in cloud lowerings (gha, forgejo); absent/empty => none render
 }
 
 type rawDispatch struct {
@@ -1515,6 +1518,40 @@ const (
 	forgeGitHub     = "github"
 )
 
+// validCITargets is the closed org.projectfile.ci.targets vocabulary — lefthook is deliberately absent, it is never target-gated.
+var validCITargets = map[string]bool{LoweringGHA: true, LoweringForgejo: true}
+
+// decodeTargets validates, dedupes and sorts org.projectfile.ci.targets, rejecting any name outside validCITargets.
+func decodeTargets(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, t := range raw {
+		if !validCITargets[t] {
+			return nil, fmt.Errorf("org.projectfile.ci.targets: %q is not a recognised target (want %q or %q)", t, LoweringGHA, LoweringForgejo)
+		}
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// RendersTarget reports whether target is in the opt-in org.projectfile.ci.targets list.
+func (st *Subtree) RendersTarget(target string) bool {
+	for _, t := range st.Targets {
+		if t == target {
+			return true
+		}
+	}
+	return false
+}
+
 // publishForges answers which forge slug each lowering runs on. A Forgejo lowering
 // runs on whichever instance hosts the ORIGIN, which only the document knows — so it
 // is read, never assumed, and a route keyed by that slug is the one that applies.
@@ -1793,6 +1830,12 @@ func Parse(data []byte) (*Subtree, error) {
 	}
 
 	st := &Subtree{Nodes: make(map[string]Node, len(raw.Nodes)), Image: raw.Image, Env: raw.Env}
+
+	targets, err := decodeTargets(raw.Targets)
+	if err != nil {
+		return nil, err
+	}
+	st.Targets = targets
 
 	// GLOBAL matrix axes — key-sorted for a deterministic cell order and CELL render.
 	if len(bytes.TrimSpace(raw.Matrix)) > 0 {
