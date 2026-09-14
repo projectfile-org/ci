@@ -34,7 +34,6 @@ keywords:
 kind: SoftwareSourceCode
 license:
   covers: project
-  spdx: ""
 links:
   - label:
       en: Projectfile CI Resolver on kiota.ch
