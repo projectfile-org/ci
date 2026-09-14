@@ -35,56 +35,6 @@ kind: SoftwareSourceCode
 license:
   covers: project
   spdx: "MIT"
-links:
-  - label:
-      en: Projectfile CI Resolver on Codeberg
-      es: Projectfile CI Resolver en Codeberg
-      uk: Projectfile CI Resolver на Codeberg
-    tags:
-      - public
-      - badges
-      - badges-gitea
-    type: source-code
-    url: https://codeberg.org/projectfile/ci
-  - label:
-      en: Projectfile CI Resolver on GitHub
-      es: Projectfile CI Resolver en GitHub
-      uk: Projectfile CI Resolver на GitHub
-    tags:
-      - public
-      - badges
-      - badges-github
-    type: source-code
-    url: https://github.com/damian-buho/projectfile-ci
-  - label:
-      en: Projectfile CI Resolver on kiota.ch
-      es: Projectfile CI Resolver en kiota.ch
-      uk: Projectfile CI Resolver на kiota.ch
-    preferred: true
-    type: source-code
-    url: https://kiota.ch/projectfile/ci
-  - label:
-      en: Issues on Codeberg
-      es: Incidencias en Codeberg
-      uk: Issues на Codeberg
-    tags:
-      - support
-    type: bugs
-    url: https://codeberg.org/projectfile/ci/issues
-  - label:
-      en: Issues on GitHub
-      es: Incidencias en GitHub
-      uk: Issues на GitHub
-    tags:
-      - support
-    type: bugs
-    url: https://github.com/damian-buho/projectfile-ci/issues
-  - label:
-      en: Packages on PyPI
-      es: Paquetes en PyPI
-      uk: Пакунки на PyPI
-    type: package-registry
-    url: https://pypi.org/project/ci/
 org:
   projectfile:
     artifacts:
@@ -145,17 +95,19 @@ org:
             - pf-ci generate -target gha -check
           name: binary
           prefix: 'Lower the CI DAG to a forge’s workflow files:'
+technologies:
+  - go
+  - python
 repositories:
-  - role: mirror
-    type: git
-    url: ssh://git@codeberg.org/projectfile/ci.git
-  - role: mirror
-    type: git
-    url: git@github.com:damian-buho/projectfile-ci.git
   - branch: main
     role: origin
     type: git
     url: ssh://git@kiota.ch/projectfile/ci.git
-technologies:
-  - go
-  - python
+links:
+  - label:
+      en: Projectfile CI Resolver on kiota.ch
+      es: Projectfile CI Resolver en kiota.ch
+      uk: Projectfile CI Resolver на kiota.ch
+    preferred: true
+    type: source-code
+    url: https://kiota.ch/projectfile/ci
