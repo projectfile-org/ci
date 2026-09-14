@@ -979,7 +979,11 @@ Format YAML files with yamlfmt
 
 ### `clean`
 
-Tear down the compose stack of every matrix variant
+Tear down the compose stack of every matrix variant and purge the skip cache
+
+### `clean-ci-skip-cache`
+
+Purge this project’s m6e-run skip cache so every tool runs again
 
 ## Meta
 
@@ -1544,6 +1548,10 @@ Re-scan the pinned dependencies and published artifacts for new vulnerabilities
 Report every pinned dependency that lags upstream
 
 > Goal — lowered to its own CI workflow.
+
+### `db-update`
+
+Refresh the shared grype, trivy, osv and clamav databases
 
 ### `inputs-are-ok`
 
