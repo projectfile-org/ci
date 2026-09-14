@@ -34,7 +34,15 @@ keywords:
 kind: SoftwareSourceCode
 license:
   covers: project
-  spdx: "MIT"
+  spdx: ""
+links:
+  - label:
+      en: Projectfile CI Resolver on kiota.ch
+      es: Projectfile CI Resolver en kiota.ch
+      uk: Projectfile CI Resolver на kiota.ch
+    preferred: true
+    type: source-code
+    url: https://kiota.ch/projectfile/ci
 org:
   projectfile:
     artifacts:
@@ -95,19 +103,11 @@ org:
             - pf-ci generate -target gha -check
           name: binary
           prefix: 'Lower the CI DAG to a forge’s workflow files:'
-technologies:
-  - go
-  - python
 repositories:
   - branch: main
     role: origin
     type: git
     url: ssh://git@kiota.ch/projectfile/ci.git
-links:
-  - label:
-      en: Projectfile CI Resolver on kiota.ch
-      es: Projectfile CI Resolver en kiota.ch
-      uk: Projectfile CI Resolver на kiota.ch
-    preferred: true
-    type: source-code
-    url: https://kiota.ch/projectfile/ci
+technologies:
+  - go
+  - python
