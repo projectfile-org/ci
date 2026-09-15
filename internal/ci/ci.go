@@ -1004,7 +1004,7 @@ func (r *Reader) declaredImages(lowering string) (map[string]string, map[string]
 	if err := json.Unmarshal(raw, &parts); err != nil {
 		return nil, nil, fmt.Errorf("%s: parse: %w", imagesNS, err)
 	}
-	sink := r.pullSinkTemplate(lowering)
+	sinkName, sink := r.pullSink(lowering)
 	// A template naming neither part cannot address a foreign image at all.
 	if sink != "" && !spendsImagePath(sink) {
 		genlog.Warn("pull sink not composed — its ref spends neither ${path} nor ${flatpath}",
@@ -1012,18 +1012,22 @@ func (r *Reader) declaredImages(lowering string) (map[string]string, map[string]
 			"remedy", "keep org.projectfile.sinks.<name>.ref addressing any image; reshape the project's own artifact with selfref")
 		sink = ""
 	}
-	head, tailTmpl := splitSinkPrefix(sink)
 	images := make(map[string]string, len(parts))
 	heads := make(map[string]string, len(parts))
 	for name := range parts {
 		scope := imagesNS + "." + name
 		ref := ""
-		if sink != "" {
+		// The entry's own template under this sink replaces the sink's `ref`
+		tmpl := sink
+		if own := r.entrySinkTemplate(scope, sinkName); own != "" {
+			tmpl = own
+		}
+		head, tailTmpl := splitSinkPrefix(tmpl)
+		if tmpl != "" {
 			// The pull sink's grammar, under this entry's own parts. The tail
 			// (prefix shape) or the whole template (any other grammar) — either
 			// way a `${part}` the document cannot answer comes back VERBATIM,
 			// which the shared hole checks below catch.
-			tmpl := sink
 			if tailTmpl != "" {
 				tmpl = tailTmpl
 			}
@@ -1081,41 +1085,61 @@ func splitSinkPrefix(tmpl string) (head, tail string) {
 }
 
 // sinkPrefixRe recognizes the prefix shape splitSinkPrefix describes.
-var sinkPrefixRe = regexp.MustCompile(`^([^$]*)/\$\{(?:path|flatpath)\}:\$\{tag\}$`)
+var sinkPrefixRe = regexp.MustCompile(`^([^$]*)/\$\{(?:path|flatpath|name)\}:\$\{tag\}$`)
 
 // spendsImagePath reports whether a template addresses an image by its own repository.
 func spendsImagePath(tmpl string) bool {
 	return strings.Contains(tmpl, "${path}") || strings.Contains(tmpl, "${flatpath}")
 }
 
-// pullSinkTemplate resolves the lowering's pull route to its sink's raw `ref`
+// pullSink resolves the lowering's pull route to its sink's name and raw `ref`
 // template — the grammar every foreign image composes against for files of this
 // lowering. "" when the project declares no publish route, no pull on the route
 // that applies, or a pull naming no declared sink (warned, mirroring composeSink).
 // `ref`, never `selfref` — this is the FOREIGN plane.
-func (r *Reader) pullSinkTemplate(lowering string) string {
+func (r *Reader) pullSink(lowering string) (name, tmpl string) {
 	routes, err := r.publishRoutes()
 	if err != nil || len(routes) == 0 {
-		return ""
+		return "", ""
 	}
 	forge, ok := r.publishForges(routes)[lowering]
 	if !ok {
-		return ""
+		return "", ""
 	}
 	sink := routes[forge].Pull
 	if sink == "" {
-		return ""
+		return "", ""
 	}
 	sinks, _, err := r.sinkTemplates()
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	tmpl := sinks[sink]
+	tmpl = sinks[sink]
 	if tmpl == "" {
 		genlog.Warn("pull sink dropped — declares no ref template",
 			"forge", forge, "sink", sink,
 			"remedy", "declare ref on org.projectfile.sinks."+sink)
 	}
+	return sink, tmpl
+}
+
+// entrySinkTemplate reads `<scope>.sinks.<sink>` — the entry's own template under
+// that sink, the foreign-plane twin of a sink's `selfref`. "" when absent.
+func (r *Reader) entrySinkTemplate(scope, sink string) string {
+	if sink == "" {
+		return ""
+	}
+	raw, err := r.subtree(scope + ".sinks." + sink)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	var tmpl string
+	if err := json.Unmarshal(raw, &tmpl); err != nil {
+		genlog.Warn("image sink template ignored — not a string",
+			"image", scope, "sink", sink, "remedy", "declare "+scope+".sinks."+sink+" as a ref template")
+		return ""
+	}
+	genlog.DebugRow("image_sink", tmpl, scope+".sinks."+sink, "entry's own template under "+sink)
 	return tmpl
 }
 

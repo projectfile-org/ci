@@ -1572,6 +1572,87 @@ func TestDeclaredImagesComposeFromPullSink(t *testing.T) {
 	}
 }
 
+// TestDeclaredImagesEntrySinkTemplate pins the foreign-plane twin of `selfref`: an
+// entry's own `sinks.<name>` template replaces the sink's `ref` for THAT entry on
+// THAT sink alone — a personal image whose org is the GHCR account addresses
+// `ghcr.io/<account>/<name>` while its siblings keep nesting, and the same entry
+// composes through the untouched sink on every other route.
+func TestDeclaredImagesEntrySinkTemplate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: go
+repositories:
+  - role: origin
+    type: git
+    url: ssh://git@kiota.ch/b19/go.git
+org:
+  projectfile:
+    images:
+      D9T_JS_TOOLS_IMAGE:
+        org: d9t
+        name: js-tools
+        path: ${org}/${name}
+        flatpath: ${org}-${name}
+        tag: $${M6E_BASE_IMAGE_DEFAULT_VERSION}
+        registry: D9T_DOCKER_REGISTRY
+        ref: $${D9T_DOCKER_REGISTRY}/${path}:${tag}
+      IGNORELINT_IMAGE:
+        org: damian-buho
+        name: ignorelint
+        path: ${org}/${name}
+        flatpath: ${org}-${name}
+        tag: $${M6E_BASE_IMAGE_DEFAULT_VERSION}
+        registry: IGNORELINT_DOCKER_REGISTRY
+        ref: $${IGNORELINT_DOCKER_REGISTRY}/${path}:${tag}
+        sinks:
+          ghcr: ghcr.io/damian-buho/${name}:${tag}
+    sinks:
+      ghcr:
+        ref: ghcr.io/damian-buho/${path}:${tag}
+      hub:
+        ref: docker.io/damianbuho/${flatpath}:${tag}
+    publish:
+      github:
+        push: [ghcr]
+        pull: hub
+      kiota:
+        push: [ghcr, hub]
+        pull: ghcr
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	doc, err := projectfile.Read(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	r := &Reader{doc: doc}
+	got, heads, err := r.declaredImages("forgejo")
+	if err != nil {
+		t.Fatalf("declaredImages forgejo: %v", err)
+	}
+	wantRefs := map[string]string{
+		testJsToolsImageVar: "ghcr.io/damian-buho/d9t/js-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+		"IGNORELINT_IMAGE":  "ghcr.io/damian-buho/ignorelint:${M6E_BASE_IMAGE_DEFAULT_VERSION}",
+	}
+	if !reflect.DeepEqual(got, wantRefs) {
+		t.Fatalf("declaredImages forgejo:\n got %#v\nwant %#v", got, wantRefs)
+	}
+	wantHeads := map[string]string{testJsToolsImageVar: ghcrHead, "IGNORELINT_IMAGE": ghcrHead}
+	if !reflect.DeepEqual(heads, wantHeads) {
+		t.Fatalf("declaredImages forgejo heads:\n got %#v\nwant %#v", heads, wantHeads)
+	}
+	// github pulls from the hub sink, which the entry does not override: flat layout, org and all.
+	got, _, err = r.declaredImages("gha")
+	if err != nil {
+		t.Fatalf("declaredImages gha: %v", err)
+	}
+	if want := "docker.io/damianbuho/damian-buho-ignorelint:${M6E_BASE_IMAGE_DEFAULT_VERSION}"; got["IGNORELINT_IMAGE"] != want {
+		t.Fatalf("declaredImages gha IGNORELINT_IMAGE:\n got %q\nwant %q", got["IGNORELINT_IMAGE"], want)
+	}
+}
+
 // TestSplitSinkPrefix pins the prefix-shape test the head redirect depends on:
 // only `<literal head>/${path}:${tag}` and `…/${flatpath}:${tag}` split (the head
 // must be literal — a `${part}` in it names no registry a redirect could stand
@@ -1580,6 +1661,7 @@ func TestSplitSinkPrefix(t *testing.T) {
 	for _, tc := range []struct{ tmpl, head, tail string }{
 		{"kiota.ch/${path}:${tag}", "kiota.ch", "/${path}:${tag}"},
 		{"docker.io/damianbuho/${flatpath}:${tag}", hubHead, "/${flatpath}:${tag}"},
+		{"ghcr.io/damian-buho/${name}:${tag}", ghcrHead, "/${name}:${tag}"},
 		{"", "", ""},
 		{"${host}/${path}:${tag}", "", ""},
 		{"ghcr.io/${path}:${tag}/${extra}", "", ""},
