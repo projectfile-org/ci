@@ -1626,6 +1626,8 @@ type StepView struct {
 	// the live compose stack's network to reach it by service name. RunToolNetwork lowers
 	// it to the run-tool `network:` input. Empty => the default bridge (every non-live tool).
 	Network string `json:"network,omitempty"`
+	// ArchAxis is Manifest.ArchAxis when this step's job fans over it; it picks the runner and the run-tool platform
+	ArchAxis string `json:"arch-axis,omitempty"`
 	// Env is the step's own `env:` VALUES (matrix axis bindings, the image-archive
 	// path, container-build var/get/ci values). The node-job lifts the UNION to its
 	// `env:` block; the keys also name what a run-tool step forwards (EnvArg).
@@ -2191,6 +2193,14 @@ const (
 // matches whatever the pipeline compose file created THIS run (per-run unique identity).
 // Empty stays empty (the default bridge). Any other value is an explicit network name,
 // forwarded verbatim.
+// RunToolPlatform is the run-tool `platform:` input: this cell's arch off the tool's own axis, empty when it declares none.
+func (s StepView) RunToolPlatform() string {
+	if s.ArchAxis == "" {
+		return ""
+	}
+	return matrixVarExpr(s.ArchAxis, nil, nil)
+}
+
 func (s StepView) RunToolNetwork() string {
 	switch s.Network {
 	case "":
@@ -2254,6 +2264,20 @@ func archVarExpr(axes []ci.Axis) string {
 			return matrixVarExpr(ci.ArchAxis, nil, nil)
 		}
 	}
+	return ""
+}
+
+// fanningAxis returns key when the job fans over it, so a declared axis the node dropped binds nothing.
+func fanningAxis(axes []ci.Axis, key string) string {
+	if key == "" {
+		return ""
+	}
+	for _, a := range axes {
+		if a.Key == key {
+			return key
+		}
+	}
+	genlog.Debug("arch-axis: node does not fan over the tool's axis, no platform bound", "axis", key)
 	return ""
 }
 
@@ -2670,6 +2694,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		Action:    man.Action,
 		Advisory:  man.Advisory,
 		Network:   man.Network,
+		ArchAxis:  fanningAxis(j.Axes, man.ArchAxis),
 		Stem:      artifactStem("image", AxisMap(j.Axes)),
 		Arch:      archVarExpr(j.Axes),
 	}
@@ -3841,25 +3866,25 @@ func publishCells(j JobView, targetKey string) JobView {
 	return j
 }
 
-// archRunners gives a BUILD job's arch cells their declared runner; every other job keeps the target default.
+// archRunners gives an arch-EXECUTING job's cells their declared runner; every other job keeps the target default.
 func archRunners(j JobView, byArch map[string]string, def string) JobView {
 	if len(byArch) == 0 {
 		return j
 	}
+	axis := execArchAxis(j)
 	var arches []string
 	for _, a := range j.Matrix {
-		if a.Key == ci.ArchAxis {
+		if a.Key == axis {
 			arches = a.Values
 			break
 		}
 	}
+	// the arch axis picks which ARTIFACT a cell handles; a job that only reads one stays on the default
 	if len(arches) == 0 {
-		return j
-	}
-	// the arch axis picks which ARTIFACT a cell handles, and only a build executes one
-	if !buildsImage(j) {
-		genlog.Decision("arch_runner", j.Name+" "+strings.Join(arches, ",")+" -> "+def,
-			"runs-on."+ci.RunsOnDefaultKey+" (job reads the artifact, never runs it)", "runs-on.<arch>")
+		if read := axisValues(j.Matrix, ci.ArchAxis); len(read) > 0 {
+			genlog.Decision("arch_runner", j.Name+" "+strings.Join(read, ",")+" -> "+def,
+				"runs-on."+ci.RunsOnDefaultKey+" (job reads the artifact, never runs it)", "runs-on.<arch>")
+		}
 		return j
 	}
 	rows := make([]MatrixRowView, 0, len(arches))
@@ -3871,7 +3896,7 @@ func archRunners(j JobView, byArch map[string]string, def string) JobView {
 		}
 		genlog.Decision("arch_runner", j.Name+" "+arch+" -> "+label, source, "runs-on."+arch)
 		rows = append(rows, MatrixRowView{Fields: []KVView{
-			{Key: ci.ArchAxis, Value: arch},
+			{Key: axis, Value: arch},
 			{Key: runnerVar, Value: label},
 		}})
 	}
@@ -3888,6 +3913,29 @@ func buildsImage(j JobView) bool {
 		}
 	}
 	return false
+}
+
+// execArchAxis names the axis a job's steps EXECUTE: M6E_ARCH for a container build, a tool's arch-axis otherwise, empty for a reader.
+func execArchAxis(j JobView) string {
+	if buildsImage(j) {
+		return ci.ArchAxis
+	}
+	for _, st := range j.Steps {
+		if st.ArchAxis != "" {
+			return st.ArchAxis
+		}
+	}
+	return ""
+}
+
+// axisValues returns the values of the named axis, nil when the matrix lacks it.
+func axisValues(m AxisMap, key string) []string {
+	for _, a := range m {
+		if a.Key == key {
+			return a.Values
+		}
+	}
+	return nil
 }
 
 // runnerVar carries one cell's chosen runner label, bound beside the arch axis on a

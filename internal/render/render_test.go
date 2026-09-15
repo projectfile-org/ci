@@ -5432,6 +5432,93 @@ func TestArchRunnersAbsentMapChangesNothing(t *testing.T) {
 	}
 }
 
+// binaryArchSubtree is a native-compiling binary build on its own hand-authored axes: the
+// tool names TARGET_ARCH as the axis it executes, beside an arch-blind release consumer.
+const binaryArchSubtree = `{
+  "tools": {
+    "crystal-build": {"image": "reg.example/b19/crystal:latest", "run": "crystal-build.sh", "arch-axis": "TARGET_ARCH", "artifact": "dist"},
+    "gh-release": {"run": "gh-release.sh"}
+  },
+  "nodes": {
+    "binaries-built": {"matrix": {"axes": {"TARGET_ARCH": ["amd64", "arm64"], "TARGET_OS": ["linux"]}}, "needs": {"crystal-build": true}},
+    "binaries-released": {"matrix": {"axes": {"TARGET_ARCH": ["amd64", "arm64"], "TARGET_OS": ["linux"]}}, "goal": true, "needs": {"binaries-built": true, "gh-release": true}}
+  }
+}`
+
+// TestArchAxisRoutesTheToolCell pins that a tool naming its arch axis is an EXECUTOR
+// like the container build: its cells go native where mapped and pull the image at the
+// cell's platform, while a consumer on the same axes keeps the default runner.
+func TestArchAxisRoutesTheToolCell(t *testing.T) {
+	st, err := ci.Parse([]byte(binaryArchSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	if got := steps(m)["crystal-build"].RunToolPlatform(); got != "${{ matrix.TARGET_ARCH }}" {
+		t.Errorf("crystal-build platform: want the axis expression, got %q", got)
+	}
+	out, err := Workflow(m, Targets[TargetGHA], archRunnerPlatform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"binaries-built:\n    runs-on: ${{ matrix.M6E_RUNNER }}",
+		`- TARGET_ARCH: "amd64"` + "\n            " + `M6E_RUNNER: "ubuntu-latest"`,
+		`- TARGET_ARCH: "arm64"` + "\n            " + `M6E_RUNNER: "ubuntu-24.04-arm"`,
+		"          platform: ${{ matrix.TARGET_ARCH }}",
+		"binaries-released:\n    runs-on: ubuntu-latest",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("arch-axis workflow missing %q\n---\n%s", want, s)
+		}
+	}
+	// An unmapped forge still binds the platform: the cell then runs emulated on the default runner.
+	out, err = Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = string(out)
+	if !strings.Contains(s, "          platform: ${{ matrix.TARGET_ARCH }}") {
+		t.Errorf("unmapped forge must still bind the cell platform:\n%s", s)
+	}
+	if strings.Contains(s, "M6E_RUNNER") {
+		t.Errorf("unmapped forge must not route runners:\n%s", s)
+	}
+}
+
+// TestArchAxisAbsentBindsNothing is the zero-diff half: a tool that names no axis renders
+// no platform, and a declared axis the node does not fan over binds nothing either.
+func TestArchAxisAbsentBindsNothing(t *testing.T) {
+	plain := strings.Replace(binaryArchSubtree, `"arch-axis": "TARGET_ARCH", `, "", 1)
+	dropped := strings.Replace(binaryArchSubtree, `"arch-axis": "TARGET_ARCH"`, `"arch-axis": "GOARCH"`, 1)
+	for name, src := range map[string]string{"no axis": plain, "unfanned axis": dropped} {
+		st, err := ci.Parse([]byte(src))
+		if err != nil {
+			t.Fatalf("%s parse: %v", name, err)
+		}
+		rm, err := resolve.Resolve(st)
+		if err != nil {
+			t.Fatalf("%s resolve: %v", name, err)
+		}
+		m := Build(rm, st, nil)
+		out, err := Workflow(m, Targets[TargetGHA], archRunnerPlatform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(out)
+		for _, absent := range []string{"platform:", "M6E_RUNNER"} {
+			if strings.Contains(s, absent) {
+				t.Errorf("%s: workflow must not carry %q:\n%s", name, absent, s)
+			}
+		}
+	}
+}
+
 // advisorySubtree pairs the two step KINDS a tool lowers to — a host `run:` and an
 // image tool through run-tool — with one BLOCKING sibling of each, so the same
 // assertion proves both the opt-in and the fail-closed default.

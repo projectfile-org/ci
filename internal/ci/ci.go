@@ -335,6 +335,8 @@ type Manifest struct {
 	// modelled (port collisions + privilege). Empty => the default bridge (every non-live
 	// tool). Only meaningful with `image:` (a host `run:` tool shares the runner's netns).
 	Network string `json:"network"`
+	// ArchAxis names the matrix axis whose value this tool EXECUTES, routing its cells to native runners
+	ArchAxis string `json:"arch-axis"`
 	// Fuse is a CO-LOCATION group name (e.g. `live`). Tools sharing a fuse group,
 	// connected by `needs`, collapse into ONE job that runs each member's command
 	// as an ordered step — because a stateful runtime (a compose stack) cannot span

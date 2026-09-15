@@ -169,6 +169,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- with .Step.RunToolNetwork }}
           network: {{ . }}
 {{- end }}
+{{- with .Step.RunToolPlatform }}
+          platform: {{ . }}
+{{- end }}
 {{- if .Step.Advisory }}
           # `advisory: true` — run.sh reports the failure with its named cause, then returns
           # 0. It rides the ACTION because that decode already lives there, so one code path
