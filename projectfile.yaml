@@ -50,9 +50,6 @@ org:
         kind: binary
         path: dist/pf-ci
     ci:
-      forgejo:
-        credentials:
-          FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN }}
       nodes:
         binaries-are-built:
           matrix:

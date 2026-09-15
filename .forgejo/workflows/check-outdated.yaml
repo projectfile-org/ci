@@ -28,9 +28,9 @@ jobs:
       - name: check-outdated-go
         uses: projectfile/actions/run-tool@v1
         with:
-          image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: go list -u -m all
+          run: go-outdated
           env: |-
             GOPROXY
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
