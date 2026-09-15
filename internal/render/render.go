@@ -149,6 +149,8 @@ const (
 	// CacheDirGHA is the restore target on an ephemeral GitHub runner: actions/cache/restore
 	// fills it, then run-tool mounts it. Under runner.temp (outside the checkout, per-job).
 	CacheDirGHA = "${{ runner.temp }}/ci-cache"
+	// MountCacheName is the named cache a container-build's persisted BuildKit cache mounts save under, per cell
+	MountCacheName = "mounts"
 	// CacheKeyPrefix is the shared stem of a named cache's actions/cache key. The scan side
 	// RESTORES `<prefix>-<name>-` (prefix-match the newest entry); the scheduled refresh
 	// SAVES `<prefix>-<name>-<roll>`. One literal so both sides agree.
@@ -1782,6 +1784,8 @@ type StepView struct {
 	// preceding actions/cache restore step — the per-target host side + restore action
 	// come from the Target adapter, so the model stays neutral.
 	Caches []Cache `json:"caches,omitempty"`
+	// MountCache is the cell-keyed cache NAME a container-build persists its BuildKit cache mounts under; empty => off
+	MountCache string `json:"mount-cache,omitempty"`
 }
 
 // Gate is the step's `if:`, whichever guard it carries: its OWN (a `when: always`
@@ -2246,11 +2250,15 @@ func (s StepView) EnvArg() string {
 // NOT run_attempt — a partial re-run leaves a succeeded producer's artifact at the old
 // attempt while the re-running consumer asks for the new one (see artifactScopeSuffix).
 func artifactStem(base string, m AxisMap) string {
+	return cellStem(base, m) + artifactScopeSuffix
+}
+
+// cellStem is base suffixed with every axis of the cell, in axis order
+func cellStem(base string, m AxisMap) string {
 	s := base
 	for _, a := range m {
 		s += "-${{ matrix." + a.Key + " }}"
 	}
-	s += artifactScopeSuffix
 	return s
 }
 
@@ -2452,6 +2460,9 @@ const (
 	permWrite         = "write"
 	permScopeContents = "contents"
 )
+
+// mountCachePermissions are the token scopes a mount-cache job needs: cache deletion, plus its checkout
+var mountCachePermissions = map[string]string{"actions": permWrite, permScopeContents: permRead}
 
 // permRank orders a scope level so a union keeps the widest one any member tool asked for.
 func permRank(level string) int {
@@ -2808,6 +2819,9 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// input. Empty when the build declares no such var — the action then degrades.
 	if man.Action == ActionContainerBuild {
 		step.PfCliImage = pfCliImageRef(b)
+		if st.MountCache {
+			step.MountCache = cellStem(MountCacheName, AxisMap(j.Axes))
+		}
 		// Per-lowering Dockerfile stage: the fragment picks build-target[Target.Key].
 		if b != nil {
 			step.BuildTarget = b.BuildTarget
@@ -3373,6 +3387,14 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			for scope, level := range man.Permissions {
 				if permRank(level) > permRank(permSeen[scope]) {
 					permSeen[scope] = level
+				}
+			}
+			// evicting a superseded mount-cache entry writes the repository's cache store
+			if step.MountCache != "" {
+				for scope, level := range mountCachePermissions {
+					if permRank(level) > permRank(permSeen[scope]) {
+						permSeen[scope] = level
+					}
 				}
 			}
 			job.Steps = append(job.Steps, step)
@@ -4102,6 +4124,8 @@ var funcs = template.FuncMap{
 	"cacheKey":       cacheKey,
 	"cacheSaveKey":   cacheSaveKey,
 	"writerCaches":   writerCaches,
+	// mountCacheName is the per-image stem every cell's mount cache falls back to
+	"mountCacheName": func() string { return MountCacheName },
 	// alwaysExpr is the `${{ always() }}` step guard (GHA/Forgejo-identical) the report
 	// upload renders so a fail-closed scan still publishes its SARIF/JSON. A func, not an
 	// inline literal, because `${{ … }}` collides with Go template's own `{{ }}` delimiters.

@@ -246,6 +246,10 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
           # One arch per call: the single-image archive is what every consumer reads.
           platform: {{ . }}
 {{- end }}
+{{- if and .Target.CacheRestore .Step.MountCache }}
+          mount-cache-key: {{ cacheKey .Step.MountCache }}
+          mount-cache-restore-keys: {{ cacheKey mountCacheName }}
+{{- end }}
 {{- end }}
 
 {{- define "providers/oci-push" }}

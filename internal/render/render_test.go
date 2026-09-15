@@ -258,7 +258,7 @@ func TestMaxParallelRenders(t *testing.T) {
 	}
 	s := string(out)
 	// The throttled node carries the cap directly above its matrix.
-	if !strings.Contains(s, "image-built:\n    runs-on: ubuntu-latest\n    strategy:\n      max-parallel: 1\n      matrix:") {
+	if !strings.Contains(s, "image-built:\n    runs-on: ubuntu-latest\n    permissions:\n      actions: write\n      contents: read\n    strategy:\n      max-parallel: 1\n      matrix:") {
 		t.Errorf("image-built strategy missing max-parallel: 1\n---\n%s", s)
 	}
 	// Exactly one cap in the whole file — the un-annotated scanner must NOT inherit it.
@@ -5854,5 +5854,59 @@ func TestSharedCacheEnvBinding(t *testing.T) {
 	}
 	if n := strings.Count(own, "M6E_SHARED_CACHE"); n != 1 {
 		t.Errorf("only the declaring tool may carry the name, got %d occurrences:\n%s", n, own)
+	}
+}
+
+// TestMountCacheLowering pins the container-build mount-cache lowering. Default on: a
+// GHA (ephemeral) build cell hands the action a cell-keyed stem plus the per-image
+// fallback, and its job gains the token scope eviction needs; forgejo (persistent
+// builder) renders neither. `mount-cache: false` switches the whole thing off.
+func TestMountCacheLowering(t *testing.T) {
+	src := func(extra string) string {
+		return `{` + extra + `
+		  "image": "b19/fd-{B19_UBUNTU_SERIES}",
+		  "matrix": {"axes": {"B19_UBUNTU_SERIES": ["resolute", "noble"]}},
+		  "tools": {"container-build": {"action": "container-build"}},
+		  "nodes": {"image-built": {"matrix": true, "goal": true, "needs": {"container-build": true}}}
+		}`
+	}
+	render := func(t *testing.T, doc, target string) (string, StepView) {
+		t.Helper()
+		st, err := ci.Parse([]byte(doc))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		rm, err := resolve.Resolve(st)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		m := Build(rm, st, nil)
+		out, err := Workflow(m, Targets[target], ci.Platform{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out), steps(m)[testContainerBuild]
+	}
+	gha, step := render(t, src(""), TargetGHA)
+	if step.MountCache != "mounts-${{ matrix.B19_UBUNTU_SERIES }}" {
+		t.Errorf("step MountCache = %q, want the cell-keyed name", step.MountCache)
+	}
+	want := "          mount-cache-key: ci-cache-mounts-${{ matrix.B19_UBUNTU_SERIES }}-\n" +
+		"          mount-cache-restore-keys: ci-cache-mounts-\n"
+	if !strings.Contains(gha, want) {
+		t.Errorf("gha: missing the mount-cache inputs:\n%s", gha)
+	}
+	if !strings.Contains(gha, "    permissions:\n      actions: write\n      contents: read\n") {
+		t.Errorf("gha: the build job must carry the eviction scope:\n%s", gha)
+	}
+	// Forgejo: the builder persists, so the render is untouched.
+	fj, _ := render(t, src(""), TargetForgejo)
+	if strings.Contains(fj, "mount-cache") {
+		t.Errorf("forgejo must not render mount-cache inputs:\n%s", fj)
+	}
+	// Opt-out: no inputs, no scope.
+	off, step := render(t, src(`"mount-cache": false,`), TargetGHA)
+	if step.MountCache != "" || strings.Contains(off, "mount-cache") || strings.Contains(off, "actions: write") {
+		t.Errorf("mount-cache: false must render neither inputs nor scope (step=%q):\n%s", step.MountCache, off)
 	}
 }

@@ -619,6 +619,8 @@ type Subtree struct {
 	Env map[string]string
 	// Targets gates which cloud lowering renders at all (org.projectfile.ci.targets); nil/empty => none.
 	Targets []string
+	// MountCache persists the build’s BuildKit cache mounts across runs on an ephemeral runner (org.projectfile.ci.mount-cache); absent => on
+	MountCache bool
 }
 
 // Dispatch is the manual-run trigger: the button plus its optional typed inputs (the
@@ -740,12 +742,13 @@ type rawSubtree struct {
 	Env   map[string]string `json:"env"`   // workflow-level env: NAME -> make-plane VALUE, inherited by every job
 	// Matrix is the GLOBAL matrix object, kept raw so decodeMatrix can decode it
 	// STRICTLY (an unsupported key must not vanish silently — see decodeMatrix).
-	Matrix  json.RawMessage     `json:"matrix"`
-	Nodes   map[string]rawNode  `json:"nodes"`
-	Tools   map[string]Manifest `json:"tools"`
-	Gha     *rawPlatform        `json:"gha"`     // GitHub Actions deployment overlay
-	Forgejo *rawPlatform        `json:"forgejo"` // Forgejo Actions deployment overlay
-	Targets []string            `json:"targets"` // opt-in cloud lowerings (gha, forgejo); absent/empty => none render
+	Matrix     json.RawMessage     `json:"matrix"`
+	Nodes      map[string]rawNode  `json:"nodes"`
+	Tools      map[string]Manifest `json:"tools"`
+	Gha        *rawPlatform        `json:"gha"`         // GitHub Actions deployment overlay
+	Forgejo    *rawPlatform        `json:"forgejo"`     // Forgejo Actions deployment overlay
+	Targets    []string            `json:"targets"`     // opt-in cloud lowerings (gha, forgejo); absent/empty => none render
+	MountCache *bool               `json:"mount-cache"` // persist build cache mounts on an ephemeral runner; absent => true
 }
 
 type rawDispatch struct {
@@ -1855,7 +1858,10 @@ func Parse(data []byte) (*Subtree, error) {
 		return nil, nil // no nodes => nothing to lower
 	}
 
-	st := &Subtree{Nodes: make(map[string]Node, len(raw.Nodes)), Image: raw.Image, Env: raw.Env}
+	st := &Subtree{
+		Nodes: make(map[string]Node, len(raw.Nodes)), Image: raw.Image, Env: raw.Env,
+		MountCache: raw.MountCache == nil || *raw.MountCache,
+	}
 
 	targets, err := decodeTargets(raw.Targets)
 	if err != nil {
