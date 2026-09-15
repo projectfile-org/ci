@@ -4108,8 +4108,10 @@ func TestLefthookRendersHookNodesAsDispatchers(t *testing.T) {
 	// Each hook is a make-dispatcher to the node of the same name (single source
 	// of truth = the DAG); the membership lives in the node, never here.
 	for _, want := range []string{
-		"pre-commit:\n  commands:\n    dag:\n      run: make pre-commit",
-		"pre-push:\n  commands:\n    dag:\n      run: make pre-push",
+		"pre-commit:\n  commands:\n    dag:\n      env:\n        TERM: dumb",
+		"pre-push:\n  commands:\n    dag:\n      env:\n        TERM: dumb",
+		"run: make pre-commit",
+		"run: make pre-push",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("lefthook.yaml missing dispatcher block %q:\n%s", want, s)

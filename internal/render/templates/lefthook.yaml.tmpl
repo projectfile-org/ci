@@ -13,5 +13,7 @@
 {{ .Stage }}:
   commands:
     dag:
+      env:
+        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal
       run: make {{ .Stage }}
 {{- end }}
