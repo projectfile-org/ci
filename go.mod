@@ -8,7 +8,7 @@ go 1.26.7
 
 require (
 	go.yaml.in/yaml/v3 v3.0.5
-	kiota.ch/projectfile/core/v2 v2.10.4
+	kiota.ch/projectfile/core/v2 v2.11.0
 )
 
 require (

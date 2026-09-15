@@ -209,7 +209,7 @@ func (st *Subtree) buildsContainer() bool {
 func (st *Subtree) addAxis(a Axis) {
 	for _, ex := range st.Axes {
 		if ex.Key == a.Key {
-			genlog.Info("arch axis: axis already declared, keeping the authored one",
+			genlog.Debug("arch axis: axis already declared, keeping the authored one",
 				"key", a.Key, "values", ex.Values)
 			return
 		}
@@ -1058,7 +1058,7 @@ func (r *Reader) declaredImages(lowering string) (map[string]string, map[string]
 		if tailTmpl != "" {
 			heads[name] = head
 		}
-		genlog.Decision("run_image", name+" -> "+ref, scope+".ref", "")
+		genlog.DebugRow("run_image", name+" -> "+ref, scope+".ref", "")
 		images[name] = ref
 	}
 	return images, heads, nil
@@ -1157,7 +1157,7 @@ func LoadBuild(pfPath, lowering string) (*Build, error) {
 			images = make(map[string]string, len(flat))
 		}
 		for name, ref := range flat {
-			genlog.Decision("run_image", name+" -> "+ref, "org.projectfile.ci.images."+name, "")
+			genlog.DebugRow("run_image", name+" -> "+ref, "org.projectfile.ci.images."+name, "")
 			images[name] = ref
 			delete(heads, name) // a flat overlay is a whole ref — no sink head to redirect
 		}
@@ -1452,7 +1452,7 @@ func (r *Reader) sinkTemplates() (foreign, self map[string]string, err error) {
 		foreign[name] = s.Ref
 		self[name] = s.Ref
 		if s.SelfRef != "" {
-			genlog.Decision("sink_selfref", s.SelfRef, "org.projectfile.sinks."+name+".selfref",
+			genlog.DebugRow("sink_selfref", s.SelfRef, "org.projectfile.sinks."+name+".selfref",
 				"own artifact only; foreign images keep "+s.Ref)
 			self[name] = s.SelfRef
 		}
@@ -1673,7 +1673,7 @@ func Load(pfPath string) (*Subtree, error) {
 		return nil, err
 	}
 	if len(arches) > 0 && st.buildsContainer() {
-		genlog.Info("arch axis: minting from the declared architecture set",
+		genlog.Debug("arch axis: minting from the declared architecture set",
 			"axis", ArchAxis, "arches", arches, "image", st.Image)
 		st.addAxis(Axis{Key: ArchAxis, Values: arches})
 	}
@@ -2052,7 +2052,7 @@ func decodeRunsOn(raw json.RawMessage) ([]string, map[string]string, error) {
 		}
 		byArch[k] = v
 	}
-	genlog.Info("runs-on: arch-routed runner map declared",
+	genlog.Debug("runs-on: arch-routed runner map declared",
 		"default", def, "arches", sortedKeys(byArch))
 	if len(byArch) == 0 {
 		return def, nil, nil

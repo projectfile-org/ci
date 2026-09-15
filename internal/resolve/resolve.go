@@ -287,7 +287,7 @@ func dropAxes(node string, axes []ci.Axis, excludes []ci.Exclusion, without []st
 	kept := make([]ci.Axis, 0, len(axes))
 	for _, a := range axes {
 		if drop[a.Key] {
-			genlog.Info("matrix.without: node drops an axis", "node", node, "axis", a.Key, "values", a.Values)
+			genlog.Debug("matrix.without: node drops an axis", "node", node, "axis", a.Key, "values", a.Values)
 			continue
 		}
 		kept = append(kept, a)
@@ -296,7 +296,7 @@ func dropAxes(node string, axes []ci.Axis, excludes []ci.Exclusion, without []st
 	// M6E_ARCH exists only where org.projectfile.architecture does, and the same node
 	// declaration has to render byte-identically on the projects that declare nothing.
 	if len(kept) == len(axes) {
-		genlog.Info("matrix.without: no axis matched, node keeps the global fan-out",
+		genlog.Debug("matrix.without: no axis matched, node keeps the global fan-out",
 			"node", node, "without", without, "declared", len(axes))
 		return axes, excludes
 	}
@@ -356,12 +356,12 @@ func pinAxes(node string, axes []ci.Axis, excludes []ci.Exclusion, pin map[strin
 		if len(skipped) > 0 {
 			value += " (skipped " + strings.Join(skipped, ", ") + ")"
 		}
-		genlog.Decision("matrix_pin", value, "matrix.pin."+a.Key, "nodes."+node+".matrix")
+		genlog.DebugRow("matrix_pin", value, "matrix.pin."+a.Key, "nodes."+node+".matrix")
 		pinned[a.Key] = v
 		kept = append(kept, ci.Axis{Key: a.Key, Values: []string{v}})
 	}
 	if len(pinned) == 0 {
-		genlog.Info("matrix.pin: no axis matched, node keeps the global fan-out",
+		genlog.Debug("matrix.pin: no axis matched, node keeps the global fan-out",
 			"node", node, "pin", pin, "declared", len(axes))
 		return axes, excludes
 	}
@@ -375,7 +375,7 @@ func pinAxes(node string, axes []ci.Axis, excludes []ci.Exclusion, pin map[strin
 			}
 		}
 		if unreachable {
-			genlog.Info("matrix.pin: dropping an exclusion no surviving cell can match",
+			genlog.Debug("matrix.pin: dropping an exclusion no surviving cell can match",
 				"node", node, "exclusion", ex)
 			continue
 		}

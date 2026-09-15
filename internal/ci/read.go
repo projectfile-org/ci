@@ -17,8 +17,10 @@ import (
 // a plain list one level inside the shared org.projectfile namespace, so it is
 // addressed as namespace + key rather than as a subtree of its own.
 const (
-	archNamespace = "org.projectfile"
-	archKey       = "architecture"
+	archNamespace    = "org.projectfile"
+	archKey          = "architecture"
+	ciNamespace      = "org.projectfile.ci"
+	maxFeaturesLevel = 1
 )
 
 // Reader is the library seam onto core. It holds ONE includes-merged projectfile
@@ -33,16 +35,18 @@ type Reader struct{ doc *projectfile.Document }
 // project driving pf-ci is expected to have a projectfile; an ABSENT SUBTREE is
 // the graceful "no CI" case and is handled per-lookup by subtree.
 func newReader(pfPath string) (*Reader, error) {
+	var doc *projectfile.Document
+	var err error
 	if pfPath != "" {
-		doc, err := projectfile.Read(pfPath)
-		if err != nil {
-			return nil, err
-		}
-		return &Reader{doc: doc}, nil
+		doc, err = projectfile.Read(pfPath)
+	} else {
+		doc, _, err = projectfile.ReadWithOptions(".", projectfile.ReadOptions{})
 	}
-	doc, _, err := projectfile.ReadWithOptions(".", projectfile.ReadOptions{})
 	if err != nil {
 		return nil, err
+	}
+	if err := projectfile.CheckFeaturesLevel(doc, ciNamespace, maxFeaturesLevel); err != nil {
+		return nil, fmt.Errorf("%w: run make install-binary to refresh pf-ci", err)
 	}
 	return &Reader{doc: doc}, nil
 }

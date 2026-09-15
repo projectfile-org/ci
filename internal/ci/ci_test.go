@@ -1852,3 +1852,26 @@ func TestTargetsUnknownRejected(t *testing.T) {
 		t.Fatalf("Parse: got %v, want an error naming the unrecognised target", err)
 	}
 }
+
+// TestNewReaderRejectsNewerFeaturesLevel proves the stale-binary guard: level 2 breaks with an upgrade hint, level 1 and absent pass.
+func TestNewReaderRejectsNewerFeaturesLevel(t *testing.T) {
+	writeLevelDoc := func(t *testing.T, body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "projectfile.yaml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		return path
+	}
+	newer := writeLevelDoc(t, "$schema: https://projectfile.org/schema/v1.json\nidentity:\n  name: demo\norg:\n  projectfile:\n    ci:\n      features-level: 2\n")
+	if _, err := newReader(newer); err == nil || !strings.Contains(err.Error(), "features-level") {
+		t.Fatalf("newReader level 2: got %v, want a features-level error", err)
+	} else if !strings.Contains(err.Error(), "install-binary") {
+		t.Fatalf("newReader level 2: got %v, want the install-binary hint", err)
+	}
+	current := writeLevelDoc(t, "$schema: https://projectfile.org/schema/v1.json\nidentity:\n  name: demo\norg:\n  projectfile:\n    ci:\n      features-level: 1\n")
+	if _, err := newReader(current); err != nil {
+		t.Fatalf("newReader level 1: got %v, want nil", err)
+	}
+}

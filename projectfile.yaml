@@ -50,6 +50,7 @@ org:
         kind: binary
         path: dist/pf-ci
     ci:
+      features-level: 1
       nodes:
         binaries-are-built:
           matrix:

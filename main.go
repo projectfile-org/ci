@@ -64,6 +64,7 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pf-ci: %v\n", err)
+		genlog.FlushDebug()
 		os.Exit(1)
 	}
 }
@@ -194,7 +195,7 @@ func cmdGenerate(args []string) error {
 		if err := writeWorkflow(dest, rendered); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "pf-ci: wrote %s (%d hooks)\n", dest, len(render.HookNodes(st)))
+		genlog.Success(fmt.Sprintf("pf-ci: wrote %s (%d hooks)", dest, len(render.HookNodes(st))))
 		return nil
 	}
 
@@ -227,7 +228,7 @@ func workflowFiles(st *ci.Subtree, target render.Target, outDir, pfPath string) 
 		dir = target.OutDir
 	}
 	if !st.RendersTarget(target.Key) {
-		genlog.Info("ci.targets: target not declared, rendering nothing", "target", target.Key, "declared", st.Targets)
+		genlog.Debug("ci.targets: target not declared, rendering nothing", "target", target.Key, "declared", st.Targets)
 		return nil, dir, nil
 	}
 	b, err := ci.LoadBuild(pfPath, target.Key)
@@ -280,7 +281,7 @@ func checkFresh(path string, want []byte) error {
 	if !bytes.Equal(bytes.TrimRight(got, "\n"), bytes.TrimRight(want, "\n")) {
 		return fmt.Errorf("freshness check: %s is stale — regenerate with `pf-ci generate`", path)
 	}
-	fmt.Fprintf(os.Stderr, "pf-ci: %s is up to date\n", path)
+	genlog.Success(fmt.Sprintf("pf-ci: %s is up to date", path))
 	return nil
 }
 
@@ -351,7 +352,7 @@ func writeWorkflowDir(dir, ext string, files map[string][]byte) error {
 		if err := writeWorkflow(path, files[path]); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "pf-ci: wrote %s\n", path)
+		genlog.Success(fmt.Sprintf("pf-ci: wrote %s", path))
 	}
 	stale, err := orphanWorkflows(dir, ext, files)
 	if err != nil {
@@ -361,7 +362,7 @@ func writeWorkflowDir(dir, ext string, files map[string][]byte) error {
 		if err := os.Remove(path); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "pf-ci: removed orphan %s\n", path)
+		genlog.Success(fmt.Sprintf("pf-ci: removed orphan %s", path))
 	}
 	return nil
 }
