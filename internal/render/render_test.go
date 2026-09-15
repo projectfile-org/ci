@@ -5304,6 +5304,81 @@ func TestSelfImageRefIsArchScoped(t *testing.T) {
 	}
 }
 
+// liveSlugSubtree is livePinSubtree over a series axis whose values compose refuses: a
+// dotted `3.14` reaches `docker compose --project-name` verbatim through `${{ matrix }}`
+// and no forge expression can respell it, so the identity has to ride a derived field.
+const liveSlugSubtree = `{
+  "image": "b19/python-{B19_PYTHON_SERIES}",
+  "matrix": {"axes": {"B19_PYTHON_SERIES": ["3.13", "3.14"], "B19_UBUNTU_SERIES": ["resolute"]}},
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "dc-up-d": {"fuse": "live", "run": "docker compose up --detach"},
+    "dc-down": {"fuse": "live", "when": "always", "run": "docker compose down --volumes"}
+  },
+  "nodes": {
+    "image-built": {"matrix": true, "needs": {"container-build": true}},
+    "container-is-verified": {"goal": true, "matrix": true,
+      "needs": {"image-built": true, "dc-up-d": true, "dc-down": true}}
+  }
+}`
+
+// TestLiveIdentitySlugsAxisValuesComposeRefuses pins the fix for the `invalid project
+// name "ci-b19-python-3.14-…"` refusal: the stack identity reads the slug field, the
+// slug rides an include row beside the raw value (the M6E_RUNNER shape), the image ref
+// keeps the raw value the build stamped, and an axis compose already accepts binds
+// nothing — so every project without a dotted axis renders byte-identically.
+func TestLiveIdentitySlugsAxisValuesComposeRefuses(t *testing.T) {
+	st, err := ci.Parse([]byte(liveSlugSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+
+	live := jobOf(m, testDCDown)
+	env := map[string]string{}
+	for _, e := range live.Env {
+		env[e.Key] = e.Value
+	}
+	raw, slug := "${{ matrix.B19_PYTHON_SERIES }}", "${{ matrix.B19_PYTHON_SERIES_SLUG }}"
+	if !strings.HasPrefix(env[ComposeProjectEnv], "ci-b19-python-"+slug+"-") {
+		t.Errorf("%s = %q, want the slug field in the stack identity", ComposeProjectEnv, env[ComposeProjectEnv])
+	}
+	if env[ContainerInstanceEnv] != env[ComposeProjectEnv] {
+		t.Errorf("%s = %q must equal %s", ContainerInstanceEnv, env[ContainerInstanceEnv], ComposeProjectEnv)
+	}
+	if !strings.HasPrefix(live.RmNetwork, env[ComposeProjectEnv]) {
+		t.Errorf("RmNetwork %q must reap the network the slugged identity created", live.RmNetwork)
+	}
+	if !strings.HasPrefix(env[ImageFullnameEnv], "b19/python-"+raw+":") {
+		t.Errorf("%s = %q, want the RAW value the build stamped", ImageFullnameEnv, env[ImageFullnameEnv])
+	}
+	want := []string{"B19_PYTHON_SERIES=3.13", "B19_PYTHON_SERIES_SLUG=3-13", "B19_PYTHON_SERIES=3.14", "B19_PYTHON_SERIES_SLUG=3-14"}
+	var got []string
+	for _, row := range live.Include {
+		for _, f := range row.Fields {
+			got = append(got, f.Key+"="+f.Value)
+		}
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("include rows: got %v, want %v (the safe B19_UBUNTU_SERIES axis binds none)", got, want)
+	}
+	if b := jobOf(m, testContainerBuild); len(b.Include) != 0 {
+		t.Errorf("container-build carries no identity, so no slug rows: got %v", b.Include)
+	}
+
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "          - B19_PYTHON_SERIES: \"3.14\"\n            B19_PYTHON_SERIES_SLUG: \"3-14\"") {
+		t.Errorf("rendered workflow missing the slug include row:\n%s", out)
+	}
+}
+
 // TestNoArchAxisRendersNoArchInputs pins the opt-in from the other side: the ~110
 // projects that declare no architecture must render byte-identically to before the axis
 // existed, so neither input may appear when nothing minted the axis.

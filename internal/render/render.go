@@ -1383,6 +1383,57 @@ func composeProject(basename string) string {
 	return composeProjectPrefix + strings.ReplaceAll(basename, "/", "-")
 }
 
+// composeUnsafe matches every character a compose project name refuses (lowercase alphanumerics, `-` and `_` only).
+var composeUnsafe = regexp.MustCompile(`[^a-z0-9_-]`)
+
+// composeSlug lowers one axis value to the compose-safe spelling m6e's `$(subst .,-,…)` gives it.
+func composeSlug(value string) string {
+	return composeUnsafe.ReplaceAllString(strings.ToLower(value), "-")
+}
+
+// slugVar names the derived matrix field carrying an axis value's compose-safe spelling.
+func slugVar(axis string) string {
+	return axis + "_SLUG"
+}
+
+// slugAxes returns the axes whose values a compose project name cannot carry verbatim.
+func slugAxes(axes []ci.Axis) []ci.Axis {
+	var out []ci.Axis
+	for _, a := range axes {
+		for _, v := range a.Values {
+			if composeSlug(v) != v {
+				genlog.Debug("compose identity: axis carries a value compose refuses, binding a slug",
+					"axis", a.Key, "value", v, "slug", composeSlug(v))
+				out = append(out, a)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// slugRows binds each unsafe value's slug beside it on a matrix include row, the M6E_RUNNER shape.
+func slugRows(axes []ci.Axis) []MatrixRowView {
+	var rows []MatrixRowView
+	for _, a := range axes {
+		for _, v := range a.Values {
+			rows = append(rows, MatrixRowView{Fields: []KVView{
+				{Key: a.Key, Value: v},
+				{Key: slugVar(a.Key), Value: composeSlug(v)},
+			}})
+		}
+	}
+	return rows
+}
+
+// substSlugs is substAxes with every slugged axis lowered to its slug field instead of the raw cell value.
+func substSlugs(s string, axes, slugged []ci.Axis) string {
+	for _, a := range slugged {
+		s = strings.ReplaceAll(s, "{"+a.Key+"}", "${{ matrix."+slugVar(a.Key)+" }}")
+	}
+	return substAxes(s, axes)
+}
+
 // stepAlwaysExpr is the step `if:` guard a `when: always` teardown tool lowers to. The
 // always() expression is identical on GHA and Forgejo, so the one spelling serves both.
 const stepAlwaysExpr = "${{ always() }}"
@@ -3335,7 +3386,8 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						// stamped (composeImage, registry-less — line 113/131 of steps.tmpl);
 						// M6E_COMPOSE_PROJECT_NAME / M6E_CONTAINER_INSTANCE = the `ci-<basename>`
 						// stem m6e's make plane uses (no `app` placeholder).
-						img := substAxes(st.Image, substKeys(j.Axes, st))
+						keys := substKeys(j.Axes, st)
+						img := substAxes(st.Image, keys)
 						arch := loadArch
 						jobLoadArch = loadArch
 						loadedRef := composeImage("", img, arch)
@@ -3344,7 +3396,8 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						// Arch-scoped for the cell half of the same problem: the basename
 						// carries every axis but the derived one, so two arch cells of one
 						// series would otherwise share a pod and reap each other's stack.
-						proj := composeProject(img) + archSuffix(arch) + runScopeSuffix
+						// Slug-spelled where an axis value carries a dot compose refuses.
+						proj := composeProject(substSlugs(st.Image, keys, slugAxes(j.Axes))) + archSuffix(arch) + runScopeSuffix
 						step.Env = append(step.Env,
 							EnvVar{Key: ImageFullnameEnv, Value: loadedRef},
 							EnvVar{Key: ComposeProjectEnv, Value: proj},
@@ -3435,6 +3488,10 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			// arrive empty). axesEqual keeps the include off per-node cell jobs.
 			if len(st.Overrides) > 0 && axesEqual(axes, st.Axes) {
 				job.Include = includeViews(st.Overrides)
+			}
+			// The live identity names axis values; a value compose refuses rides its slug row
+			if job.Load {
+				job.Include = append(job.Include, slugRows(slugAxes(axes))...)
 			}
 		} else {
 			job.Class = string(byName[memberTools[0]].Class)
