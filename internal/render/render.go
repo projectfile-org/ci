@@ -3876,10 +3876,13 @@ const SkipVarPrefix = "CI_SKIP_"
 // OnlyVar names the run-time allow-list variable of one matrix axis.
 func OnlyVar(axis string) string { return OnlyVarPrefix + axis }
 
-// SkipVar names the run-time mute variable of one node or tool, upper-cased with `-` → `_` as credential names are.
+// SkipVar names the run-time mute variable of one node or tool: upper-cased, every non-alphanumeric `_`, the rule m6e-run applies to CI_SKIP_<TARGET>.
 func SkipVar(name string) string {
-	return SkipVarPrefix + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	return SkipVarPrefix + strings.ToUpper(nonAlnum.ReplaceAllString(name, "_"))
 }
+
+// nonAlnum matches every character a forge variable name may not carry.
+var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
 // onlyGate admits a cell whose axis VALUE the scope lists, or every cell while the variable is unset; comma-wrapped so the match is on a whole name.
 func onlyGate(axis, value string) string {

@@ -6039,8 +6039,11 @@ func TestForgeGateNarrowsEveryAxisOnTheStep(t *testing.T) {
 			t.Errorf("missing gated step %q\n---\n%s", want, s)
 		}
 	}
-	if got, want := SkipVar("grype-scan-tar"), "CI_SKIP_GRYPE_SCAN_TAR"; got != want {
-		t.Errorf("SkipVar = %q, want %q", got, want)
+	// the same derivation m6e-run applies on the make plane, so one name mutes a tool on both
+	for name, want := range map[string]string{"grype-scan-tar": "CI_SKIP_GRYPE_SCAN_TAR", "auto-textlint.md": "CI_SKIP_AUTO_TEXTLINT_MD"} {
+		if got := SkipVar(name); got != want {
+			t.Errorf("SkipVar(%q) = %q, want %q", name, got, want)
+		}
 	}
 	// A pure-join gate and the checkout carry no gate: only work that reads a cell value skips.
 	if strings.Contains(s, "      - run: echo published\n        if:") {
