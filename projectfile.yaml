@@ -95,6 +95,12 @@ org:
         command: pf-ci
         kind: binary
         path: dist/pf-ci
+    architecture:
+      - amd64
+      - arm64
+      - riscv64
+    operating-system:
+      - linux
     ci:
       features-level: 1
       nodes:

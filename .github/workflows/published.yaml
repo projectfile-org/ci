@@ -156,33 +156,43 @@ jobs:
   container-is-verified:
     runs-on: ubuntu-latest
     needs: ["container-ready-to-test"]
+    strategy:
+      matrix:
+        M6E_ARCH: ["amd64"]
     env:
-      M6E_IMAGE_FULLNAME: projectfile/ci:${{ vars.BASE_IMAGE_DEFAULT_VERSION || 'latest' }}-${{ github.run_id }}
-      M6E_COMPOSE_PROJECT_NAME: ci-projectfile-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      M6E_CONTAINER_INSTANCE: ci-projectfile-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      M6E_ARCH: ${{ matrix.M6E_ARCH }}
+      M6E_IMAGE_FULLNAME: projectfile/ci:${{ vars.BASE_IMAGE_DEFAULT_VERSION || 'latest' }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
+      M6E_COMPOSE_PROJECT_NAME: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}
+      M6E_CONTAINER_INSTANCE: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
+      # A withheld pin leaves this node nowhere to run; failing here keeps its gate from passing green
+      - name: refuse a withheld M6E_ARCH
+        if: vars.CI_ONLY_M6E_ARCH != '' && !contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',amd64,') && vars.CI_SKIP_CONTAINER_IS_VERIFIED != 'true'
+        run: echo "CI_ONLY_M6E_ARCH withholds M6E_ARCH=amd64, the one value this node runs on" >&2; exit 1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH)))
         with:
-          name: image-${{ github.run_id }}
+          name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
       # The archive enters the runner's SHARED image store, where a sibling job's reap
       # can delete a layer record mid-copy — podman then buries the real cause under a
       # four-transport probe that claims the tar matches no supported format. The retry
       # for that class lives in the pinned action, not inline (Law 2).
       - uses: projectfile-org/actions/container-load@78f06c9316d295ea7b646ad1bdac87b76b7f999a # v1
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH)))
         with:
-          archive: image-${{ github.run_id }}.tar
+          archive: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
       - name: dc-pull
-        if: vars.CI_SKIP_IMAGES_ARE_OK != 'true' && vars.CI_SKIP_DC_PULL != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGES_ARE_OK != 'true' && vars.CI_SKIP_DC_PULL != 'true'
         run: M6E_COMPOSE_FILE=.compose/pipeline.yaml .makefile/container/scripts/compose-pull.sh
       - name: dc-up-d
-        if: vars.CI_SKIP_CONTAINER_IS_OK != 'true' && vars.CI_SKIP_DC_UP_D != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_IS_OK != 'true' && vars.CI_SKIP_DC_UP_D != 'true'
         run: timeout --kill-after=10s "${M6E_COMPOSE_UP_TIMEOUT:-300}s" docker compose --project-name "$M6E_COMPOSE_PROJECT_NAME" --file .compose/pipeline.yaml up --detach --renew-anon-volumes --no-build </dev/null
       - name: container-test
-        if: vars.CI_SKIP_CONTAINER_READY_TO_TEST != 'true' && vars.CI_SKIP_CONTAINER_TEST != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_READY_TO_TEST != 'true' && vars.CI_SKIP_CONTAINER_TEST != 'true'
         uses: projectfile-org/actions/container-exec@78f06c9316d295ea7b646ad1bdac87b76b7f999a # v1
         with:
           container: ${{ env.M6E_CONTAINER_INSTANCE }}
@@ -200,8 +210,8 @@ jobs:
       - if: ${{ always() }}
         uses: projectfile-org/actions/docker-cleanup@78f06c9316d295ea7b646ad1bdac87b76b7f999a # v1
         with:
-          image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}
-          network: ci-projectfile-ci-${{ env.M6E_RUN_SCOPE }}-network
+          image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
+          network: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ env.M6E_RUN_SCOPE }}-network
   container-ready-to-test:
     runs-on: ubuntu-latest
     needs: ["container-is-ok"]
@@ -271,7 +281,7 @@ jobs:
             GOARCH=${{ matrix.GOARCH }}
             GOOS=${{ matrix.GOOS }}
   image-is-built:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.M6E_RUNNER }}
     needs: ["fetched", "inputs-are-ok"]
     permissions:
       actions: write
@@ -279,7 +289,19 @@ jobs:
     concurrency:
       group: build-${{ github.repository }}-${{ toJSON(matrix) }}
       cancel-in-progress: false
+    strategy:
+      max-parallel: 2
+      matrix:
+        M6E_ARCH: ["amd64", "arm64", "riscv64"]
+        include:
+          - M6E_ARCH: "amd64"
+            M6E_RUNNER: "ubuntu-latest"
+          - M6E_ARCH: "arm64"
+            M6E_RUNNER: "ubuntu-24.04-arm"
+          - M6E_ARCH: "riscv64"
+            M6E_RUNNER: "ubuntu-latest"
     env:
+      M6E_ARCH: ${{ matrix.M6E_ARCH }}
       M6E_NAMESPACE: projectfile
       M6E_PROJECT: ci
       B19_COLOR: ${{ inputs.B19_COLOR || vars.B19_COLOR || '1' }}
@@ -305,15 +327,15 @@ jobs:
           submodules: true
           persist-credentials: false
       - name: use an isolated buildx builder
-        if: vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
         # the docker driver's image exporter needs the host's containerd store; docker-container carries its own, so no host config or restart is needed on any GHA runner flavor.
         run: docker buildx create --name ci --driver docker-container --use
       - name: container-build
-        if: vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
         uses: projectfile-org/actions/container-build/buildx@78f06c9316d295ea7b646ad1bdac87b76b7f999a # v1
         with:
-          artifact-name: image-${{ github.run_id }}
-          image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}
+          artifact-name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
+          image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
           build-args: |-
             B19_COLOR=${{ inputs.B19_COLOR || vars.B19_COLOR || '1' }}
             B19_FETCH_DOCKER_CACHE=${{ inputs.B19_FETCH_DOCKER_CACHE || vars.B19_FETCH_DOCKER_CACHE || 'Y' }}
@@ -328,6 +350,7 @@ jobs:
             LANG=${{ inputs.LANG || vars.LANG }}
             M6E_APT_CACHE_HOST=${{ inputs.M6E_APT_CACHE_HOST || vars.M6E_APT_CACHE_HOST }}
             M6E_APT_CACHE_PORT=${{ inputs.M6E_APT_CACHE_PORT || vars.M6E_APT_CACHE_PORT }}
+            M6E_ARCH=${{ matrix.M6E_ARCH }}
             M6E_BUILD_DEBUG=${{ inputs.M6E_BUILD_DEBUG || vars.M6E_BUILD_DEBUG }}
             M6E_NAMESPACE=projectfile
             M6E_NEAR_CACHE_HOST=${{ inputs.M6E_NEAR_CACHE_HOST || vars.M6E_NEAR_CACHE_HOST }}
@@ -336,7 +359,10 @@ jobs:
             SOURCE_DOCKER_REGISTRY=${{ inputs.SOURCE_DOCKER_REGISTRY || vars.SOURCE_DOCKER_REGISTRY }}
           mounts: fetch=/fetch
           pf-cli-image: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli:{1}', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho', env.M6E_TAG) }}
-          mount-cache-key: ci-cache-mounts-
+          # This CELL's architecture, off the arch axis derived from the declared set.
+          # One arch per call: the single-image archive is what every consumer reads.
+          platform: ${{ matrix.M6E_ARCH }}
+          mount-cache-key: ci-cache-mounts-${{ matrix.M6E_ARCH }}-
           mount-cache-restore-keys: ci-cache-mounts-
   image-is-ready:
     runs-on: ubuntu-latest
@@ -346,71 +372,78 @@ jobs:
   image-is-secure:
     runs-on: ubuntu-latest
     needs: ["image-is-built"]
+    strategy:
+      matrix:
+        M6E_ARCH: ["amd64", "arm64", "riscv64"]
     env:
-      M6E_IMAGE_ARCHIVE: image-${{ github.run_id }}.tar
+      M6E_ARCH: ${{ matrix.M6E_ARCH }}
+      M6E_IMAGE_ARCHIVE: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH)))
         with:
-          name: image-${{ github.run_id }}
+          name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
       - name: restore grype-db
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
-        if: vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
         with:
           path: ${{ runner.temp }}/ci-cache/grype-db
           key: ci-cache-grype-db-
           restore-keys: |
             ci-cache-grype-db-
       - name: grype-scan-tar
-        if: vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
         uses: projectfile-org/actions/run-tool@78f06c9316d295ea7b646ad1bdac87b76b7f999a # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-grype image
           env: |-
-            M6E_IMAGE_ARCHIVE=image-${{ github.run_id }}.tar
+            M6E_ARCH=${{ matrix.M6E_ARCH }}
+            M6E_IMAGE_ARCHIVE=image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
             M6E_SHARED_CACHE=N
           mounts: ${{ runner.temp }}/ci-cache/grype-db:/app/.cache/grype:rw
       - name: save grype-db
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
-        if: vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
         with:
           path: ${{ runner.temp }}/ci-cache/grype-db
           key: ci-cache-grype-db-${{ github.run_id }}
       - name: restore trivy-db
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
-        if: vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
         with:
           path: ${{ runner.temp }}/ci-cache/trivy-db
           key: ci-cache-trivy-db-
           restore-keys: |
             ci-cache-trivy-db-
       - name: trivy-scan-tar
-        if: vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
         uses: projectfile-org/actions/run-tool@78f06c9316d295ea7b646ad1bdac87b76b7f999a # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-trivy image
           env: |-
-            M6E_IMAGE_ARCHIVE=image-${{ github.run_id }}.tar
+            M6E_ARCH=${{ matrix.M6E_ARCH }}
+            M6E_IMAGE_ARCHIVE=image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
             M6E_SHARED_CACHE=N
             TRIVY_CACHE_BACKEND
           mounts: ${{ runner.temp }}/ci-cache/trivy-db:/app/.cache/trivy:rw
       - name: save trivy-db
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
-        if: vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
         with:
           path: ${{ runner.temp }}/ci-cache/trivy-db
           key: ci-cache-trivy-db-${{ github.run_id }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ always() }}
         with:
-          name: reports-image-is-secure-${{ github.run_id }}
+          name: reports-image-is-secure-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
           path: reports/
           if-no-files-found: warn
           overwrite: true
@@ -504,15 +537,31 @@ jobs:
           name: build-binaries-riscv64-linux-${{ github.run_id }}
           path: dist
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK)))
+        if: (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',amd64,'))
         with:
-          name: image-${{ github.run_id }}
+          name: image-amd64-${{ github.run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',arm64,'))
+        with:
+          name: image-arm64-${{ github.run_id }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',riscv64,'))
+        with:
+          name: image-riscv64-${{ github.run_id }}
       - name: oci-push
         # The cell's run-time override gate, on the STEP because a job `if:` may not read the matrix context
         if: (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_PUBLISH_IMAGE != 'true' && vars.CI_SKIP_OCI_PUSH != 'true'
         uses: projectfile-org/actions/oci-push@78f06c9316d295ea7b646ad1bdac87b76b7f999a # v1
         with:
-          artifact-name: image-${{ github.run_id }}
+          # One tar per DECLARED architecture, published together as a manifest list at
+          # each cascade tag. Per-arch TAGS are deliberately not published: they are
+          # scaffolding, and a registry that cannot delete a tag keeps them forever.
+          archives: |
+            amd64 image-amd64-${{ github.run_id }}
+            arm64 image-arm64-${{ github.run_id }}
+            riscv64 image-riscv64-${{ github.run_id }}
+          # The arches this scope may publish, the same list the per-arch downloads above honour
+          only-arches: ${{ vars.CI_ONLY_M6E_ARCH }}
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}
           version: ${{ github.ref_name }}
           # The branch this run is on, empty on a tag. Non-empty collapses the cascade to

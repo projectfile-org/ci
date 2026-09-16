@@ -31,6 +31,12 @@ pf-cli-managed: yes
 - **Виконуваний файл** `pf-ci`
 - **Образ контейнера** `ghcr.io/projectfile-org/ci:latest`
 
+## Підтримувані платформи
+
+- `linux/amd64`
+- `linux/arm64`
+- `linux/riscv64`
+
 ## Встановлення
 
 Завантажте опублікований образ контейнера:

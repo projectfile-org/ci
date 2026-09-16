@@ -29,6 +29,12 @@ See [FEATURES.md](FEATURES.md) for the full list.
 - **Executable** `pf-ci`
 - **Container image** `ghcr.io/projectfile-org/ci:latest`
 
+## Supported platforms
+
+- `linux/amd64`
+- `linux/arm64`
+- `linux/riscv64`
+
 ## Installation
 
 Pull the published container image:
