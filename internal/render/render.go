@@ -1864,6 +1864,9 @@ type DownloadView struct {
 	Path string
 	// Arch is the declared value a per-arch tar download names when the job dropped the arch axis; empty otherwise.
 	Arch string `json:"Arch,omitempty"`
+	// Node and Tool name the PRODUCER whose upload this pulls; its mutes ride the download's gate.
+	Node string `json:"-"`
+	Tool string `json:"-"`
 	// If is the download's run-time override gate, spelled per target by forgeGates.
 	If string `json:"-"`
 }
@@ -3358,7 +3361,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					// uploaded their own tar and this job must take all of them. Bind the
 					// axis to each declared value instead of to a matrix expression, off the
 					// PRODUCER's axes so the two ends cannot drift.
-					stems := []DownloadView{{Name: step.Stem}}
+					stems := []DownloadView{{Name: step.Stem, Node: toolNode[need], Tool: need}}
 					// loadArch is the value the DAEMON-side names bind to. It follows the
 					// cell while the job fans over arch, and pins to one declared value when
 					// the job stopped fanning but its producer did not — the build stamped
@@ -3369,7 +3372,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						stems = nil
 						for _, arch := range declaredArches(st) {
 							name := archArtifactStem("image", byName[need].Axes, arch)
-							stems = append(stems, DownloadView{Name: name, Arch: arch})
+							stems = append(stems, DownloadView{Name: name, Arch: arch, Node: toolNode[need], Tool: need})
 							step.Archives = append(step.Archives, ArchiveView{Arch: arch, Name: name})
 						}
 						if arches := declaredArches(st); len(arches) > 0 {
@@ -3433,7 +3436,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					for _, name := range artifactStems(need, byName[need].Axes, byName[need].Excludes, j.Axes) {
 						if !dlSeen[name] {
 							dlSeen[name] = true
-							job.Downloads = append(job.Downloads, DownloadView{Name: name, Path: path})
+							job.Downloads = append(job.Downloads, DownloadView{Name: name, Path: path, Node: toolNode[need], Tool: need})
 						}
 					}
 				}
@@ -3905,12 +3908,18 @@ func forgeGate(axes AxisMap, node, tool string) string {
 	for _, a := range axes {
 		clauses = append(clauses, onlyGate(a.Key, cellValue(a.Key)))
 	}
+	return strings.Join(append(clauses, muteGates(node, tool)...), " && ")
+}
+
+// muteGates is the mute clause of a node and of a tool, each only when named.
+func muteGates(node, tool string) []string {
+	var out []string
 	for _, name := range []string{node, tool} {
 		if name != "" {
-			clauses = append(clauses, skipGate(name))
+			out = append(out, skipGate(name))
 		}
 	}
-	return strings.Join(clauses, " && ")
+	return out
 }
 
 // pinRefusal is the INVERSE of a pinned axis's onlyGate: true exactly when the scope withholds the one value the node runs on.
@@ -3924,11 +3933,13 @@ func forgeGates(j JobView) JobView {
 	j.CellIf = forgeGate(j.Matrix, "", "")
 	for di := range j.Downloads {
 		d := &j.Downloads[di]
-		d.If = j.CellIf
+		gate := clauses(j.CellIf)
 		// a per-arch download names a value the job dropped, so its clause is the literal one
 		if d.Arch != "" {
-			d.If = strings.Join(append(clauses(j.CellIf), onlyGate(ci.ArchAxis, literalValue(d.Arch))), " && ")
+			gate = append(gate, onlyGate(ci.ArchAxis, literalValue(d.Arch)))
 		}
+		// a muted producer uploaded nothing, so its download answers to the same mutes
+		d.If = strings.Join(append(gate, muteGates(d.Node, d.Tool)...), " && ")
 	}
 	for si := range j.Steps {
 		st := &j.Steps[si]

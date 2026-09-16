@@ -1648,7 +1648,7 @@ func TestImageScanConsumesBuildTar(t *testing.T) {
 		"          submodules: true\n" +
 		"          persist-credentials: false\n" +
 		"      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8\n" +
-		"        if: " + forgeGate(series, "", "") + "\n" +
+		"        if: " + forgeGate(series, testImageBuilt, testContainerBuild) + "\n" +
 		"        with:\n" +
 		"          name: " + testImageMatrixStem + "\n" +
 		"      - name: grype-scan-image\n" +
@@ -1885,8 +1885,10 @@ func TestBuildArtifactHandoff(t *testing.T) {
 	if strings.Contains(string(fout), "overwrite:") {
 		t.Errorf("forgejo upload must not carry overwrite (unsupported by @v3):\n%s", fout)
 	}
+	// The download answers to the PRODUCER's mutes: a muted build-binaries uploads nothing,
+	// so a download gated on the consumer alone dies on "Artifact not found".
 	wantDown := "      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8\n" +
-		"        if: " + forgeGate(goAxes, "", "") + "\n" +
+		"        if: " + forgeGate(goAxes, "binaries-built", "build-binaries") + "\n" +
 		"        with:\n" +
 		"          name: " + name + "\n" +
 		"          path: dist\n" +
@@ -6013,7 +6015,7 @@ func TestMountCacheLowering(t *testing.T) {
 // TestForgeGateNarrowsEveryAxisOnTheStep pins the override family's axis shape: every
 // step of a cell carries one allow-list clause per axis its job fans over, plus the
 // mute clause of its node and of itself, and the shared download carries the axis
-// clauses alone. Nothing is baked from a variable, so the render stays byte-stable.
+// clauses plus its PRODUCER's mutes. Nothing is baked from a variable, so the render stays byte-stable.
 func TestForgeGateNarrowsEveryAxisOnTheStep(t *testing.T) {
 	st, err := ci.Parse([]byte(archSubtree))
 	if err != nil {
@@ -6033,7 +6035,7 @@ func TestForgeGateNarrowsEveryAxisOnTheStep(t *testing.T) {
 	for _, want := range []string{
 		"      - name: container-build\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n",
 		"      - name: grype-scan-tar\n        if: " + arch + " && " + skipGate("image-scanned") + " && " + skipGate("grype-scan-tar") + "\n",
-		"      - uses: actions/download-artifact@v3\n        if: " + arch + "\n        with:\n          name: image-${{ matrix." + ci.ArchAxis + " }}",
+		"      - uses: actions/download-artifact@v3\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n        with:\n          name: image-${{ matrix." + ci.ArchAxis + " }}",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing gated step %q\n---\n%s", want, s)
@@ -6071,7 +6073,7 @@ func TestPublishDownloadsCarryTheLiteralArchGate(t *testing.T) {
 	}
 	s := string(out)
 	for _, arch := range []string{testAmd64, testArm64, testRiscv64} {
-		want := "        if: " + onlyGate(ci.ArchAxis, literalValue(arch)) + "\n        with:\n          name: image-" + arch + "-"
+		want := "        if: " + onlyGate(ci.ArchAxis, literalValue(arch)) + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n        with:\n          name: image-" + arch + "-"
 		if !strings.Contains(s, want) {
 			t.Errorf("download for %s missing its literal arch gate\n---\n%s", arch, s)
 		}
