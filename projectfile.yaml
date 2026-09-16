@@ -21,6 +21,7 @@ includes:
   - .makefile/b19/ci.yaml
   - .makefile/b19/images/go.yaml
   - .makefile/b19/images/ubuntu.yaml
+  - .makefile/b19/traits/supplychain.yaml
   - .makefile/library/languages/go.yaml
   - .makefile/library/traits/go-binary.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/ghcr.yaml
