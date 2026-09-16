@@ -40,6 +40,13 @@ const (
 	testLinux           = "linux"
 	testAmd64           = "amd64"
 	testArm64           = "arm64"
+	testRiscv64         = "riscv64"
+)
+
+// series and goAxes are the matrix axes the fixtures fan over, keyed as the override gate names them.
+var (
+	series = AxisMap{{Key: testUbuntuSeries, Values: []string{testResolute, "noble"}}}
+	goAxes = AxisMap{{Key: "GOARCH", Values: []string{testAmd64}}, {Key: "GOOS", Values: []string{testLinux}}}
 )
 
 // matrixSubtree is the canonical exercise from the build order: a single axis,
@@ -227,7 +234,7 @@ func TestWorkflowRenders(t *testing.T) {
 	// INDENT GUARD: the dispatched step body must sit at 6 spaces under `steps:`
 	// (a template-trim slip once flattened the first item to column 0, and the
 	// Contains assertions above could not see it). Assert the exact block.
-	if !strings.Contains(s, "\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n        with:\n          submodules: true\n          persist-credentials: false\n      - name: container-build\n        run: ") {
+	if !strings.Contains(s, "\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n        with:\n          submodules: true\n          persist-credentials: false\n      - name: container-build\n        if: "+forgeGate(series, "image-built", "container-build")+"\n        run: ") {
 		t.Errorf("portable step body lost its 6-space indent under steps:\n%s", s)
 	}
 }
@@ -1246,7 +1253,7 @@ func TestProviderLeafRenders(t *testing.T) {
 	if strings.Contains(s, "init-shared-scripts") {
 		t.Errorf("container-build job still emits the removed init-shared-scripts step:\n%s", s)
 	}
-	if !strings.Contains(s, "\n      - name: container-build\n        uses: projectfile/actions/container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") {
+	if !strings.Contains(s, "\n      - name: container-build\n        if: "+forgeGate(series, "image-built", "container-build")+"\n        uses: projectfile/actions/container-build/buildx@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1") {
 		t.Errorf("container-build provider body lost its 6-space indent under steps:\n%s", s)
 	}
 	// The portable scanner still takes the default path: an image tool reaches its
@@ -1641,9 +1648,11 @@ func TestImageScanConsumesBuildTar(t *testing.T) {
 		"          submodules: true\n" +
 		"          persist-credentials: false\n" +
 		"      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8\n" +
+		"        if: " + forgeGate(series, "", "") + "\n" +
 		"        with:\n" +
 		"          name: " + testImageMatrixStem + "\n" +
 		"      - name: grype-scan-image\n" +
+		"        if: " + forgeGate(series, "image-tested", "grype-scan-image") + "\n" +
 		"        uses: projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1\n" +
 		"        with:\n" +
 		"          image: reg.example/go-tools\n" +
@@ -1855,8 +1864,10 @@ func TestBuildArtifactHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantUp := "      - name: build-binaries\n" +
+		"        if: " + forgeGate(goAxes, "binaries-built", "build-binaries") + "\n" +
 		"        run: go build -o dist/pf .\n" +
 		"      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\n" +
+		"        if: " + forgeGate(goAxes, "binaries-built", "build-binaries") + "\n" +
 		"        with:\n" +
 		"          name: " + name + "\n" +
 		"          path: dist\n" +
@@ -1875,10 +1886,12 @@ func TestBuildArtifactHandoff(t *testing.T) {
 		t.Errorf("forgejo upload must not carry overwrite (unsupported by @v3):\n%s", fout)
 	}
 	wantDown := "      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8\n" +
+		"        if: " + forgeGate(goAxes, "", "") + "\n" +
 		"        with:\n" +
 		"          name: " + name + "\n" +
 		"          path: dist\n" +
 		"      - name: gh-release\n" +
+		"        if: " + forgeGate(goAxes, "binaries-released", "gh-release") + "\n" +
 		"        run: gh release create"
 	if !strings.Contains(string(out), wantDown) {
 		t.Errorf("consumer missing the ordered download→run body:\n%s", out)
@@ -2123,14 +2136,17 @@ func TestScannerCacheLowering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gate := forgeGate(nil, "source-is-secure", "auto-grype")
 	want := "      - name: restore grype-db\n" +
 		"        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5\n" +
+		"        if: " + gate + "\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
 		"          key: ci-cache-grype-db-\n" +
 		"          restore-keys: |\n" +
 		"            ci-cache-grype-db-\n" +
 		"      - name: auto-grype\n" +
+		"        if: " + gate + "\n" +
 		"        uses: projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1\n"
 	if s := string(gha); !strings.Contains(s, want) {
 		t.Errorf("gha: missing the ordered restore→run-tool body:\n%s", s)
@@ -2178,6 +2194,7 @@ func TestScannerCacheWriterSave(t *testing.T) {
 	}
 	wantSave := "      - name: save grype-db\n" +
 		"        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5\n" +
+		"        if: " + forgeGate(nil, "scanner-db-refreshed", "grype-db-update") + "\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
 		"          key: ci-cache-grype-db-${{ github.run_id }}\n"
@@ -2357,6 +2374,7 @@ func TestContainerExecLowering(t *testing.T) {
 		}
 		s := string(out)
 		block := "      - name: container-test\n" +
+			"        if: " + forgeGate(nil, "container-is-tested", testContainerTest) + "\n" +
 			"        uses: projectfile/actions/container-exec@" + Targets[tgt].ActionVer + "\n" +
 			"        with:\n" +
 			"          container: ${{ env.M6E_CONTAINER_INSTANCE }}\n" +
@@ -2464,6 +2482,7 @@ func TestSecretsProvisionStep(t *testing.T) {
 		}
 		s := string(out)
 		uses := "      - name: secrets-provision\n" +
+			"        if: " + forgeGate(nil, "container-is-clean", ActionSecretsProvision) + "\n" +
 			"        uses: projectfile/actions/secrets-provision@" + Targets[tgt].ActionVer + "\n"
 		if !strings.Contains(s, uses) {
 			t.Errorf("%s: missing secrets-provision step:\n%s", tgt, s)
@@ -4313,7 +4332,7 @@ func TestToolEmitStepRenders(t *testing.T) {
 		// Gated on the sink being configured, the push having succeeded, AND the ref
 		// being a tag: a downstream router turns this fact into a rebuild dispatch for
 		// every consumer, and a preview base is what they must NOT be rebuilt against.
-		"if: ${{ success() && vars.EVENTS_WEBHOOK_URL != '' && github.ref_type == 'tag' }}",
+		"if: ${{ success() && vars.EVENTS_WEBHOOK_URL != '' && (" + forgeGate(series, "published", "oci-push") + ") && github.ref_type == 'tag' }}",
 		// The cell rides step env; toJSON is multi-line, so it must not be inlined.
 		"M6E_EVENT_CELL: ${{ toJSON(matrix) }}",
 		// Image and digest are read back from what the action verified, never recomposed.
@@ -4900,9 +4919,9 @@ func TestJobIfNeverReadsTheMatrixContext(t *testing.T) {
 }
 
 // TestPublishCellsCarryTheRunTimeSinkGate pins the forge-side switch: a publish cell
-// gates on CI_PUBLISH_SINKS, so withholding a destination stays a per-cell skip and
-// never widens what the job itself runs on. A lowering that declares no route gains no
-// gate, because it has no cell to withhold.
+// gates on CI_ONLY_M6E_PUBLISH_SINK, so withholding a destination stays a per-cell skip
+// and never widens what the job itself runs on. A lowering that declares no route gains
+// no sink clause, because it has no cell to withhold.
 func TestPublishCellsCarryTheRunTimeSinkGate(t *testing.T) {
 	st, err := ci.Parse([]byte(publishSubtree))
 	if err != nil {
@@ -4922,18 +4941,18 @@ func TestPublishCellsCarryTheRunTimeSinkGate(t *testing.T) {
 	}
 	// Comma-wrapped on both sides: the whole-name match is the point of the gate, so a
 	// bare contains() regressing here must fail the test rather than the fleet.
-	want := "contains(format(',{0},', vars.CI_PUBLISH_SINKS), format(',{0},', matrix.M6E_PUBLISH_SINK))"
+	want := "contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))"
 	if !strings.Contains(string(gha), want) {
 		t.Errorf("publish cell missing the run-time sink gate\n---\n%s", gha)
 	}
-	if !strings.Contains(string(gha), "vars.CI_PUBLISH_SINKS == ''") {
-		t.Errorf("unset CI_PUBLISH_SINKS must publish everywhere\n---\n%s", gha)
+	if !strings.Contains(string(gha), "vars.CI_ONLY_M6E_PUBLISH_SINK == ''") {
+		t.Errorf("unset CI_ONLY_M6E_PUBLISH_SINK must publish everywhere\n---\n%s", gha)
 	}
 	forgejo, err := Workflow(m, Targets[TargetForgejo], ci.Platform{})
 	if err != nil {
 		t.Fatalf("forgejo: %v", err)
 	}
-	if strings.Contains(string(forgejo), PublishSinksVar) {
+	if strings.Contains(string(forgejo), OnlyVar(PublishSinkAxis)) {
 		t.Errorf("forgejo declares no route but carries the sink gate\n---\n%s", forgejo)
 	}
 }
@@ -4979,19 +4998,22 @@ func TestPublishCellGateReachesEveryMember(t *testing.T) {
 	}
 	s := string(gha)
 	t.Logf("rendered workflow:\n%s", s)
-	// One gate per member of the publish job, the push included.
-	if got, want := strings.Count(s, "if: "+sinkGate()), 3; got != want {
-		t.Errorf("gated steps = %d, want %d (push + host member + containerised member)\n---\n%s", got, want, s)
+	// One sink clause per member of the publish job, the push included.
+	sink := onlyGate(PublishSinkAxis, cellValue(PublishSinkAxis))
+	if got, want := strings.Count(s, sink), 4; got != want {
+		t.Errorf("gated steps = %d, want %d (download + push + host member + containerised member)\n---\n%s", got, want, s)
 	}
 	// The containerised member is the regression that started this: run-tool rendered no
 	// `if:` at all, so the gate had nowhere to land even once publishCells set it.
-	for _, want := range []string{"- name: sign-key-file", "- name: sign-image"} {
-		i := strings.Index(s, want)
+	for _, tool := range []string{"sign-key-file", "sign-image"} {
+		name := "- name: " + tool
+		i := strings.Index(s, name)
 		if i < 0 {
-			t.Fatalf("step %q absent\n---\n%s", want, s)
+			t.Fatalf("step %q absent\n---\n%s", tool, s)
 		}
-		if !strings.Contains(s[i:i+len(want)+len(sinkGate())+16], "if: "+sinkGate()) {
-			t.Errorf("step %q does not carry the cell gate on its own line\n---\n%s", want, s)
+		gate := "if: " + sink + " && " + skipGate("published") + " && " + skipGate(tool)
+		if !strings.Contains(s[i:i+len(name)+len(gate)+16], gate) {
+			t.Errorf("step %q does not carry the cell gate on its own line\n---\n%s", tool, s)
 		}
 	}
 }
@@ -5127,7 +5149,7 @@ func TestPublishNodeTakesEveryArchArchive(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("%s Archives: want one per declared arch, got %v", testOCIPush, got)
 	}
-	for i, arch := range []string{"amd64", "arm64", "riscv64"} {
+	for i, arch := range []string{testAmd64, testArm64, testRiscv64} {
 		if got[i].Arch != arch {
 			t.Errorf("%s Archives[%d].Arch: want %q, got %q", testOCIPush, i, arch, got[i].Arch)
 		}
@@ -5985,5 +6007,124 @@ func TestMountCacheLowering(t *testing.T) {
 	off, step := render(t, src(`"mount-cache": false,`), TargetGHA)
 	if step.MountCache != "" || strings.Contains(off, "mount-cache") || strings.Contains(off, "actions: write") {
 		t.Errorf("mount-cache: false must render neither inputs nor scope (step=%q):\n%s", step.MountCache, off)
+	}
+}
+
+// TestForgeGateNarrowsEveryAxisOnTheStep pins the override family's axis shape: every
+// step of a cell carries one allow-list clause per axis its job fans over, plus the
+// mute clause of its node and of itself, and the shared download carries the axis
+// clauses alone. Nothing is baked from a variable, so the render stays byte-stable.
+func TestForgeGateNarrowsEveryAxisOnTheStep(t *testing.T) {
+	st, err := ci.Parse([]byte(archSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	out, err := Workflow(m, Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	arch := onlyGate(ci.ArchAxis, cellValue(ci.ArchAxis))
+	for _, want := range []string{
+		"      - name: container-build\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n",
+		"      - name: grype-scan-tar\n        if: " + arch + " && " + skipGate("image-scanned") + " && " + skipGate("grype-scan-tar") + "\n",
+		"      - uses: actions/download-artifact@v3\n        if: " + arch + "\n        with:\n          name: image-${{ matrix." + ci.ArchAxis + " }}",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing gated step %q\n---\n%s", want, s)
+		}
+	}
+	if got, want := SkipVar("grype-scan-tar"), "CI_SKIP_GRYPE_SCAN_TAR"; got != want {
+		t.Errorf("SkipVar = %q, want %q", got, want)
+	}
+	// A pure-join gate and the checkout carry no gate: only work that reads a cell value skips.
+	if strings.Contains(s, "      - run: echo published\n        if:") {
+		t.Errorf("a gate job must not carry an override gate\n---\n%s", s)
+	}
+}
+
+// TestPublishDownloadsCarryTheLiteralArchGate pins the dropped-axis consumer: the publish
+// job cannot read matrix.M6E_ARCH, so each per-arch download names its value literally
+// and oci-push takes the same list as `only-arches`, which is what keeps the member-arch
+// verify honest once a build cell was withheld.
+func TestPublishDownloadsCarryTheLiteralArchGate(t *testing.T) {
+	st, err := ci.Parse([]byte(archSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, arch := range []string{testAmd64, testArm64, testRiscv64} {
+		want := "        if: " + onlyGate(ci.ArchAxis, literalValue(arch)) + "\n        with:\n          name: image-" + arch + "-"
+		if !strings.Contains(s, want) {
+			t.Errorf("download for %s missing its literal arch gate\n---\n%s", arch, s)
+		}
+	}
+	if !strings.Contains(s, "          only-arches: ${{ vars."+OnlyVar(ci.ArchAxis)+" }}\n") {
+		t.Errorf("oci-push missing the only-arches input\n---\n%s", s)
+	}
+	// The push step itself reads no arch: its job dropped the axis.
+	i := strings.Index(s, "      - name: oci-push\n")
+	if i < 0 || strings.Contains(s[i:i+400], "matrix."+ci.ArchAxis) {
+		t.Errorf("oci-push gate must not name the dropped axis\n---\n%s", s)
+	}
+}
+
+// TestPinnedCellRefusesAWithheldValue pins the one refusal the family carries: a node
+// that pins an axis to one value has nowhere to run once a scope withholds it, and its
+// gate would pass green having run nothing. The refusal step fires on the inverse
+// clause, names the variable, and yields to an explicit mute of the node.
+func TestPinnedCellRefusesAWithheldValue(t *testing.T) {
+	st, err := ci.Parse([]byte(livePinSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	live := jobOf(m, testDCDown)
+	if len(live.Pins) != 1 || live.Pins[0].Axis != ci.ArchAxis || live.Pins[0].Value != testAmd64 {
+		t.Fatalf("live job pins: want the amd64 arch pin, got %+v", live.Pins)
+	}
+	if got := jobOf(m, testContainerBuild).Pins; len(got) != 0 {
+		t.Errorf("a fanning job carries no pin refusal, got %+v", got)
+	}
+	out, err := Workflow(m, Targets[TargetForgejo], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	want := "      - name: refuse a withheld " + ci.ArchAxis + "\n" +
+		"        if: vars.CI_ONLY_M6E_ARCH != '' && !contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',amd64,') && vars.CI_SKIP_CONTAINER_IS_VERIFIED != 'true'\n" +
+		"        run: echo \"CI_ONLY_M6E_ARCH withholds M6E_ARCH=amd64, the one value this node runs on\" >&2; exit 1\n"
+	if !strings.Contains(s, want) {
+		t.Errorf("missing the pin refusal step\n---\n%s", s)
+	}
+	if strings.Count(s, "refuse a withheld") != 1 {
+		t.Errorf("want exactly one refusal step (the pinned live job), got %d\n---\n%s", strings.Count(s, "refuse a withheld"), s)
+	}
+	// A fused member keeps its OWN node in the mute clause, and a teardown keeps its own guard.
+	for _, want := range []string{
+		"      - name: dc-up-d\n        if: " + onlyGate(ci.ArchAxis, cellValue(ci.ArchAxis)) + " && " + skipGate("container-is-ready") + " && " + skipGate("dc-up-d") + "\n",
+		"      - name: dc-down\n        if: ${{ always() }}\n",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q\n---\n%s", want, s)
+		}
 	}
 }

@@ -74,8 +74,17 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- if .Target.CheckoutToken }}
           token: {{ .Target.CheckoutToken }}
 {{- end }}
+{{- range .Job.Pins }}
+      # A withheld pin leaves this node nowhere to run; failing here keeps its gate from passing green
+      - name: refuse a withheld {{ .Axis }}
+        if: {{ .If }}
+        run: echo "{{ onlyVar .Axis }} withholds {{ .Axis }}={{ .Value }}, the one value this node runs on" >&2; exit 1
+{{- end }}
 {{- range .Job.Downloads }}
       - uses: {{ $.Target.Download }}
+{{- with .If }}
+        if: {{ . }}
+{{- end }}
         with:
           name: {{ .Name }}
 {{- if .Path }}
@@ -88,6 +97,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
       # four-transport probe that claims the tar matches no supported format. The retry
       # for that class lives in the pinned action, not inline (Law 2).
       - uses: {{ actionRef $.Target "container-load" }}
+{{- with .Job.CellIf }}
+        if: {{ . }}
+{{- end }}
         with:
           archive: {{ .Job.Stem }}.tar
 {{- end }}
@@ -134,6 +146,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
         run: {{ .Step.Command }}
 {{- if .Step.Upload }}
       - uses: {{ .Target.Upload }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
         with:
           name: {{ .Step.Upload }}
           path: {{ .Step.UploadPath }}
@@ -148,6 +163,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- range .Step.Caches }}
       - name: restore {{ .Name }}
         uses: {{ $.Target.CacheRestore }}
+{{- with $.Step.Gate }}
+        if: {{ . }}
+{{- end }}
         with:
           path: {{ cacheHostPath $.Target .Name }}
           key: {{ cacheKey .Name }}
@@ -192,6 +210,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- range writerCaches .Step }}
       - name: save {{ .Name }}
         uses: {{ $.Target.CacheSave }}
+{{- with $.Step.Gate }}
+        if: {{ . }}
+{{- end }}
         with:
           path: {{ cacheHostPath $.Target .Name }}
           key: {{ cacheSaveKey .Name }}
@@ -199,6 +220,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- end }}
 {{- if .Step.Upload }}
       - uses: {{ .Target.Upload }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
         with:
           name: {{ .Step.Upload }}
           path: {{ .Step.UploadPath }}
@@ -211,10 +235,16 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- define "providers/container-build" }}
 {{- if and (eq .Target.Key "gha") (eq .Target.Builder "buildx") }}
       - name: use an isolated buildx builder
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
         # the docker driver's image exporter needs the host's containerd store; docker-container carries its own, so no host config or restart is needed on any GHA runner flavor.
         run: docker buildx create --name ci --driver docker-container --use
 {{- end }}
       - name: {{ .Step.Name }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
         uses: {{ actionRef .Target (printf "%s/%s" .Step.Action .Target.Builder) }}
         with:
           artifact-name: {{ .Step.Stem }}
@@ -254,9 +284,8 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "providers/oci-push" }}
       - name: {{ .Step.Name }}
-{{- with .Step.PublishIf }}
-        # This cell's destination gate — on the STEP because a job `if:` may not read
-        # the matrix context, and a forge rejects the whole file when one does.
+{{- with .Step.Gate }}
+        # The cell's run-time override gate, on the STEP because a job `if:` may not read the matrix context
         if: {{ . }}
 {{- end }}
         uses: {{ actionRef .Target .Step.Action }}
@@ -269,6 +298,8 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- range .Step.Archives }}
             {{ .Arch }} {{ .Name }}
 {{- end }}
+          # The arches this scope may publish, the same list the per-arch downloads above honour
+          only-arches: {{ onlyArchesExpr }}
 {{- else }}
           artifact-name: {{ .Step.Stem }}
 {{- end }}
@@ -311,7 +342,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "providers/forgejo-release" }}
       - name: {{ .Step.Name }}
-{{- with .Step.PublishIf }}
+{{- with .Step.Gate }}
         if: {{ . }}
 {{- end }}
         uses: {{ actionRef .Target .Step.Action }}
@@ -372,7 +403,7 @@ step env because toJSON renders multi-line JSON; the run text is built in Go
 */ -}}
 {{- define "frag/emit" }}
       - name: emit {{ .Step.Emit.Event }}
-        if: {{ .Step.Emit.If .Step.PublishIf }}
+        if: {{ .Step.Emit.If .Step.RunIf }}
         env:
           {{ cellEnv }}: {{ .Step.Emit.Cell }}
         run: |
@@ -381,6 +412,9 @@ step env because toJSON renders multi-line JSON; the run text is built in Go
 
 {{- define "providers/container-exec" }}
       - name: {{ .Step.Name }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
         uses: {{ actionRef .Target .Step.Action }}
         with:
           container: {{ .Step.ExecContainer }}
@@ -404,6 +438,9 @@ dispatch live in the pinned action's provision.sh, NOT here — Law 2). `with:` 
 */ -}}
 {{- define "providers/secrets-provision" }}
       - name: {{ .Step.Name }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
         uses: {{ actionRef .Target .Step.Action }}
         with:
           declarations: {{ printf "%q" .Step.SecretsJSON }}

@@ -1757,13 +1757,10 @@ type StepView struct {
 	// binding is made per target beside `if:` and the credential refs. Empty on a target
 	// this step declares no route for, which is the historical single-job fan-out.
 	PublishSink string `json:"-"`
-	// PublishIf is this cell's run-time destination gate (sinkGate), rendered as the
-	// publish step's own `if:`. It rides the STEP because a JOB-level `if:` may not read
-	// the `matrix` context: both forges validate `if:` against a whitelist of github /
-	// needs / vars / inputs, and a job gate naming an axis makes the WHOLE workflow file
-	// unusable — every job in it, not just the publish. Same per-target lifetime as
-	// PublishSink, and reset beside it.
-	PublishIf string `json:"-"`
+	// RunIf is this step's run-time override gate (forgeGate), on the STEP because a job `if:` may not read `matrix`.
+	RunIf string `json:"-"`
+	// Node is the DAG node that owns this step, which a fused host job draws from several.
+	Node string `json:"node,omitempty"`
 	// Arch is this cell's target architecture, bound to the M6E_ARCH axis ci.Load mints
 	// from org.projectfile.architecture. It lowers to container-build's `platform:` (WHAT
 	// to build) and oci-push's `arch:` (WHERE to publish it), the producer and consumer
@@ -1839,16 +1836,12 @@ type StepView struct {
 	MountCache string `json:"mount-cache,omitempty"`
 }
 
-// Gate is the step's `if:`, whichever guard it carries: its OWN (a `when: always`
-// teardown) or, on a publish cell, the destination gate publishCells hung on every
-// member. The two never coexist — a teardown is exempted from the cell gate — so this
-// is a choice, not a conjunction, and neither needs `${{ }}` normalising to reach the
-// other. Empty => no `if:`, i.e. the runner's implicit success().
+// Gate is the step's `if:`: its own `when: always` guard, else the override gate forgeGates hung on it; the two never coexist.
 func (s StepView) Gate() string {
 	if s.If != "" {
 		return s.If
 	}
-	return s.PublishIf
+	return s.RunIf
 }
 
 // Cache is one named run-time cache a tool reads (Manifest.Caches): the NAME (the
@@ -1869,6 +1862,18 @@ type Cache struct {
 type DownloadView struct {
 	Name string
 	Path string
+	// Arch is the declared value a per-arch tar download names when the job dropped the arch axis; empty otherwise.
+	Arch string `json:"Arch,omitempty"`
+	// If is the download's run-time override gate, spelled per target by forgeGates.
+	If string `json:"-"`
+}
+
+// PinView is one axis a node pins to a single value (matrix.pin), refused at run time when a scope withholds that value.
+type PinView struct {
+	Axis  string
+	Value string
+	Node  string // the authored node, which a serialise link's job name no longer spells
+	If    string `json:"-"` // the refusal expression, spelled per target by forgeGates
 }
 
 // ArchiveView is one architecture's build output: the arch as the projectfile declared
@@ -1939,6 +1944,10 @@ type JobView struct {
 	// the downloads — the fused `live` stack needs the image present for `compose up`
 	// (a scanner instead reads the tar as a file via M6E_IMAGE_ARCHIVE, so Load is false).
 	Downloads []DownloadView `json:"downloads,omitempty"`
+	// CellIf is the job's run-time axis gate (forgeGates), carried by the load step and every download.
+	CellIf string `json:"-"`
+	// Pins are the axes this node narrows to one value (matrix.pin), each rendered as a refusal step ahead of the downloads.
+	Pins []PinView `json:"pins,omitempty"`
 	// ReportsUpload / ReportsPath: ONE diagnostic-report upload for the whole node-job
 	// (SARIF/JSON from every scanner member), not one per tool — a single artifact per
 	// job is downloadable as one zip instead of a fan-out of per-tool zips. Set when any
@@ -2060,7 +2069,7 @@ type StepEmitView struct {
 // If gates the step on the webhook var AND on everything before it having succeeded —
 // an image that failed to push is not a published image. success() is spelled out rather
 // than left implicit, so this gate reads next to the notify job's always() one. The cell
-// gate (StepView.PublishIf, empty off a publish cell) is conjoined because a SKIPPED
+// gate (StepView.RunIf, the override gate) is conjoined because a SKIPPED
 // publish leaves success() true: without it, a withheld destination announces an image
 // nothing ever pushed.
 func (e StepEmitView) If(gate string) string {
@@ -3312,6 +3321,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 				}
 			}
 			step := toolStep(j, st, b, dispatchArgs)
+			step.Node = ownerOf[t]
 			// Which names are the trunk — set HERE because only a `primary`-gated node asks,
 			// and toolStep cannot see the gate. A node without the token therefore renders
 			// exactly what it rendered before the input existed. PublishPreview proves this
@@ -3348,7 +3358,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					// uploaded their own tar and this job must take all of them. Bind the
 					// axis to each declared value instead of to a matrix expression, off the
 					// PRODUCER's axes so the two ends cannot drift.
-					stems := []string{step.Stem}
+					stems := []DownloadView{{Name: step.Stem}}
 					// loadArch is the value the DAEMON-side names bind to. It follows the
 					// cell while the job fans over arch, and pins to one declared value when
 					// the job stopped fanning but its producer did not — the build stamped
@@ -3359,17 +3369,17 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						stems = nil
 						for _, arch := range declaredArches(st) {
 							name := archArtifactStem("image", byName[need].Axes, arch)
-							stems = append(stems, name)
+							stems = append(stems, DownloadView{Name: name, Arch: arch})
 							step.Archives = append(step.Archives, ArchiveView{Arch: arch, Name: name})
 						}
 						if arches := declaredArches(st); len(arches) > 0 {
 							loadArch = arches[0]
 						}
 					}
-					for _, stem := range stems {
-						if !dlSeen[stem] {
-							dlSeen[stem] = true
-							job.Downloads = append(job.Downloads, DownloadView{Name: stem})
+					for _, dl := range stems {
+						if !dlSeen[dl.Name] {
+							dlSeen[dl.Name] = true
+							job.Downloads = append(job.Downloads, dl)
 						}
 					}
 					if man.Fuse == liveFuse {
@@ -3379,7 +3389,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						// host-arch-first (amd64 everywhere in this fleet), which is the only
 						// member a runner can actually run without emulation. Stem and
 						// loadArch move together — they name the same tar.
-						job.Stem = stems[0]
+						job.Stem = stems[0].Name
 						// build→live contract, all DERIVED from the per-cell basename so the
 						// loaded image, the compose `name:`, and a local `make` agree with no
 						// per-include hardcode: M6E_IMAGE_FULLNAME = the ref container-build
@@ -3473,7 +3483,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					if secretsArch == "" {
 						secretsArch = archVarExpr(axes)
 					}
-					job.Steps = append([]StepView{secretsStep(b, st, axes, secretsArch)}, job.Steps...)
+					secrets := secretsStep(b, st, axes, secretsArch)
+					secrets.Node = nv.Name
+					job.Steps = append([]StepView{secrets}, job.Steps...)
 					break
 				}
 			}
@@ -3493,6 +3505,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			if job.Load {
 				job.Include = append(job.Include, slugRows(slugAxes(axes))...)
 			}
+			job.Pins = pinViews(nv.Name, st.Nodes[nv.Name].Pin, job.Matrix)
 		} else {
 			job.Class = string(byName[memberTools[0]].Class)
 		}
@@ -3760,6 +3773,8 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		// downstream reads it — but a job whose matrix grows must do so before its
 		// view is handed to the template.
 		jobs[i] = publishCells(jobs[i], target.Key)
+		// after publishCells, so the destination axis is gated like every other
+		jobs[i] = forgeGates(jobs[i])
 		// Route this job's arch cells to their runners, after publishCells so the two
 		// include lowerings compose on one final matrix rather than one overwriting the
 		// other's rows.
@@ -3852,26 +3867,90 @@ func bindEnv(j JobView, creds map[string]string) []EnvVar {
 // a project's own axis.
 const PublishSinkAxis = "M6E_PUBLISH_SINK"
 
-// PublishSinksVar is the forge-level variable that narrows the sink axis at RUN time: a
-// comma list of the sink names this forge may publish to. UNSET publishes to every
-// declared sink, so a project that sets nothing keeps the behaviour it has today — the
-// only default a fleet-wide regeneration can safely carry.
-//
-// The gate is at STEP level: it names a matrix axis, and neither forge admits the
-// `matrix` context in a job-level `if:` — Forgejo rejects the whole workflow file for
-// it. A withheld destination therefore costs its cell's checkout and artifact download
-// before skipping the push, which is the price of a per-cell gate. Deriving the matrix
-// itself from the variable would skip even that and is deliberately not done: a
-// misspelt or unset value would yield an EMPTY matrix, and a publish job with zero
-// cells passes green having published nothing.
-const PublishSinksVar = "CI_PUBLISH_SINKS"
+// OnlyVarPrefix + an axis key names the forge variable listing the axis values a scope may run; unset admits every declared value.
+const OnlyVarPrefix = "CI_ONLY_"
 
-// sinkGate is the run-time narrowing expression for one publish cell. Both operands are
-// comma-wrapped so the match is on a WHOLE name: a bare `contains` would let a sink
-// named `ghcr` ride a list that names only `ghcr-mirror`.
-func sinkGate() string {
-	list := "vars." + PublishSinksVar
-	return list + " == '' || contains(format(',{0},', " + list + "), format(',{0},', matrix." + PublishSinkAxis + "))"
+// SkipVarPrefix + a node or tool name names the forge variable that mutes it at run time when set to `true`.
+const SkipVarPrefix = "CI_SKIP_"
+
+// OnlyVar names the run-time allow-list variable of one matrix axis.
+func OnlyVar(axis string) string { return OnlyVarPrefix + axis }
+
+// SkipVar names the run-time mute variable of one node or tool, upper-cased with `-` → `_` as credential names are.
+func SkipVar(name string) string {
+	return SkipVarPrefix + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+// onlyGate admits a cell whose axis VALUE the scope lists, or every cell while the variable is unset; comma-wrapped so the match is on a whole name.
+func onlyGate(axis, value string) string {
+	list := "vars." + OnlyVar(axis)
+	return "(" + list + " == '' || contains(format(',{0},', " + list + "), " + value + "))"
+}
+
+// cellValue is a cell's own value of an axis its job fans over, spelled for onlyGate.
+func cellValue(axis string) string { return "format(',{0},', matrix." + axis + ")" }
+
+// literalValue is one declared value of an axis the job dropped, spelled for onlyGate.
+func literalValue(value string) string { return "'," + value + ",'" }
+
+// skipGate admits a node or tool the scope has not muted.
+func skipGate(name string) string { return "vars." + SkipVar(name) + " != 'true'" }
+
+// forgeGate conjoins every override clause a step answers to: each axis its job fans over, then its node, then itself.
+func forgeGate(axes AxisMap, node, tool string) string {
+	clauses := make([]string, 0, len(axes)+2)
+	for _, a := range axes {
+		clauses = append(clauses, onlyGate(a.Key, cellValue(a.Key)))
+	}
+	for _, name := range []string{node, tool} {
+		if name != "" {
+			clauses = append(clauses, skipGate(name))
+		}
+	}
+	return strings.Join(clauses, " && ")
+}
+
+// pinRefusal is the INVERSE of a pinned axis's onlyGate: true exactly when the scope withholds the one value the node runs on.
+func pinRefusal(axis, value, node string) string {
+	list := "vars." + OnlyVar(axis)
+	return list + " != '' && !contains(format(',{0},', " + list + "), " + literalValue(value) + ") && " + skipGate(node)
+}
+
+// forgeGates spells a job's run-time override gates: the cell gate on its downloads and load, the full gate on every ungated step, the refusal on every pin.
+func forgeGates(j JobView) JobView {
+	j.CellIf = forgeGate(j.Matrix, "", "")
+	for di := range j.Downloads {
+		d := &j.Downloads[di]
+		d.If = j.CellIf
+		// a per-arch download names a value the job dropped, so its clause is the literal one
+		if d.Arch != "" {
+			d.If = strings.Join(append(clauses(j.CellIf), onlyGate(ci.ArchAxis, literalValue(d.Arch))), " && ")
+		}
+	}
+	for si := range j.Steps {
+		st := &j.Steps[si]
+		// assigned unconditionally: StepViews are shared across the per-target renders
+		st.RunIf = ""
+		if st.If == "" {
+			st.RunIf = forgeGate(j.Matrix, st.Node, st.Name)
+		}
+	}
+	for pi := range j.Pins {
+		p := &j.Pins[pi]
+		p.If = pinRefusal(p.Axis, p.Value, p.Node)
+	}
+	if len(j.Steps) > 0 {
+		genlog.Debug("forge gates", "job", j.Name, "axes", len(j.Matrix), "steps", len(j.Steps), "pins", len(j.Pins))
+	}
+	return j
+}
+
+// clauses is a gate as the list it conjoins, empty for the empty gate.
+func clauses(gate string) []string {
+	if gate == "" {
+		return nil
+	}
+	return []string{gate}
 }
 
 // publishCells makes the destination an AXIS of a publish job, so the fan-out over
@@ -3896,12 +3975,12 @@ func publishCells(j JobView, targetKey string) JobView {
 		// Assigned unconditionally: StepViews are shared across the per-target
 		// renders, so a step left untouched here would keep the PREVIOUS target's
 		// binding and publish a cell this target never declared.
-		st.PublishSink, st.PublishIf, st.ReleaseURL, st.ReleaseRepo = "", "", "", ""
+		st.PublishSink, st.ReleaseURL, st.ReleaseRepo = "", "", ""
 		refs, targets := st.PublishRefs[targetKey], st.ReleaseTargets[targetKey]
 		if len(refs) == 0 && len(targets) == 0 {
 			continue
 		}
-		st.PublishSink, st.PublishIf = matrixVarExpr(PublishSinkAxis, nil, nil), sinkGate()
+		st.PublishSink = matrixVarExpr(PublishSinkAxis, nil, nil)
 		for _, r := range refs {
 			sinks = appendUnique(sinks, r.Sink)
 		}
@@ -3926,19 +4005,8 @@ func publishCells(j JobView, targetKey string) JobView {
 	if len(sinks) == 0 {
 		return j
 	}
-	// The gate belongs to the CELL, not to the push step: every member of a withheld
-	// destination must skip with it. A member that READS what the push wrote — cosign
-	// signing the digest oci-push recorded — otherwise runs in a cell that published
-	// nothing and fails on the absent file, reporting a missing digest for what is
-	// really a destination the operator withheld. A `when: always` teardown keeps its
-	// own guard: it reaps what the cell itself created, published or not.
-	for si := range j.Steps {
-		if j.Steps[si].If == "" {
-			j.Steps[si].PublishIf = sinkGate()
-		}
-	}
 	genlog.Decision("publish_cells", j.Name+" -> "+strings.Join(sinks, ","),
-		"org.projectfile.publish (lowering "+targetKey+")", "org.projectfile.sinks · vars."+PublishSinksVar)
+		"org.projectfile.publish (lowering "+targetKey+")", "org.projectfile.sinks · vars."+OnlyVar(PublishSinkAxis))
 	j.Matrix = append(append(AxisMap{}, j.Matrix...), ci.Axis{Key: PublishSinkAxis, Values: sinks})
 	j.Include = append(append([]MatrixRowView{}, j.Include...), rows...)
 	j.Class = string(resolve.ClassCell)
@@ -4192,6 +4260,10 @@ var funcs = template.FuncMap{
 	// with Go template's own `{{ }}` delimiters — same reason alwaysExpr is a func. See
 	// OutputRegistryVar for the input/output registry distinction.
 	"outputRegistryExpr": outputRegistryExpr,
+	// onlyArchesExpr is the oci-push `only-arches:` input, the same variable the per-arch download steps read
+	"onlyArchesExpr": func() string { return VarRef(OnlyVar(ci.ArchAxis)) },
+	// onlyVar names an axis's allow-list variable, for the refusal message a pinned cell prints
+	"onlyVar": OnlyVar,
 	// cellEnv names the step-env key the emit fragment binds the matrix JSON to, so the
 	// template and the shell that reads it back share ONE literal.
 	"cellEnv": func() string { return CellEnv },
@@ -4370,6 +4442,22 @@ func pinAxis(axes []ci.Axis, idx int, value string) AxisMap {
 	copy(out, axes)
 	out[idx] = ci.Axis{Key: axes[idx].Key, Values: []string{value}}
 	return AxisMap(out)
+}
+
+// pinViews lists the axes a node's matrix.pin really narrowed, the ones a run-time withholding leaves nowhere to run.
+func pinViews(node string, pin map[string]string, matrix AxisMap) []PinView {
+	var pins []PinView
+	for _, axis := range sortedKeys(pin) {
+		vals := axisValues(matrix, axis)
+		// a pin resolve did not honour (unknown axis, foreign value) left the fan-out alone and has nothing to refuse
+		if len(vals) != 1 || vals[0] != pin[axis] {
+			genlog.Debug("matrix.pin: axis not narrowed, no refusal step", "node", node, "axis", axis, "values", vals)
+			continue
+		}
+		pins = append(pins, PinView{Axis: axis, Value: vals[0], Node: node})
+		genlog.Decision("pin_refusal", node+" "+axis+"="+vals[0], "vars."+OnlyVar(axis)+" withholding it fails the job", "nodes."+node+".matrix.pin")
+	}
+	return pins
 }
 
 // rowsMatching keeps the include/exclude rows that still belong to a link's narrowed grid:
