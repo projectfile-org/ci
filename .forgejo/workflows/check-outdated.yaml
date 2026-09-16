@@ -26,6 +26,7 @@ jobs:
           submodules: true
           persist-credentials: false
       - name: check-outdated-go
+        if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
         uses: projectfile/actions/run-tool@v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
