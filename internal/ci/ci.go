@@ -2693,10 +2693,10 @@ func productCells(axes []Axis) []map[string]string {
 	}
 	cells := []map[string]string{{}}
 	for _, a := range axes {
-		next := make([]map[string]string, 0, len(cells)*len(a.Values))
+		next := make([]map[string]string, 0)
 		for _, c := range cells {
 			for _, v := range a.Values {
-				cc := make(map[string]string, len(c)+1)
+				cc := make(map[string]string)
 				for k, val := range c {
 					cc[k] = val
 				}

@@ -2936,7 +2936,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// org.projectfile.build.args entries are auto-injected for the rest, mirroring the
 	// make reader's --build-arg auto-emit (run-images in ci.images are NOT build inputs).
 	if man.Action == ActionContainerBuild {
-		names := make([]string, 0, len(j.Axes)+len(man.Args)+len(extras))
+		names := make([]string, 0)
 		axis := make(map[string]bool, len(j.Axes)+len(extras))
 		for _, a := range j.Axes {
 			axis[a.Key] = true
