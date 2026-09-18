@@ -24,6 +24,7 @@ includes:
   - .makefile/b19/traits/supplychain.yaml
   - .makefile/library/languages/go.yaml
   - .makefile/library/traits/go-binary.yaml
+  - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/codeberg.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/github.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/registry/ghcr.yaml
@@ -73,6 +74,26 @@ links:
       uk: Пакунки на GHCR
     type: package-registry
     url: https://github.com/projectfile-org/ci/pkgs/container/ci
+  - label:
+      en: Projectfile CI Resolver on Codeberg
+      es: Projectfile CI Resolver en Codeberg
+      uk: Projectfile CI Resolver на Codeberg
+    priority: 90
+    tags:
+      - public
+      - badges
+      - badges-gitea
+    type: source-code
+    url: https://codeberg.org/projectfile/ci
+  - label:
+      en: Issues on Codeberg
+      es: Incidencias en Codeberg
+      uk: Задачі на Codeberg
+    priority: 90
+    tags:
+      - support
+    type: bugs
+    url: https://codeberg.org/projectfile/ci/issues
 org:
   projectfile:
     artifacts:
@@ -145,6 +166,9 @@ repositories:
   - role: mirror
     type: git
     url: git@github.com:projectfile-org/ci.git
+  - role: mirror
+    type: git
+    url: git@codeberg.org:projectfile/ci.git
 technologies:
   - go
   - python
