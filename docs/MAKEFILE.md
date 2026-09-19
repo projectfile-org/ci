@@ -1259,19 +1259,19 @@ Cross-compile the release binaries for the OS/arch cell
 
 > Image: GO_TOOL_IMAGE
 
-### `cosign-attest`
-
-Attest the SBOM to the published image with cosign
-
-`auto-cosign attest`
-
-> Image: D9T_GO_TOOLS_IMAGE
-
 ### `cosign-preflight`
 
 Prove the cosign signing key signs and verifies before anything is pushed
 
 `auto-cosign preflight`
+
+> Image: D9T_GO_TOOLS_IMAGE
+
+### `cosign-sbom-attest`
+
+Attest the SBOM to the published image with cosign
+
+`auto-cosign attest`
 
 > Image: D9T_GO_TOOLS_IMAGE
 
