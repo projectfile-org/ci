@@ -24,6 +24,7 @@ includes:
   - .makefile/b19/traits/supplychain.yaml
   - .makefile/library/languages/go.yaml
   - .makefile/library/traits/go-binary.yaml
+  - .makefile/library/traits/gpg-binary.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/codeberg.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/github.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml

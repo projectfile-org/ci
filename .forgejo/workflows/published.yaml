@@ -102,7 +102,7 @@ jobs:
       - run: echo binaries-are-ok
   binaries-are-released:
     runs-on: docker
-    needs: ["binaries-are-ok", "image-is-attested"]
+    needs: ["binaries-are-signed", "image-is-attested"]
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
@@ -121,9 +121,9 @@ jobs:
           submodules: true
           persist-credentials: false
       - uses: actions/download-artifact@v3
-        if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
+        if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
         with:
-          name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
+          name: gpg-sign-${{ github.run_id }}
           path: dist
       - name: forgejo-release
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_RELEASED != 'true' && vars.CI_SKIP_FORGEJO_RELEASE != 'true'
@@ -134,6 +134,60 @@ jobs:
           # kind=binary entry). The action suffixes it per cell (→ <path>-${GOOS}-${GOARCH})
           # to find the binary the build→consumer download edge restored to the workspace.
           release-asset-path: dist/pf-ci
+  binaries-are-signed:
+    runs-on: docker
+    needs: ["binaries-are-ok"]
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      M6E_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      M6E_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/download-artifact@v3
+        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
+        with:
+          name: build-binaries-amd64-linux-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
+        with:
+          name: build-binaries-amd64-darwin-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
+        with:
+          name: build-binaries-arm64-linux-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
+        with:
+          name: build-binaries-arm64-darwin-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@v3
+        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
+        with:
+          name: build-binaries-riscv64-linux-${{ github.run_id }}
+          path: dist
+      - name: gpg-key-file
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_KEY_FILE != 'true'
+        run: .makefile/core/scripts/gpg-key-file.sh
+      - name: gpg-sign
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        uses: projectfile/actions/run-tool@v1
+        with:
+          image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: .makefile/core/scripts/gpg-sign.sh --cell dist/pf-ci
+          env: |-
+            M6E_GPG_PASSPHRASE=${{ secrets.GPG_PASSPHRASE }}
+      - uses: actions/upload-artifact@v3
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        with:
+          name: gpg-sign-${{ github.run_id }}
+          path: dist
   container-is-ok:
     runs-on: docker
     needs: ["images-are-ok"]
