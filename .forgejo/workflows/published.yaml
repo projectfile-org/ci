@@ -102,7 +102,7 @@ jobs:
       - run: echo binaries-are-ok
   binaries-are-released:
     runs-on: docker
-    needs: ["binaries-are-signed", "image-is-attested"]
+    needs: ["binaries-are-signed", "image-is-attested", "image-is-signed"]
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
@@ -356,7 +356,7 @@ jobs:
           path: reports
   image-is-attested:
     runs-on: docker
-    needs: ["image-has-sbom", "image-is-signed"]
+    needs: ["image-has-sbom", "publish-image"]
     if: (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') || (startsWith(github.ref, 'refs/tags/'))
     strategy:
       matrix:
@@ -451,9 +451,22 @@ jobs:
           # This CELL's destination, off the publish axis: the job runs one cell per
           # place the archive goes, so a registry refusing a push fails only its own.
           sink: ${{ matrix.M6E_PUBLISH_SINK }}
-      - name: cosign-key-file
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_KEY_FILE != 'true'
+      - name: cosign-key-file-attest
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_KEY_FILE_ATTEST != 'true'
         run: .makefile/b19/scripts/cosign-key-file.sh
+      - name: cosign-key-file-sign
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_KEY_FILE_SIGN != 'true'
+        run: .makefile/b19/scripts/cosign-key-file.sh
+      - name: cosign-sbom-attest
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_SBOM_ATTEST != 'true'
+        uses: projectfile/actions/run-tool@v1
+        with:
+          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-cosign attest
+          env: |-
+            M6E_ARCH=${{ matrix.M6E_ARCH }}
+            COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
       - name: cosign-sign
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_SIGN != 'true'
         uses: projectfile/actions/run-tool@v1
@@ -461,16 +474,6 @@ jobs:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-cosign sign
-          env: |-
-            M6E_ARCH=${{ matrix.M6E_ARCH }}
-            COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
-      - name: cosign-attest
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_ATTEST != 'true'
-        uses: projectfile/actions/run-tool@v1
-        with:
-          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-cosign attest
           env: |-
             M6E_ARCH=${{ matrix.M6E_ARCH }}
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
@@ -649,7 +652,7 @@ jobs:
       - run: echo publish-image
   published:
     runs-on: docker
-    needs: ["binaries-are-released", "image-is-attested", "publish-image", "ready-to-publish"]
+    needs: ["binaries-are-released", "image-has-sbom", "image-is-attested", "image-is-signed", "publish-image", "ready-to-publish"]
     steps:
       - run: echo published
   ready-to-publish:

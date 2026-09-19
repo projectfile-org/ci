@@ -21,10 +21,11 @@ includes:
   - .makefile/b19/ci.yaml
   - .makefile/b19/images/go.yaml
   - .makefile/b19/images/ubuntu.yaml
-  - .makefile/b19/traits/supplychain.yaml
+  - .makefile/b19/traits/signed-images.yaml
+  - .makefile/b19/traits/attested-images.yaml
   - .makefile/library/languages/go.yaml
   - .makefile/library/traits/go-binary.yaml
-  - .makefile/library/traits/gpg-binary.yaml
+  - .makefile/library/traits/signed-binaries.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/codeberg.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/github.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml
