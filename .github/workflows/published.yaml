@@ -57,12 +57,12 @@ env:
   GOPROXY: https://kiota.ch/api/packages/projectfile/go,direct
 jobs:
   artifacts-are-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["binaries-are-ok", "image-is-ready", "inputs-are-ok"]
     steps:
       - run: echo artifacts-are-ok
   binaries-are-built:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["inputs-are-ok"]
     strategy:
       matrix:
@@ -89,7 +89,7 @@ jobs:
             ci-cache-go-
       - name: build-binaries
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -113,12 +113,12 @@ jobs:
           path: dist
           overwrite: true
   binaries-are-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["binaries-are-built", "gsa"]
     steps:
       - run: echo binaries-are-ok
   binaries-are-released:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["binaries-are-signed", "image-is-attested", "image-is-signed"]
     permissions:
       contents: write
@@ -149,7 +149,7 @@ jobs:
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_RELEASED != 'true' && vars.CI_SKIP_GH_RELEASE != 'true'
         run: .scripts/gh-release.sh "$RELEASE_TAG"
   binaries-are-signed:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["binaries-are-ok"]
     if: startsWith(github.ref, 'refs/tags/')
     env:
@@ -190,7 +190,7 @@ jobs:
         run: .makefile/core/scripts/gpg-key-file.sh
       - name: gpg-sign
         if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -204,12 +204,12 @@ jobs:
           path: dist
           overwrite: true
   container-is-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["images-are-ok"]
     steps:
       - run: echo container-is-ok
   container-is-verified:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["container-ready-to-test"]
     strategy:
       matrix:
@@ -236,7 +236,7 @@ jobs:
       # can delete a layer record mid-copy — podman then buries the real cause under a
       # four-transport probe that claims the tar matches no supported format. The retry
       # for that class lives in the pinned action, not inline (Law 2).
-      - uses: projectfile-org/actions/container-load@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+      - uses: projectfile-org/actions/container-load@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH)))
         with:
           archive: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
@@ -248,7 +248,7 @@ jobs:
         run: timeout --kill-after=10s "${M6E_COMPOSE_UP_TIMEOUT:-300}s" docker compose --project-name "$M6E_COMPOSE_PROJECT_NAME" --file .compose/pipeline.yaml up --detach --renew-anon-volumes --no-build </dev/null
       - name: container-test
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_READY_TO_TEST != 'true' && vars.CI_SKIP_CONTAINER_TEST != 'true'
-        uses: projectfile-org/actions/container-exec@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/container-exec@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           container: ${{ env.M6E_CONTAINER_INSTANCE }}
           run: test.d
@@ -263,22 +263,22 @@ jobs:
       # site), so one docker-cleanup step reaps both — the imperative reaps + their
       # `inspect` guard live in the pinned action, not inline (Law 2).
       - if: ${{ always() }}
-        uses: projectfile-org/actions/docker-cleanup@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/docker-cleanup@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
           network: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ env.M6E_RUN_SCOPE }}-network
   container-ready-to-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["container-is-ok"]
     steps:
       - run: echo container-ready-to-test
   documentation-is-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["documentation-passes-lint"]
     steps:
       - run: echo documentation-is-ok
   documentation-passes-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -286,24 +286,24 @@ jobs:
           persist-credentials: false
       - name: auto-markdownlint
         if: vars.CI_SKIP_DOCUMENTATION_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_MARKDOWNLINT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-markdownlint
       - name: auto-textlint
         if: vars.CI_SKIP_DOCUMENTATION_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_TEXTLINT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-textlint
   fetched:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - run: echo fetched
   gsa:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["binaries-are-built"]
     strategy:
       matrix:
@@ -327,7 +327,7 @@ jobs:
           path: dist
       - name: auto-gsa
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_GSA != 'true' && vars.CI_SKIP_AUTO_GSA != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -336,7 +336,7 @@ jobs:
             GOARCH=${{ matrix.GOARCH }}
             GOOS=${{ matrix.GOOS }}
   image-has-sbom:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["image-is-built"]
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
@@ -356,7 +356,7 @@ jobs:
           name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
       - name: syft-sbom-tar
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -371,7 +371,7 @@ jobs:
           path: reports
           overwrite: true
   image-is-attested:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["image-has-sbom", "publish-image"]
     permissions:
       contents: read
@@ -441,7 +441,7 @@ jobs:
       - name: oci-push
         # The cell's run-time override gate, on the STEP because a job `if:` may not read the matrix context
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_PUBLISH_IMAGE != 'true' && vars.CI_SKIP_OCI_PUSH != 'true'
-        uses: projectfile-org/actions/oci-push@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/oci-push@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           # One tar per DECLARED architecture, published together as a manifest list at
           # each cascade tag. Per-arch TAGS are deliberately not published: they are
@@ -480,7 +480,7 @@ jobs:
         run: .makefile/b19/scripts/cosign-key-file.sh
       - name: cosign-sbom-attest
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_SBOM_ATTEST != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -490,7 +490,7 @@ jobs:
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
       - name: cosign-sign
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_SIGN != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -513,11 +513,11 @@ jobs:
         M6E_ARCH: ["amd64", "arm64", "riscv64"]
         include:
           - M6E_ARCH: "amd64"
-            M6E_RUNNER: "ubuntu-latest"
+            M6E_RUNNER: "ubuntu-26.04"
           - M6E_ARCH: "arm64"
-            M6E_RUNNER: "ubuntu-24.04-arm"
+            M6E_RUNNER: "ubuntu-26.04-arm"
           - M6E_ARCH: "riscv64"
-            M6E_RUNNER: "ubuntu-latest"
+            M6E_RUNNER: "ubuntu-26.04"
     env:
       M6E_ARCH: ${{ matrix.M6E_ARCH }}
       M6E_NAMESPACE: projectfile
@@ -550,7 +550,7 @@ jobs:
         run: docker buildx create --name ci --driver docker-container --use
       - name: container-build
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
-        uses: projectfile-org/actions/container-build/buildx@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/container-build/buildx@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           artifact-name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
@@ -583,12 +583,12 @@ jobs:
           mount-cache-key: ci-cache-mounts-${{ matrix.M6E_ARCH }}-
           mount-cache-restore-keys: ci-cache-mounts-
   image-is-ready:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["container-is-verified", "image-is-secure"]
     steps:
       - run: echo image-is-ready
   image-is-secure:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["image-is-built"]
     strategy:
       matrix:
@@ -615,7 +615,7 @@ jobs:
             ci-cache-grype-db-
       - name: grype-scan-tar
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -641,7 +641,7 @@ jobs:
             ci-cache-trivy-db-
       - name: trivy-scan-tar
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -666,23 +666,23 @@ jobs:
           if-no-files-found: warn
           overwrite: true
   image-is-signed:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["publish-image"]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - run: echo image-is-signed
   images-are-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["image-is-built", "secrets-ready"]
     steps:
       - run: echo images-are-ok
   inputs-are-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["documentation-is-ok", "projectfile-is-ok", "source-is-ok"]
     steps:
       - run: echo inputs-are-ok
   projectfile-is-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["projectfile-is-valid"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -691,13 +691,13 @@ jobs:
           persist-credentials: false
       - name: pf-bridge-check
         if: vars.CI_SKIP_PROJECTFILE_IS_OK != 'true' && vars.CI_SKIP_PF_BRIDGE_CHECK != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: pf-bridge check
   projectfile-is-valid:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -705,34 +705,34 @@ jobs:
           persist-credentials: false
       - name: pf-validate
         if: vars.CI_SKIP_PROJECTFILE_IS_VALID != 'true' && vars.CI_SKIP_PF_VALIDATE != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: pf-cli validate
   publish-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["image-is-built", "ready-to-publish", "signing-is-ready"]
     if: (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') || (startsWith(github.ref, 'refs/tags/'))
     steps:
       - run: echo publish-image
   published:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["binaries-are-released", "image-has-sbom", "image-is-attested", "image-is-signed", "publish-image", "ready-to-publish"]
     steps:
       - run: echo published
   ready-to-publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["artifacts-are-ok"]
     steps:
       - run: echo ready-to-publish
   secrets-ready:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["image-is-built"]
     steps:
       - run: echo secrets-ready
   signing-is-ready:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     if: (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') || (startsWith(github.ref, 'refs/tags/'))
     env:
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
@@ -747,7 +747,7 @@ jobs:
         run: .makefile/b19/scripts/cosign-key-file.sh
       - name: cosign-preflight
         if: vars.CI_SKIP_SIGNING_IS_READY != 'true' && vars.CI_SKIP_COSIGN_PREFLIGHT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -755,7 +755,7 @@ jobs:
           env: |-
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
   source-is-compliant:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -763,25 +763,25 @@ jobs:
           persist-credentials: false
       - name: i18n-check
         if: vars.CI_SKIP_SOURCE_IS_COMPLIANT != 'true' && vars.CI_SKIP_I18N_CHECK != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-i18n check
       - name: reuse-lint
         if: vars.CI_SKIP_SOURCE_IS_COMPLIANT != 'true' && vars.CI_SKIP_REUSE_LINT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: reuse lint
   source-is-ok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: ["source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
     steps:
       - run: echo source-is-ok
   source-is-secure:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: /app/.cache/osv
     steps:
@@ -799,7 +799,7 @@ jobs:
             ci-cache-grype-db-
       - name: grype-scan-source
         if: vars.CI_SKIP_SOURCE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_SOURCE != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -823,7 +823,7 @@ jobs:
             ci-cache-osv-db-
       - name: osv-scanner-scan-source
         if: vars.CI_SKIP_SOURCE_IS_SECURE != 'true' && vars.CI_SKIP_OSV_SCANNER_SCAN_SOURCE != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -848,7 +848,7 @@ jobs:
             ci-cache-trivy-db-
       - name: trivy-scan-source
         if: vars.CI_SKIP_SOURCE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_SOURCE != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -871,7 +871,7 @@ jobs:
           if-no-files-found: warn
           overwrite: true
   source-is-tested:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -887,7 +887,7 @@ jobs:
             ci-cache-go-
       - name: go-test
         if: vars.CI_SKIP_SOURCE_IS_TESTED != 'true' && vars.CI_SKIP_GO_TEST != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -902,7 +902,7 @@ jobs:
           path: ${{ runner.temp }}/ci-cache/go
           key: ci-cache-go-${{ github.run_id }}
   source-passes-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -910,7 +910,7 @@ jobs:
           persist-credentials: false
       - name: auto-cffr-validate
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_CFFR_VALIDATE != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_R_TOOLS_IMAGE || format('{0}/d9t/r-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -925,7 +925,7 @@ jobs:
             ci-cache-go-
       - name: auto-golangci-lint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_GOLANGCI_LINT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -949,7 +949,7 @@ jobs:
             ci-cache-go-
       - name: auto-gosec
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_GOSEC != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -965,28 +965,28 @@ jobs:
           key: ci-cache-go-${{ github.run_id }}
       - name: auto-jsonlint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_JSONLINT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-jsonlint
       - name: auto-shellcheck
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_SHELLCHECK != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-shellcheck
       - name: auto-yamllint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_YAMLLINT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: auto-yamllint
       - name: auto-zizmor
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_ZIZMOR != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_RUST_TOOLS_IMAGE || format('{0}/d9t/rust-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -1001,7 +1001,7 @@ jobs:
             ci-cache-go-
       - name: go-vet
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_GO_VET != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -1017,7 +1017,7 @@ jobs:
           key: ci-cache-go-${{ github.run_id }}
       - name: hadolint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_HADOLINT != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.HADOLINT_IMAGE || 'hadolint/hadolint' }}
           version: v2.15.1
@@ -1025,7 +1025,7 @@ jobs:
           run: hadolint Dockerfile
       - name: ignorelint-check
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_IGNORELINT_CHECK != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.IGNORELINT_IMAGE || format('{0}/ignorelint', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}

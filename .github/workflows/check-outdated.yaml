@@ -20,7 +20,7 @@ env:
   GOPROXY: https://kiota.ch/api/packages/projectfile/go,direct
 jobs:
   check-outdated:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     if: (github.event_name == 'workflow_dispatch') || (github.event_name == 'schedule')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -37,7 +37,7 @@ jobs:
             ci-cache-go-
       - name: check-outdated-go
         if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
-        uses: projectfile-org/actions/run-tool@0a61a9791cfabc5fdbc085e036a9ce9dc03619ab # v1
+        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
