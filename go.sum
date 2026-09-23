@@ -44,3 +44,5 @@ golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 kiota.ch/projectfile/core/v2 v2.12.0 h1:1TscMNx3A1APtrX40sscQO1e+3UMB0Yhhh0RdDi92+4=
 kiota.ch/projectfile/core/v2 v2.12.0/go.mod h1:ChpHLJ/O1vF2BwnDang3h2OgfmatlIj8nMHx5/iCnhs=
+kiota.ch/projectfile/core/v2 v2.12.3 h1:NepIR5KbE4Gg/XRxVwoTeoAdQhCIIGGYDNPEHiH9Uzk=
+kiota.ch/projectfile/core/v2 v2.12.3/go.mod h1:ChpHLJ/O1vF2BwnDang3h2OgfmatlIj8nMHx5/iCnhs=
