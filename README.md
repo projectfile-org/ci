@@ -28,6 +28,7 @@ See [FEATURES.md](FEATURES.md) for the full list.
 
 - **Executable** `pf-ci`
 - **Container image** `ghcr.io/projectfile-org/ci:latest`
+- **Container image** `docker.io/damianbuho/projectfile-ci:latest`
 
 ## Supported platforms
 
@@ -43,6 +44,12 @@ Pull the published container image:
 
 ```sh
 docker pull ghcr.io/projectfile-org/ci:latest
+```
+
+### Pull from DockerHub
+
+```sh
+docker pull docker.io/damianbuho/projectfile-ci:latest
 ```
 
 Stable releases also publish `X.Y.Z`, `X.Y` and `X` tags — pull the precision you want to pin.

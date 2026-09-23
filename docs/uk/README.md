@@ -30,6 +30,7 @@ pf-cli-managed: yes
 
 - **Виконуваний файл** `pf-ci`
 - **Образ контейнера** `ghcr.io/projectfile-org/ci:latest`
+- **Образ контейнера** `docker.io/damianbuho/projectfile-ci:latest`
 
 ## Підтримувані платформи
 
@@ -45,6 +46,12 @@ pf-cli-managed: yes
 
 ```sh
 docker pull ghcr.io/projectfile-org/ci:latest
+```
+
+### Завантажити з DockerHub
+
+```sh
+docker pull docker.io/damianbuho/projectfile-ci:latest
 ```
 
 Стабільні випуски також публікують теґи `X.Y.Z`, `X.Y` і `X` — завантажте той рівень точності, який хочете зафіксувати.

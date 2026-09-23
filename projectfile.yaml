@@ -29,6 +29,7 @@ includes:
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/codeberg.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/github.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml
+  - https://kiota.ch/damian-buho/metadata/raw/branch/main/registry/dockerhub.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/registry/ghcr.yaml
   - https://kiota.ch/projectfile/metadata/raw/branch/main/include.yaml
 keywords:
@@ -96,6 +97,12 @@ links:
       - support
     type: bugs
     url: https://codeberg.org/projectfile/ci/issues
+  - label:
+      en: Packages on Docker Hub
+      es: Paquetes en Docker Hub
+      uk: Пакунки на Docker Hub
+    type: package-registry
+    url: https://hub.docker.com/r/damianbuho/projectfile-ci
 org:
   projectfile:
     artifacts:
