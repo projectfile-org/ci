@@ -32,6 +32,8 @@ const (
 	testResolute        = "resolute"
 	testJsToolsImage    = "D9T_JS_TOOLS_IMAGE"
 	testKiotaHead       = "kiota.ch"
+	testNodeToolImage   = "NODE_TOOL_IMAGE"
+	testNodeSeries      = "B19_NODE_SERIES"
 	testContainerTest   = "container-test"
 	testDCUp            = "dc-up-d"
 	testDCDown          = "dc-down"
@@ -1587,6 +1589,35 @@ func TestSinkComposedImageRefs(t *testing.T) {
 		if strings.Contains(s, bad) {
 			t.Errorf("raw make syntax leaked into output (%q):\n%s", bad, s)
 		}
+	}
+}
+
+// TestSinkComposedToolImageSeriesDefault pins a tool image whose path carries a build-arg series: the ref falls back to the arg's default.
+func TestSinkComposedToolImageSeriesDefault(t *testing.T) {
+	const subtree = `{
+  "tools": {"npm-test": {"image": "NODE_TOOL_IMAGE", "run": "npm test"}},
+  "nodes": {"ready": {"goal": true, "needs": {"npm-test": true}}}
+}`
+	build := &ci.Build{
+		Images:     map[string]string{testNodeToolImage: "kiota.ch/b19/node-${B19_NODE_SERIES}:${M6E_BASE_IMAGE_DEFAULT_VERSION}"},
+		ImageHeads: map[string]string{testNodeToolImage: testKiotaHead},
+		Args:       []ci.BuildInput{{Name: testNodeSeries, Default: "26"}},
+	}
+	st, err := ci.Parse([]byte(subtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, build), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "image: ${{ vars.NODE_TOOL_IMAGE || format('{0}/b19/node-{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.B19_NODE_SERIES || '26') }}"
+	if !strings.Contains(string(out), want) {
+		t.Errorf("tool image series lost its default:\nwant %q\ngot:\n%s", want, out)
 	}
 }
 
@@ -3823,7 +3854,7 @@ func TestDispatchBuildArgsExposesAndOverrides(t *testing.T) {
 }`
 	build := &ci.Build{
 		Args: []ci.BuildInput{
-			{Name: "B19_NODE_SERIES", Default: "24"},                               // literal default -> exposed, pre-filled
+			{Name: testNodeSeries, Default: "24"},                                  // literal default -> exposed, pre-filled
 			{Name: "B19_LOCALES", Default: ""},                                     // empty default -> exposed, no pre-fill
 			{Name: testUbuntuHash, File: ".container/deps/{B19_NODE_SERIES}.deps"}, // file arg -> NOT exposed
 			{Name: "B19_BASE_IMAGE", Default: "${B19_DOCKER_REGISTRY}/b19/ubuntu"}, // composed default -> NOT exposed
@@ -3869,8 +3900,8 @@ func TestDispatchBuildArgsExposesAndOverrides(t *testing.T) {
 	for _, e := range steps(m)[testContainerBuild].Env {
 		env[e.Key] = e.Value
 	}
-	if want := "${{ inputs.B19_NODE_SERIES || vars.B19_NODE_SERIES || '24' }}"; env["B19_NODE_SERIES"] != want {
-		t.Errorf("B19_NODE_SERIES override: want %q, got %q", want, env["B19_NODE_SERIES"])
+	if want := "${{ inputs.B19_NODE_SERIES || vars.B19_NODE_SERIES || '24' }}"; env[testNodeSeries] != want {
+		t.Errorf("B19_NODE_SERIES override: want %q, got %q", want, env[testNodeSeries])
 	}
 	if want := "${{ inputs.B19_LOCALES || vars.B19_LOCALES }}"; env["B19_LOCALES"] != want {
 		t.Errorf("B19_LOCALES override: want %q, got %q", want, env["B19_LOCALES"])
@@ -3888,7 +3919,7 @@ func TestDispatchBuildArgsGoalScoped(t *testing.T) {
   "tools": {"container-build": {"action": "container-build"}},
   "nodes": {"image-built": {"goal": true, "needs": {"container-build": true}}}
 }`
-	build := &ci.Build{Args: []ci.BuildInput{{Name: "B19_NODE_SERIES", Default: "24"}}}
+	build := &ci.Build{Args: []ci.BuildInput{{Name: testNodeSeries, Default: "24"}}}
 	st, err := ci.Parse([]byte(src))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -3901,8 +3932,8 @@ func TestDispatchBuildArgsGoalScoped(t *testing.T) {
 	for _, e := range steps(Build(rm, st, build))[testContainerBuild].Env {
 		env[e.Key] = e.Value
 	}
-	if want := "${{ vars.B19_NODE_SERIES || '24' }}"; env["B19_NODE_SERIES"] != want {
-		t.Errorf("a flagless goal must not add an inputs prefix: want %q, got %q", want, env["B19_NODE_SERIES"])
+	if want := "${{ vars.B19_NODE_SERIES || '24' }}"; env[testNodeSeries] != want {
+		t.Errorf("a flagless goal must not add an inputs prefix: want %q, got %q", want, env[testNodeSeries])
 	}
 }
 

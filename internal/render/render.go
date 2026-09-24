@@ -330,7 +330,7 @@ func declaredImageRef(name string, b *ci.Build) (ref string, ok bool) {
 		return "", false
 	}
 	if head, sank := b.ImageHeads[name]; sank { // sink-composed: full ref, SOURCE_DOCKER_REGISTRY fallback tier included
-		return sinkImageExpr(name, head, b.Images[name], nil, nil, nil) + tagFallback(b.Images[name]), true
+		return sinkImageExpr(name, head, b.Images[name], buildArgDefaults(b), nil, nil) + tagFallback(b.Images[name]), true
 	}
 	return imageExpr(name, b) + ":" + imageTagExpr(), true // plain lowered path + shared tag expr
 }
@@ -1009,10 +1009,8 @@ func imageExpr(varName string, b *ci.Build) string {
 	}
 	lit := imagePath(val)
 	if head, sank := b.ImageHeads[resolved]; sank && strings.HasPrefix(lit, head+"/") {
-		// Sink-composed: the redirect + per-image override wrap, repository-scoped
-		// (run-tool appends the tag). Defaults/matrix are nil — a tool PATH has no
-		// build-arg refs to default (the series cases are build-args, not tools).
-		return sinkImageExpr(resolved, head, lit, nil, nil, nil)
+		// Sink-composed and repository-scoped; a series ref in the path falls back to its build-arg default.
+		return sinkImageExpr(resolved, head, lit, buildArgDefaults(b), nil, nil)
 	}
 	if ok && lit != "" {
 		return imagePathExpr(lit)
@@ -1055,7 +1053,7 @@ func toolImageParts(varName string, b *ci.Build) (path, pinnedTag string) {
 		// Sink-composed: the redirect + per-image override wrap replaces the
 		// external-literal wrap below (a sink-composed path is never a bare
 		// literal, so that guard could not fire for it anyway).
-		path = sinkImageExpr(resolved, head, lit, nil, nil, nil)
+		path = sinkImageExpr(resolved, head, lit, buildArgDefaults(b), nil, nil)
 	} else if ok && lit != "" {
 		path = imagePathExpr(lit)
 		if path == lit { // no ${VAR} lowered ⇒ external literal ⇒ instance override knob
