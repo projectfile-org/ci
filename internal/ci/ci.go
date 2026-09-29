@@ -1217,6 +1217,13 @@ func LoadBuild(pfPath, lowering string) (*Build, error) {
 	if err != nil {
 		return nil, fmt.Errorf("org.projectfile.build: %w", err)
 	}
+	// Document references resolve here; a `${VAR}` the document cannot answer stays for the env lowering
+	for n, bi := range inputs {
+		if expanded := interp.Expand(r.doc, bi.Default); expanded != bi.Default {
+			genlog.Debug("build_arg_document_ref", "name", bi.Name, "template", bi.Default, "value", expanded)
+			inputs[n].Default = expanded
+		}
+	}
 	// The events model is opt-in and orthogonal to images/build: a project may declare
 	// org.projectfile.events with no container-build at all. Presence of the subtree
 	// enables the webhook notify job (gated at runtime on the var); its resolved var

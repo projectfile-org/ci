@@ -1957,3 +1957,42 @@ func TestNewReaderRejectsNewerFeaturesLevel(t *testing.T) {
 		t.Fatalf("newReader level 1: got %v, want nil", err)
 	}
 }
+
+// TestLoadBuildResolvesDocumentRefsInArgs pins that a build arg reads the document while a make variable waits for the env lowering.
+func TestLoadBuildResolvesDocumentRefsInArgs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  name: postgresql
+org:
+  projectfile:
+    artifacts:
+      postgresql:
+        kind: service
+        ports: [{port: 5432}]
+        secrets: [o9s.postgresql.password, o9s.postgresql.username]
+    build:
+      args:
+        PORT: ${org.projectfile.artifacts.postgresql.ports[0].port}
+        SECRETS: $[org.projectfile.artifacts.postgresql.secrets[] | ${.}]
+        BASE: ${B19_DOCKER_REGISTRY}/b19/ubuntu
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBuild(path, "gha")
+	if err != nil {
+		t.Fatalf("LoadBuild: %v", err)
+	}
+	got := map[string]string{}
+	for _, bi := range b.Args {
+		got[bi.Name] = bi.Default
+	}
+	want := map[string]string{
+		"PORT":    "5432",
+		"SECRETS": "o9s.postgresql.password o9s.postgresql.username",
+		"BASE":    "${B19_DOCKER_REGISTRY}/b19/ubuntu",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args:\n got %#v\nwant %#v", got, want)
+	}
+}
