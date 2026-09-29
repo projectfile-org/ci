@@ -114,3 +114,15 @@ func TestUnknownFlagIsUsageError(t *testing.T) {
 		t.Fatalf("stderr %q lacks resolve usage", stderr.String())
 	}
 }
+
+// TestQuietFlag pins -q and -quiet on every subcommand.
+func TestQuietFlag(t *testing.T) {
+	for name := range commands {
+		for _, flagName := range []string{"-q", "-quiet"} {
+			fs, o, _ := newFlagSet(name)
+			if err := fs.Parse([]string{flagName}); err != nil || !o.quiet {
+				t.Fatalf("%s %s: quiet=%v err=%v, want quiet", name, flagName, o.quiet, err)
+			}
+		}
+	}
+}

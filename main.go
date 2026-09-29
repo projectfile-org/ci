@@ -51,6 +51,7 @@ func (e usageError) Error() string { return e.msg }
 type opts struct {
 	pf, target, out string
 	check, verbose  bool
+	quiet           bool
 }
 
 // commands maps each subcommand to its one-line summary and its runner.
@@ -128,6 +129,8 @@ func newFlagSet(name string) (*flag.FlagSet, *opts, bool) {
 	o := &opts{}
 	fs.StringVar(&o.pf, "pf", "", "projectfile path (default: auto-discover)")
 	fs.BoolVar(&o.verbose, "verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
+	fs.BoolVar(&o.quiet, "quiet", false, "mute progress lines; warnings, errors and the verdict still print")
+	fs.BoolVar(&o.quiet, "q", false, "shorthand for -quiet")
 	if name == "generate" {
 		fs.StringVar(&o.target, "target", "", "render target: "+fmt.Sprint(render.TargetKeys()))
 		fs.StringVar(&o.out, "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook")
@@ -147,8 +150,8 @@ func usage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `pf-ci — lower org.projectfile.ci to vendor CI workflows
 
 Usage:
-  pf-ci resolve  [-pf PATH] [-verbose]
-  pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check] [-verbose]
+  pf-ci resolve  [-pf PATH] [-verbose|-q]
+  pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check] [-verbose|-q]
   pf-ci help [COMMAND]
   pf-ci version
 
@@ -157,6 +160,10 @@ generate  Render the job model to a target’s workflow YAML, or (-check) verify
           the committed workflow still matches the source DAG.
 help      Print this help, or one command’s flags (also: pf-ci COMMAND -h).
 version   Print the resolver version (the codegen provenance stamp).
+
+Flags resolve and generate share:
+  -q, -quiet           Mute progress lines; warnings, errors and the verdict still print.
+  -verbose             Show operational log lines; also PF_CLI_VERBOSE=1.
 
 Environment:
   PF_CI_WORKFLOW_EXT   Committed-workflow file extension, ".yaml" or ".yml"
@@ -211,6 +218,7 @@ func platformOf(st *ci.Subtree, key string) ci.Platform {
 func cmdResolve(o *opts, stdout io.Writer) error {
 	pf := &o.pf
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
+	genlog.SetQuiet(o.quiet)
 	// resolve emits the VENDOR-NEUTRAL model: no target, so no membership prune —
 	// every declared tool appears (it is the shared contract, not one vendor's view).
 	st, err := ci.Load(*pf)
@@ -232,6 +240,7 @@ func cmdResolve(o *opts, stdout io.Writer) error {
 func cmdGenerate(o *opts, _ io.Writer) error {
 	targetKey, pf, out, check := &o.target, &o.pf, &o.out, &o.check
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
+	genlog.SetQuiet(o.quiet)
 	target, ok := render.Targets[*targetKey]
 	if !ok {
 		return fmt.Errorf("unknown -target %q (have %v)", *targetKey, render.TargetKeys())
