@@ -5,8 +5,10 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"projectfile.org/projectfile/ci/internal/ci"
@@ -73,5 +75,42 @@ func TestCheckFreshDirReportsOrphan(t *testing.T) {
 	}
 	if err := checkFreshDir(dir, ".yaml", map[string][]byte{}); err == nil {
 		t.Fatalf("checkFreshDir: got nil error, want an orphan failure for %s", stale)
+	}
+}
+
+// TestSubcommandHelp pins that every help spelling prints that subcommand’s help to stdout and exits 0.
+func TestSubcommandHelp(t *testing.T) {
+	const help, gen, res = "--help", "generate", "resolve"
+	for _, tc := range []struct {
+		sub  string
+		args []string
+	}{
+		{res, []string{res, help}},
+		{res, []string{res, "-h"}},
+		{gen, []string{gen, "-target", "gha", "-check", help}},
+		{gen, []string{"help", gen}},
+		{gen, []string{help, gen}},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(tc.args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v: exit %d, want 0 (stderr=%q)", tc.args, code, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "pf-ci "+tc.sub+" ") {
+			t.Fatalf("%v: stdout %q lacks %s usage", tc.args, stdout.String(), tc.sub)
+		}
+		if strings.Contains(stdout.String()+stderr.String(), "help requested") {
+			t.Fatalf("%v: leaked flag.ErrHelp text", tc.args)
+		}
+	}
+}
+
+// TestUnknownFlagIsUsageError pins that a bad flag exits 2 with the subcommand’s help on stderr.
+func TestUnknownFlagIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"resolve", "-nope"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "pf-ci resolve ") {
+		t.Fatalf("stderr %q lacks resolve usage", stderr.String())
 	}
 }

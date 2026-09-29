@@ -21,8 +21,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -40,46 +42,120 @@ import (
 // traced to the resolver that produced it.
 var version = "dev"
 
-func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
-	}
-	var err error
-	switch os.Args[1] {
-	case "resolve":
-		err = cmdResolve(os.Args[2:])
-	case "generate":
-		err = cmdGenerate(os.Args[2:])
-	case "version", "--version", "-v":
-		fmt.Println("pf-ci", version)
-		return
-	case "-h", "--help", "help":
-		usage()
-		return
-	default:
-		fmt.Fprintf(os.Stderr, "pf-ci: unknown command %q\n\n", os.Args[1])
-		usage()
-		os.Exit(2)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pf-ci: %v\n", err)
-		genlog.FlushDebug()
-		os.Exit(1)
-	}
+// usageError marks a bad invocation, which exits 2 instead of 1.
+type usageError struct{ msg string }
+
+func (e usageError) Error() string { return e.msg }
+
+// opts holds every subcommand flag; a subcommand defines only the ones it reads.
+type opts struct {
+	pf, target, out string
+	check, verbose  bool
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `pf-ci — lower org.projectfile.ci to vendor CI workflows
+// commands maps each subcommand to its one-line summary and its runner.
+var commands = map[string]struct {
+	summary string
+	run     func(o *opts, stdout io.Writer) error
+}{
+	"resolve":  {"Emit the vendor-neutral job model as JSON (the template input).", cmdResolve},
+	"generate": {"Render the job model to a target’s workflow YAML, or (-check) verify the committed workflow still matches the source DAG.", cmdGenerate},
+}
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run dispatches one invocation and returns its exit code.
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		usage(stderr)
+		return 2
+	}
+	switch args[0] {
+	case "version", "--version", "-v":
+		_, _ = fmt.Fprintln(stdout, "pf-ci", version)
+		return 0
+	case "-h", "--help", "help":
+		if len(args) < 2 {
+			usage(stdout)
+			return 0
+		}
+		fs, _, ok := newFlagSet(args[1])
+		if !ok {
+			_, _ = fmt.Fprintf(stderr, "pf-ci: no help for unknown command %q\n\n", args[1])
+			usage(stderr)
+			return 2
+		}
+		subUsage(stdout, fs)
+		return 0
+	}
+	fs, o, ok := newFlagSet(args[0])
+	if !ok {
+		_, _ = fmt.Fprintf(stderr, "pf-ci: unknown command %q\n\n", args[0])
+		usage(stderr)
+		return 2
+	}
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			subUsage(stdout, fs)
+			return 0
+		}
+		subUsage(stderr, fs)
+		return 2
+	}
+	err := commands[fs.Name()].run(o, stdout)
+	if err == nil {
+		return 0
+	}
+	_, _ = fmt.Fprintf(stderr, "pf-ci: %v\n", err)
+	genlog.FlushDebug()
+	var ue usageError
+	if errors.As(err, &ue) {
+		return 2
+	}
+	return 1
+}
+
+// newFlagSet builds a subcommand’s flags; ok is false for an unknown name.
+func newFlagSet(name string) (*flag.FlagSet, *opts, bool) {
+	if _, ok := commands[name]; !ok {
+		return nil, nil, false
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.Usage = func() {}
+	o := &opts{}
+	fs.StringVar(&o.pf, "pf", "", "projectfile path (default: auto-discover)")
+	fs.BoolVar(&o.verbose, "verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
+	if name == "generate" {
+		fs.StringVar(&o.target, "target", "", "render target: "+fmt.Sprint(render.TargetKeys()))
+		fs.StringVar(&o.out, "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook")
+		fs.BoolVar(&o.check, "check", false, "freshness gate: exit non-zero if the committed workflow drifted")
+	}
+	return fs, o, true
+}
+
+// subUsage prints one subcommand’s summary and flags to w.
+func subUsage(w io.Writer, fs *flag.FlagSet) {
+	_, _ = fmt.Fprintf(w, "Usage: pf-ci %s [flags]\n\n%s\n\nFlags:\n", fs.Name(), commands[fs.Name()].summary)
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+}
+
+func usage(w io.Writer) {
+	_, _ = fmt.Fprint(w, `pf-ci — lower org.projectfile.ci to vendor CI workflows
 
 Usage:
   pf-ci resolve  [-pf PATH] [-verbose]
   pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check] [-verbose]
+  pf-ci help [COMMAND]
   pf-ci version
 
 resolve   Emit the vendor-neutral job model as JSON (the template input).
-generate  Render the job model to a target's workflow YAML, or (-check) verify
+generate  Render the job model to a target’s workflow YAML, or (-check) verify
           the committed workflow still matches the source DAG.
+help      Print this help, or one command’s flags (also: pf-ci COMMAND -h).
 version   Print the resolver version (the codegen provenance stamp).
 
 Environment:
@@ -132,14 +208,9 @@ func platformOf(st *ci.Subtree, key string) ci.Platform {
 	return st.Platforms[key]
 }
 
-func cmdResolve(args []string) error {
-	fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
-	pf := fs.String("pf", "", "projectfile path (default: auto-discover)")
-	verbose := fs.Bool("verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	genlog.SetVerbose(verboseFromFlagOrEnv(*verbose))
+func cmdResolve(o *opts, stdout io.Writer) error {
+	pf := &o.pf
+	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	// resolve emits the VENDOR-NEUTRAL model: no target, so no membership prune —
 	// every declared tool appears (it is the shared contract, not one vendor's view).
 	st, err := ci.Load(*pf)
@@ -154,21 +225,13 @@ func cmdResolve(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(string(out))
-	return nil
+	_, err = fmt.Fprintln(stdout, string(out))
+	return err
 }
 
-func cmdGenerate(args []string) error {
-	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
-	targetKey := fs.String("target", "", "render target: "+fmt.Sprint(render.TargetKeys()))
-	pf := fs.String("pf", "", "projectfile path (default: auto-discover)")
-	out := fs.String("o", "", "output directory for the per-goal workflow files (default: the target's vendor dir); a single path for lefthook")
-	check := fs.Bool("check", false, "freshness gate: exit non-zero if the committed workflow drifted")
-	verbose := fs.Bool("verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	genlog.SetVerbose(verboseFromFlagOrEnv(*verbose))
+func cmdGenerate(o *opts, _ io.Writer) error {
+	targetKey, pf, out, check := &o.target, &o.pf, &o.out, &o.check
+	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	target, ok := render.Targets[*targetKey]
 	if !ok {
 		return fmt.Errorf("unknown -target %q (have %v)", *targetKey, render.TargetKeys())
@@ -271,10 +334,7 @@ func sortedPaths(files map[string][]byte) []string {
 // checkFresh is the "codegen can't silently lie" guarantee: regenerate, then
 // compare against the committed file. A mismatch (or a missing file) fails.
 func checkFresh(path string, want []byte) error {
-	// #nosec G304 — path is the resolver's own output target (the -o flag / the
-	// target's canonical workflow path), operator-supplied tooling config, not
-	// untrusted input.
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(path) // #nosec G304 G703 — operator-chosen output path
 	if err != nil {
 		return fmt.Errorf("freshness check: cannot read %s (run `pf-ci generate`): %w", path, err)
 	}
@@ -369,11 +429,11 @@ func writeWorkflowDir(dir, ext string, files map[string][]byte) error {
 
 func writeWorkflow(path string, data []byte) error {
 	if dir := dirOf(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o750); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil { // #nosec G703 — operator-chosen output dir
 			return err
 		}
 	}
-	return os.WriteFile(path, data, 0o644) // #nosec G306 — a committed workflow file
+	return os.WriteFile(path, data, 0o644) // #nosec G306 G703 — an operator-chosen committed workflow file
 }
 
 // dirOf returns the directory portion of a slash path, or "" when there is none.
