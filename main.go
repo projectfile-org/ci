@@ -53,6 +53,7 @@ type opts struct {
 	pf, target, out string
 	check, verbose  bool
 	quiet           bool
+	dryRun, force   bool
 }
 
 // commands maps each subcommand to its one-line summary and its runner.
@@ -163,6 +164,10 @@ func newFlagSet(name string) (*flag.FlagSet, *opts, bool) {
 		fs.StringVar(&o.target, "target", "", "render target: "+fmt.Sprint(render.TargetKeys()))
 		fs.StringVar(&o.out, "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook; - is refused, as generate writes files")
 		fs.BoolVar(&o.check, "check", false, "freshness gate: exit non-zero if the committed workflow drifted")
+		fs.BoolVar(&o.dryRun, "dry-run", false, "print the write/remove plan on stdout and change nothing")
+		fs.BoolVar(&o.dryRun, "n", false, "shorthand for -dry-run")
+		fs.BoolVar(&o.force, "force", true, "remove orphaned generated workflows; -force=false reports them and exits non-zero instead")
+		fs.BoolVar(&o.force, "f", true, "shorthand for -force")
 	}
 	return fs, o, true
 }
@@ -179,7 +184,7 @@ func usage(w io.Writer) {
 
 Usage:
   pf-ci resolve  [-pf PATH] [-verbose|-q]
-  pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check] [-verbose|-q]
+  pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check|-n] [-force=false] [-verbose|-q]
   pf-ci help [COMMAND]
   pf-ci version
 
@@ -265,7 +270,7 @@ func cmdResolve(o *opts, stdout io.Writer) error {
 	return err
 }
 
-func cmdGenerate(o *opts, _ io.Writer) error {
+func cmdGenerate(o *opts, stdout io.Writer) error {
 	targetKey, pf, out, check := &o.target, &o.pf, &o.out, &o.check
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	genlog.SetQuiet(o.quiet)
@@ -295,6 +300,10 @@ func cmdGenerate(o *opts, _ io.Writer) error {
 		if *check {
 			return checkFresh(dest, rendered)
 		}
+		if o.dryRun {
+			_, err := fmt.Fprintf(stdout, "write %s\n", dest)
+			return err
+		}
 		if err := writeWorkflow(dest, rendered); err != nil {
 			return err
 		}
@@ -313,7 +322,7 @@ func cmdGenerate(o *opts, _ io.Writer) error {
 	if *check {
 		return checkFreshDir(dir, target.Ext, files)
 	}
-	return writeWorkflowDir(dir, target.Ext, files)
+	return writeWorkflowDir(dir, target.Ext, files, o.dryRun, o.force, stdout)
 }
 
 // workflowFiles renders every goal of the subtree to its own committed workflow path,
@@ -444,26 +453,40 @@ func orphanWorkflows(dir, ext string, want map[string][]byte) ([]string, error) 
 	return stale, nil
 }
 
-// writeWorkflowDir writes every file in files, then removes any orphanWorkflows left
-// in dir — a goal removed from the DAG, or a target dropped from ci.targets, leaves
-// no stale file behind instead of only failing the next -check.
-func writeWorkflowDir(dir, ext string, files map[string][]byte) error {
+// writeWorkflowDir writes every file in files, then removes the orphanWorkflows left in dir (reports them unless force); dryRun prints that plan instead.
+func writeWorkflowDir(dir, ext string, files map[string][]byte, dryRun, force bool, stdout io.Writer) error {
+	stale, err := orphanWorkflows(dir, ext, files)
+	if err != nil {
+		return err
+	}
+	if dryRun {
+		for _, path := range sortedPaths(files) {
+			_, _ = fmt.Fprintf(stdout, "write %s\n", path)
+		}
+		for _, path := range stale {
+			_, _ = fmt.Fprintf(stdout, "remove %s\n", path)
+		}
+		genlog.Success(fmt.Sprintf("pf-ci: dry run, nothing changed in %s (%d writes, %d removals)", dir, len(files), len(stale)))
+		return nil
+	}
 	for _, path := range sortedPaths(files) {
 		if err := writeWorkflow(path, files[path]); err != nil {
 			return err
 		}
 		genlog.Success(fmt.Sprintf("pf-ci: wrote %s", path))
 	}
-	stale, err := orphanWorkflows(dir, ext, files)
-	if err != nil {
-		return err
+	if len(stale) == 0 {
+		return nil
+	}
+	if !force {
+		return fmt.Errorf("%d orphaned generated workflow(s) left in place, pass -force to remove: %s", len(stale), strings.Join(stale, ", "))
 	}
 	for _, path := range stale {
 		if err := os.Remove(path); err != nil {
 			return err
 		}
-		genlog.Success(fmt.Sprintf("pf-ci: removed orphan %s", path))
 	}
+	genlog.Success(fmt.Sprintf("pf-ci: removed %d orphan(s): %s", len(stale), strings.Join(stale, ", ")))
 	return nil
 }
 
