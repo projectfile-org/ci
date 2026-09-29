@@ -92,7 +92,7 @@ func TestSubcommandHelp(t *testing.T) {
 		{gen, []string{help, gen}},
 	} {
 		var stdout, stderr bytes.Buffer
-		if code := run(tc.args, &stdout, &stderr); code != 0 {
+		if code := run(tc.args, nil, &stdout, &stderr); code != 0 {
 			t.Fatalf("%v: exit %d, want 0 (stderr=%q)", tc.args, code, stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "pf-ci "+tc.sub+" ") {
@@ -107,7 +107,7 @@ func TestSubcommandHelp(t *testing.T) {
 // TestUnknownFlagIsUsageError pins that a bad flag exits 2 with the subcommand’s help on stderr.
 func TestUnknownFlagIsUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"resolve", "-nope"}, &stdout, &stderr); code != 2 {
+	if code := run([]string{"resolve", "-nope"}, nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
 	if !strings.Contains(stderr.String(), "pf-ci resolve ") {
@@ -124,5 +124,39 @@ func TestQuietFlag(t *testing.T) {
 				t.Fatalf("%s %s: quiet=%v err=%v, want quiet", name, flagName, o.quiet, err)
 			}
 		}
+	}
+}
+
+// TestDashProjectfileReadsStdin pins `-pf -`: the document comes from stdin and its staging file is gone after the run.
+func TestDashProjectfileReadsStdin(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for _, tc := range []struct {
+		doc  string
+		code int
+	}{{"name: demo\n", 0}, {"name: [unclosed\n", 1}} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"resolve", "-pf", "-"}, strings.NewReader(tc.doc), &stdout, &stderr); code != tc.code {
+			t.Fatalf("doc %q: exit %d, want %d (stderr=%q)", tc.doc, code, tc.code, stderr.String())
+		}
+		if left, _ := os.ReadDir(dir); len(left) != 0 {
+			t.Fatalf("doc %q: staging file left behind: %v", tc.doc, left)
+		}
+	}
+}
+
+// TestDashOutputRefused pins `-o -`: a usage error, and no directory named - is ever created.
+func TestDashOutputRefused(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"generate", "-target", "gha", "-o", "-"}, nil, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit %d, want 2 (stderr=%q)", code, stderr.String())
+	}
+	if err := writeWorkflow(filepath.Join("-", "build.yaml"), []byte("x")); err == nil {
+		t.Fatal("writeWorkflow: got nil error for a - path element")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "-")); !os.IsNotExist(err) {
+		t.Fatalf("a directory named - exists (err=%v)", err)
 	}
 }

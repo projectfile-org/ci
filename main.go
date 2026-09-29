@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,11 +65,11 @@ var commands = map[string]struct {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
 // run dispatches one invocation and returns its exit code.
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		usage(stderr)
 		return 2
@@ -106,7 +107,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		subUsage(stderr, fs)
 		return 2
 	}
-	err := commands[fs.Name()].run(o, stdout)
+	cleanup, err := stdinProjectfile(o, stdin)
+	if err == nil {
+		defer cleanup()
+		err = commands[fs.Name()].run(o, stdout)
+	}
 	if err == nil {
 		return 0
 	}
@@ -119,6 +124,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
+// stdinProjectfile copies a `-pf -` document to a unique temp file in the working directory and repoints o.pf at it.
+func stdinProjectfile(o *opts, stdin io.Reader) (func(), error) {
+	if o.pf != "-" {
+		return func() {}, nil
+	}
+	f, err := os.CreateTemp(".", ".pf-ci-stdin-*.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("-pf -: staging stdin: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(f.Name()) }
+	n, err := io.Copy(f, stdin)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("-pf -: reading stdin into %s: %w", f.Name(), err)
+	}
+	genlog.Debug("projectfile read from stdin", "path", f.Name(), "bytes", n)
+	o.pf = f.Name()
+	return cleanup, nil
+}
+
 // newFlagSet builds a subcommand’s flags; ok is false for an unknown name.
 func newFlagSet(name string) (*flag.FlagSet, *opts, bool) {
 	if _, ok := commands[name]; !ok {
@@ -127,13 +155,13 @@ func newFlagSet(name string) (*flag.FlagSet, *opts, bool) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.Usage = func() {}
 	o := &opts{}
-	fs.StringVar(&o.pf, "pf", "", "projectfile path (default: auto-discover)")
+	fs.StringVar(&o.pf, "pf", "", "projectfile path, or - for a YAML/JSON document on stdin (default: auto-discover)")
 	fs.BoolVar(&o.verbose, "verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
 	fs.BoolVar(&o.quiet, "quiet", false, "mute progress lines; warnings, errors and the verdict still print")
 	fs.BoolVar(&o.quiet, "q", false, "shorthand for -quiet")
 	if name == "generate" {
 		fs.StringVar(&o.target, "target", "", "render target: "+fmt.Sprint(render.TargetKeys()))
-		fs.StringVar(&o.out, "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook")
+		fs.StringVar(&o.out, "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook; - is refused, as generate writes files")
 		fs.BoolVar(&o.check, "check", false, "freshness gate: exit non-zero if the committed workflow drifted")
 	}
 	return fs, o, true
@@ -241,6 +269,9 @@ func cmdGenerate(o *opts, _ io.Writer) error {
 	targetKey, pf, out, check := &o.target, &o.pf, &o.out, &o.check
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	genlog.SetQuiet(o.quiet)
+	if *out == "-" {
+		return usageError{fmt.Sprintf("-o %s: generate writes one file per goal, not a stream; name a directory (or a file for lefthook)", *out)}
+	}
 	target, ok := render.Targets[*targetKey]
 	if !ok {
 		return fmt.Errorf("unknown -target %q (have %v)", *targetKey, render.TargetKeys())
@@ -437,6 +468,9 @@ func writeWorkflowDir(dir, ext string, files map[string][]byte) error {
 }
 
 func writeWorkflow(path string, data []byte) error {
+	if slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "-") {
+		return fmt.Errorf("refusing to write %s: a path element named - is the stdin/stdout marker, not a directory", path)
+	}
 	if dir := dirOf(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o750); err != nil { // #nosec G703 — operator-chosen output dir
 			return err
