@@ -211,7 +211,7 @@ func TestPerNodeMatrixAxes(t *testing.T) {
 		t.Errorf("bins-built own axes: want [GOARCH GOOS], got %v", gotKeys)
 	}
 	// The per-node axes are isolated from the global set (the global stays SERIES).
-	if len(st.Axes) != 1 || st.Axes[0].Key != "SERIES" {
+	if len(st.Axes) != 1 || st.Axes[0].Key != testSeriesAxis {
 		t.Errorf("global axes must stay SERIES-only, got %v", st.Axes)
 	}
 }
@@ -556,7 +556,7 @@ func TestRunsOnObjectFormDecode(t *testing.T) {
 	if len(p.RunsOn) != 1 || p.RunsOn[0] != "ubuntu-latest" {
 		t.Errorf("runs-on default: want [ubuntu-latest], got %v", p.RunsOn)
 	}
-	if got := p.RunsOnByArch["arm64"]; got != "ubuntu-24.04-arm" {
+	if got := p.RunsOnByArch[archARM64]; got != "ubuntu-24.04-arm" {
 		t.Errorf("runs-on[arm64]: want the hosted arm label, got %q", got)
 	}
 	if _, leaked := p.RunsOnByArch[RunsOnDefaultKey]; leaked {
@@ -1156,7 +1156,7 @@ func TestRouteArchitecturesPerLowering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("routeArchitectures: %v", err)
 	}
-	want := map[string][]string{LoweringForgejo: {"amd64"}}
+	want := map[string][]string{LoweringForgejo: {archAMD64}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routeArchitectures:\n got %#v\nwant %#v", got, want)
 	}
@@ -1165,25 +1165,25 @@ func TestRouteArchitecturesPerLowering(t *testing.T) {
 // archRouteSubtree fans amd64 and arm64, with one override and one exclude row per arch.
 func archRouteSubtree(route []string) *Subtree {
 	return &Subtree{
-		Axes: []Axis{{Key: ArchAxis, Values: []string{"amd64", "arm64"}}, {Key: "SERIES", Values: []string{"noble"}}},
+		Axes: []Axis{{Key: ArchAxis, Values: []string{archAMD64, archARM64}}, {Key: testSeriesAxis, Values: []string{testSeriesNoble}}},
 		Overrides: []OverrideEntry{
-			{Match: []KV{{Key: ArchAxis, Value: "amd64"}}, Vars: []KV{{Key: "RUNNER", Value: "x86"}}},
-			{Match: []KV{{Key: ArchAxis, Value: "arm64"}}, Vars: []KV{{Key: "RUNNER", Value: "arm"}}},
+			{Match: []KV{{Key: ArchAxis, Value: archAMD64}}, Vars: []KV{{Key: "RUNNER", Value: "x86"}}},
+			{Match: []KV{{Key: ArchAxis, Value: archARM64}}, Vars: []KV{{Key: "RUNNER", Value: "arm"}}},
 		},
-		Excludes:    []Exclusion{{{Key: ArchAxis, Value: "arm64"}, {Key: "SERIES", Value: "noble"}}},
+		Excludes:    []Exclusion{{{Key: ArchAxis, Value: archARM64}, {Key: testSeriesAxis, Value: testSeriesNoble}}},
 		RouteArches: map[string][]string{LoweringForgejo: route},
 	}
 }
 
 // TestForTargetNarrowsArchAxis pins that a route drops the pruned arch from the axis and every matrix row naming it, on its own lowering only.
 func TestForTargetNarrowsArchAxis(t *testing.T) {
-	st := archRouteSubtree([]string{"amd64"})
+	st := archRouteSubtree([]string{archAMD64})
 	got := st.ForTarget(LoweringForgejo)
-	wantAxes := []Axis{{Key: ArchAxis, Values: []string{"amd64"}}, {Key: "SERIES", Values: []string{"noble"}}}
+	wantAxes := []Axis{{Key: ArchAxis, Values: []string{archAMD64}}, {Key: testSeriesAxis, Values: []string{testSeriesNoble}}}
 	if !reflect.DeepEqual(got.Axes, wantAxes) {
 		t.Errorf("forgejo axes: got %#v, want %#v", got.Axes, wantAxes)
 	}
-	if len(got.Overrides) != 1 || got.Overrides[0].Match[0].Value != "amd64" {
+	if len(got.Overrides) != 1 || got.Overrides[0].Match[0].Value != archAMD64 {
 		t.Errorf("forgejo overrides: got %#v, want the amd64 row only", got.Overrides)
 	}
 	if len(got.Excludes) != 0 {
@@ -1354,6 +1354,10 @@ const (
 	ghcrHead               = "ghcr.io/damian-buho"
 	sinkGHCR               = "ghcr"
 	archRISCV              = "riscv64"
+	archAMD64              = "amd64"
+	archARM64              = "arm64"
+	testSeriesAxis         = "SERIES"
+	testSeriesNoble        = "noble"
 	// refGHCR is what publishDoc's ghcr template composes to: a NESTED path with the
 	// axis left verbatim for the cell to fill. Both route planes expect this one value,
 	// which is the point — push and pull compose a sink identically.
@@ -1783,7 +1787,7 @@ func TestArchitecturesReadsTheDeclaredList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("architectures: %v", err)
 	}
-	want := []string{"amd64", "arm64", archRISCV}
+	want := []string{archAMD64, archARM64, archRISCV}
 	if len(got) != len(want) {
 		t.Fatalf("architectures: got %#v, want %#v", got, want)
 	}
@@ -1848,7 +1852,7 @@ func TestNodeMatrixPinDecodes(t *testing.T) {
 	if !n.Matrix {
 		t.Error("a node carrying matrix.pin must be a cell")
 	}
-	if got := n.Pin[ArchAxis]; got != "amd64" {
+	if got := n.Pin[ArchAxis]; got != archAMD64 {
 		t.Errorf("pin[%s]: want amd64, got %q", ArchAxis, got)
 	}
 }
