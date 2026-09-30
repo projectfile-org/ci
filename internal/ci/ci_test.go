@@ -1109,6 +1109,7 @@ org:
       kiota:
         push: [ghcr]
         pull: ghcr
+        architecture: [amd64]
 `), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -1145,6 +1146,62 @@ func TestPublishRefsComposePerLowering(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("publishRefs:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// TestRouteArchitecturesPerLowering pins that a route's architecture subset reaches the lowering that runs on its forge.
+func TestRouteArchitecturesPerLowering(t *testing.T) {
+	r := &Reader{doc: publishDoc(t)}
+	got, err := r.routeArchitectures()
+	if err != nil {
+		t.Fatalf("routeArchitectures: %v", err)
+	}
+	want := map[string][]string{LoweringForgejo: {"amd64"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("routeArchitectures:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// archRouteSubtree fans amd64 and arm64, with one override and one exclude row per arch.
+func archRouteSubtree(route []string) *Subtree {
+	return &Subtree{
+		Axes: []Axis{{Key: ArchAxis, Values: []string{"amd64", "arm64"}}, {Key: "SERIES", Values: []string{"noble"}}},
+		Overrides: []OverrideEntry{
+			{Match: []KV{{Key: ArchAxis, Value: "amd64"}}, Vars: []KV{{Key: "RUNNER", Value: "x86"}}},
+			{Match: []KV{{Key: ArchAxis, Value: "arm64"}}, Vars: []KV{{Key: "RUNNER", Value: "arm"}}},
+		},
+		Excludes:    []Exclusion{{{Key: ArchAxis, Value: "arm64"}, {Key: "SERIES", Value: "noble"}}},
+		RouteArches: map[string][]string{LoweringForgejo: route},
+	}
+}
+
+// TestForTargetNarrowsArchAxis pins that a route drops the pruned arch from the axis and every matrix row naming it, on its own lowering only.
+func TestForTargetNarrowsArchAxis(t *testing.T) {
+	st := archRouteSubtree([]string{"amd64"})
+	got := st.ForTarget(LoweringForgejo)
+	wantAxes := []Axis{{Key: ArchAxis, Values: []string{"amd64"}}, {Key: "SERIES", Values: []string{"noble"}}}
+	if !reflect.DeepEqual(got.Axes, wantAxes) {
+		t.Errorf("forgejo axes: got %#v, want %#v", got.Axes, wantAxes)
+	}
+	if len(got.Overrides) != 1 || got.Overrides[0].Match[0].Value != "amd64" {
+		t.Errorf("forgejo overrides: got %#v, want the amd64 row only", got.Overrides)
+	}
+	if len(got.Excludes) != 0 {
+		t.Errorf("forgejo excludes: got %#v, want none", got.Excludes)
+	}
+	if gha := st.ForTarget(LoweringGHA); !reflect.DeepEqual(gha.Axes, st.Axes) || len(gha.Overrides) != 2 {
+		t.Errorf("gha: got axes %#v overrides %d, want the declared set", gha.Axes, len(gha.Overrides))
+	}
+	if len(st.Axes[0].Values) != 2 || len(st.Overrides) != 2 || len(st.Excludes) != 1 {
+		t.Errorf("ForTarget mutated the shared subtree: %#v", st)
+	}
+}
+
+// TestForTargetKeepsArchesARouteCannotBuild pins that a route naming none of the declared arches leaves the axis whole rather than emptying the matrix.
+func TestForTargetKeepsArchesARouteCannotBuild(t *testing.T) {
+	st := archRouteSubtree([]string{"riscv64"})
+	if got := st.ForTarget(LoweringForgejo); !reflect.DeepEqual(got.Axes, st.Axes) || len(got.Overrides) != 2 {
+		t.Errorf("forgejo: got axes %#v overrides %d, want the declared set", got.Axes, len(got.Overrides))
 	}
 }
 

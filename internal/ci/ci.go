@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -621,6 +622,8 @@ type Subtree struct {
 	Targets []string
 	// MountCache persists the build’s BuildKit cache mounts across runs on an ephemeral runner (org.projectfile.ci.mount-cache); absent => on
 	MountCache bool
+	// RouteArches is the architecture set each lowering builds (org.projectfile.publish.<forge>.architecture); absent => every declared one.
+	RouteArches map[string][]string
 }
 
 // Dispatch is the manual-run trigger: the button plus its optional typed inputs (the
@@ -682,6 +685,7 @@ func (st *Subtree) ForTarget(target string) *Subtree {
 	if st == nil {
 		return nil
 	}
+	st = st.narrowArches(target)
 	disabled := make(map[string]bool)
 	for name, man := range st.Tools {
 		if !man.EnabledFor(target) {
@@ -710,6 +714,42 @@ func (st *Subtree) ForTarget(target string) *Subtree {
 			out.Tools[name] = man
 		}
 	}
+	return &out
+}
+
+// narrowArches returns a copy whose arch axis, overrides and excludes keep only the architectures the target's route builds.
+func (st *Subtree) narrowArches(target string) *Subtree {
+	allowed := st.RouteArches[target]
+	if len(allowed) == 0 {
+		return st
+	}
+	out := *st
+	out.Axes = make([]Axis, 0, len(st.Axes))
+	for _, ax := range st.Axes {
+		if ax.Key != ArchAxis {
+			out.Axes = append(out.Axes, ax)
+			continue
+		}
+		kept := slices.DeleteFunc(slices.Clone(ax.Values), func(v string) bool { return !slices.Contains(allowed, v) })
+		if len(kept) == 0 {
+			genlog.Warn("arch axis: publish route builds none of the declared architectures, keeping them all",
+				"target", target, "route", allowed, "declared", ax.Values)
+			return st
+		}
+		genlog.Debug("arch axis: narrowed to the publish route", "target", target, "declared", ax.Values, "kept", kept)
+		out.Axes = append(out.Axes, Axis{Key: ax.Key, Values: kept})
+	}
+	pruned := func(match []KV) bool {
+		for _, kv := range match {
+			if kv.Key == ArchAxis && !slices.Contains(allowed, kv.Value) {
+				genlog.Debug("arch axis: dropping a matrix row for a pruned architecture", "target", target, "arch", kv.Value)
+				return true
+			}
+		}
+		return false
+	}
+	out.Overrides = slices.DeleteFunc(slices.Clone(st.Overrides), func(o OverrideEntry) bool { return pruned(o.Match) })
+	out.Excludes = slices.DeleteFunc(slices.Clone(st.Excludes), func(e Exclusion) bool { return pruned(e) })
 	return &out
 }
 
@@ -1289,6 +1329,8 @@ type rawPublish struct {
 	Push    []string `json:"push"`
 	Pull    string   `json:"pull"`
 	Release []string `json:"release"`
+	// Architecture is the subset of the declared architectures this forge builds; absent builds every one.
+	Architecture []string `json:"architecture"`
 }
 
 // ReleaseTarget is one composed release destination: the NAME the token derives from,
@@ -1398,6 +1440,22 @@ func (r *Reader) publishRoutes() (map[string]rawPublish, error) {
 		return nil, fmt.Errorf("org.projectfile.publish: parse: %w", err)
 	}
 	return routes, nil
+}
+
+// routeArchitectures keys each publish route's architecture subset by the lowering that builds it.
+func (r *Reader) routeArchitectures() (map[string][]string, error) {
+	routes, err := r.publishRoutes()
+	if err != nil || len(routes) == 0 {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for lowering, forge := range r.publishForges(routes) {
+		if arches := routes[forge].Architecture; len(arches) > 0 {
+			genlog.Debug("arch axis: publish route narrows its lowering", "lowering", lowering, "forge", forge, "arches", arches)
+			out[lowering] = arches
+		}
+	}
+	return out, nil
 }
 
 // publishRefs composes every declared destination, keyed by the LOWERING that
@@ -1712,6 +1770,9 @@ func Load(pfPath string) (*Subtree, error) {
 		genlog.Debug("arch axis: minting from the declared architecture set",
 			"axis", ArchAxis, "arches", arches, "image", st.Image)
 		st.addAxis(Axis{Key: ArchAxis, Values: arches})
+	}
+	if st.RouteArches, err = r.routeArchitectures(); err != nil {
+		return nil, err
 	}
 	// Fail fast on an image ref a matrix could not satisfy (unknown axis / push
 	// collision) — once the basename is finalized (explicit OR identity-derived),
