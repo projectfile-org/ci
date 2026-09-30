@@ -4160,8 +4160,8 @@ func TestLefthookRendersHookNodesAsDispatchers(t *testing.T) {
 	// Each hook is a make-dispatcher to the node of the same name (single source
 	// of truth = the DAG); the membership lives in the node, never here.
 	for _, want := range []string{
-		"pre-commit:\n  commands:\n    dag:\n      env:\n        TERM: dumb",
-		"pre-push:\n  commands:\n    dag:\n      env:\n        TERM: dumb",
+		"pre-commit:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb",
+		"pre-push:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb",
 		"run: make pre-commit",
 		"run: make pre-push",
 	} {
