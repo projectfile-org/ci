@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 ARG B19_GO_BASE_IMAGE=registry.invalid/b19/go:latest
-ARG B19_UBUNTU_BASE_IMAGE=registry.invalid/b19/ubuntu/resolute:latest
+ARG B19_UBUNTU_BASE_IMAGE=registry.invalid/b19/ubuntu:resolute
 ARG B19_UBUNTU_SERIES=resolute
 
 FROM ${B19_GO_BASE_IMAGE} AS projectfile-ci-builder
