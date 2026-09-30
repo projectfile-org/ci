@@ -10,7 +10,7 @@ pf-cli-managed: yes
 
 pf-ci lowers the vendor-neutral org.projectfile.ci signal DAG to concrete CI workflow files for Forgejo Actions and GitHub Actions, dispatching each provider leaf to its recipe in projectfile/actions. Companion binary to pf-cli for the projectfile.org tooling.
 
-[![Stand with Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://damian-buho.github.io/support-ukraine/) [![Projectfile inside](https://badges.kiota.ch/static/v1?label=projectfile&message=inside&labelColor=0d0d0d&color=8c6723&style=flat-square)](https://projectfile.org) [![License](https://badges.kiota.ch/static/v1?label=license&message=MIT&color=1e5913&style=flat-square)](LICENSE) [![Commit style](https://badges.kiota.ch/static/v1?label=commits&message=conventional%20v1.0.0&color=1877aa&style=flat-square)](https://www.conventionalcommits.org/en/v1.0.0/) ![Workflow](https://badges.kiota.ch/static/v1?label=workflow&message=git-flow&color=1877aa&style=flat-square) [![Versioning](https://badges.kiota.ch/static/v1?label=versioning&message=semantic%20v2.0.0&color=1877aa&style=flat-square)](https://semver.org/) [![Cosign](https://badges.kiota.ch/static/v1?label=cosign&message=enabled&color=1e5913&style=flat-square)](https://docs.sigstore.dev/cosign/verifying/verify/) [![PRs welcome](https://badges.kiota.ch/static/v1?label=PRs&message=welcome&color=1e5913&style=flat-square)](CONTRIBUTING.md) [![Citation](https://badges.kiota.ch/static/v1?label=citation&message=cff&color=1877aa&style=flat-square)](CITATION.cff) [![REUSE compliance](https://api.reuse.software/badge/codeberg.org/projectfile/ci)](https://api.reuse.software/info/codeberg.org/projectfile/ci)
+[![Stand with Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://damian-buho.github.io/support-ukraine/) [![Projectfile inside](https://badges.kiota.ch/static/v1?label=projectfile&message=inside&labelColor=0d0d0d&color=8c6723&style=flat-square)](https://projectfile.org) [![License](https://badges.kiota.ch/static/v1?label=license&message=MIT&color=1e5913&style=flat-square)](LICENSE) [![Cosign](https://badges.kiota.ch/static/v1?label=cosign&message=enabled&color=1e5913&style=flat-square)](https://docs.sigstore.dev/cosign/verifying/verify/) [![PRs welcome](https://badges.kiota.ch/static/v1?label=PRs&message=welcome&color=1e5913&style=flat-square)](CONTRIBUTING.md) [![REUSE compliance](https://api.reuse.software/badge/codeberg.org/projectfile/ci)](https://api.reuse.software/info/codeberg.org/projectfile/ci)
 
 [![Last commit on kiota.ch](https://badges.kiota.ch/gitea/last-commit/projectfile/ci?gitea_url=https://kiota.ch&label=last%20commit%20on%20kiota.ch&style=flat-square)](https://kiota.ch/projectfile/ci) [![Last commit on Codeberg](https://badges.kiota.ch/gitea/last-commit/projectfile/ci?gitea_url=https://codeberg.org&label=last%20commit%20on%20Codeberg&style=flat-square)](https://codeberg.org/projectfile/ci) [![Last commit on GitHub](https://badges.kiota.ch/github/last-commit/projectfile-org/ci?label=last%20commit%20on%20GitHub&style=flat-square)](https://github.com/projectfile-org/ci)
 
@@ -62,40 +62,12 @@ docker pull kiota.ch/projectfile/ci:latest
 
 Download the prebuilt binary for your platform from the latest GitHub release:
 
-#### Download for linux/amd64
-
 ```sh
-curl --fail --location --output pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-linux-amd64 && chmod +x pf-ci
+curl --fail --location --output pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-$(uname -s | tr A-Z a-z)-$(uname -m | sed -e s/x86_64/amd64/ -e s/aarch64/arm64/) && chmod +x pf-ci
 ./pf-ci --help
 ```
 
-#### Download for linux/arm64
-
-```sh
-curl --fail --location --output pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-linux-arm64 && chmod +x pf-ci
-./pf-ci --help
-```
-
-#### Download for linux/riscv64
-
-```sh
-curl --fail --location --output pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-linux-riscv64 && chmod +x pf-ci
-./pf-ci --help
-```
-
-#### Download for darwin/amd64
-
-```sh
-curl --fail --location --output pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-darwin-amd64 && chmod +x pf-ci
-./pf-ci --help
-```
-
-#### Download for darwin/arm64
-
-```sh
-curl --fail --location --output pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-darwin-arm64 && chmod +x pf-ci
-./pf-ci --help
-```
+Published for: `linux/amd64`, `linux/arm64`, `linux/riscv64`, `darwin/amd64`, `darwin/arm64`
 
 ## Usage
 
