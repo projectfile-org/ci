@@ -323,7 +323,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
-        M6E_ARCH: ["amd64", "arm64", "riscv64"]
+        M6E_ARCH: ["amd64"]
     env:
       M6E_ARCH: ${{ matrix.M6E_ARCH }}
       M6E_IMAGE_ARCHIVE: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
@@ -357,7 +357,7 @@ jobs:
     if: (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') || (startsWith(github.ref, 'refs/tags/'))
     strategy:
       matrix:
-        M6E_ARCH: ["amd64", "arm64", "riscv64"]
+        M6E_ARCH: ["amd64"]
         M6E_PUBLISH_SINK: ["kiota", "dockerhub"]
     env:
       M6E_ARCH: ${{ matrix.M6E_ARCH }}
@@ -402,14 +402,6 @@ jobs:
         with:
           name: image-amd64-${{ github.run_id }}
       - uses: actions/download-artifact@v3
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',arm64,')) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
-        with:
-          name: image-arm64-${{ github.run_id }}
-      - uses: actions/download-artifact@v3
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',riscv64,')) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
-        with:
-          name: image-riscv64-${{ github.run_id }}
-      - uses: actions/download-artifact@v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
         with:
           name: syft-sbom-tar-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
@@ -424,8 +416,6 @@ jobs:
           # scaffolding, and a registry that cannot delete a tag keeps them forever.
           archives: |
             amd64 image-amd64-${{ github.run_id }}
-            arm64 image-arm64-${{ github.run_id }}
-            riscv64 image-riscv64-${{ github.run_id }}
           # The arches this scope may publish, the same list the per-arch downloads above honour
           only-arches: ${{ vars.CI_ONLY_M6E_ARCH }}
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}
@@ -484,7 +474,7 @@ jobs:
     strategy:
       max-parallel: 2
       matrix:
-        M6E_ARCH: ["amd64", "arm64", "riscv64"]
+        M6E_ARCH: ["amd64"]
     env:
       M6E_ARCH: ${{ matrix.M6E_ARCH }}
       M6E_NAMESPACE: projectfile
@@ -553,7 +543,7 @@ jobs:
     needs: ["image-is-built"]
     strategy:
       matrix:
-        M6E_ARCH: ["amd64", "arm64", "riscv64"]
+        M6E_ARCH: ["amd64"]
     env:
       M6E_ARCH: ${{ matrix.M6E_ARCH }}
       M6E_IMAGE_ARCHIVE: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
