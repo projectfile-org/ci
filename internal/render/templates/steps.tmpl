@@ -318,6 +318,37 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
           # feature-branch one (`latest-<branch>`) — `preview` above carries both.
           primary: {{ .Step.PublishPrimary }}
 {{- end }}
+{{- with .Step.Naming }}
+{{- if .Heads }}
+          # Head templates per build kind, as org.projectfile.image.heads declares them
+          heads: |
+{{- range .Heads }}
+            {{ . }}
+{{- end }}
+{{- end }}
+{{- if .Variant }}
+          # This cell’s variant parts in declared order, each `<value> <default>`
+          variant: |
+{{- range .Variant }}
+            {{ . }}
+{{- end }}
+          # Every cell of this publish, so two cells deriving one tag are refused before any push
+          variant-cells: |
+{{- range .Cells }}
+            {{ . }}
+{{- end }}
+{{- with .Join }}
+          variant-join: {{ quote . }}
+{{- end }}
+{{- with .Aliases }}
+          variant-aliases: {{ quote . }}
+{{- end }}
+          variant-tag: {{ quote .Tag }}
+{{- with .Bare }}
+          variant-bare: {{ quote . }}
+{{- end }}
+{{- end }}
+{{- end }}
           # OUTPUT_REGISTRY: the forge-dependent PUSH target (kiota.ch / ghcr.io / …),
           # always threaded — empty => Docker Hub. NOT the per-namespace INPUT registries
           # (B19_DOCKER_REGISTRY & friends answer "where base images come FROM"); this

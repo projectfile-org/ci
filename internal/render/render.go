@@ -1720,6 +1720,8 @@ type StepView struct {
 	// come from the document (repositories[role=origin].branch); which tag each case
 	// yields is the versioned action's rule, exactly as the semver cascade is.
 	PublishPrimary string `json:"publish-primary,omitempty"`
+	// Naming is the oci-push tag-rule inputs (heads, variant) of this cell; nil => the action's own cascade
+	Naming *NamingView `json:"naming,omitempty"`
 	// PublishRefs is the oci-push `refs:` input — one `<sink> <ref>` line per
 	// destination this lowering publishes to, each composed by the document that
 	// declared the sink. It is what lets ONE archive land nested on one registry and
@@ -1875,6 +1877,62 @@ type PinView struct {
 	Value string
 	Node  string // the authored node, which a serialise link's job name no longer spells
 	If    string `json:"-"` // the refusal expression, spelled per target by forgeGates
+}
+
+// NamingView is one publish cell's tag-rule inputs: the declared heads, its own variant parts, and every cell of its job.
+type NamingView struct {
+	Heads   []string `json:"heads,omitempty"`
+	Variant []string `json:"variant,omitempty"` // `<value> <default|->` per part, value a matrix expression
+	Cells   []string `json:"cells,omitempty"`   // every cell's part values, space-joined
+	Join    string   `json:"join,omitempty"`
+	Aliases string   `json:"aliases,omitempty"`
+	Tag     string   `json:"tag,omitempty"`
+	Bare    string   `json:"bare,omitempty"`
+}
+
+// namingView binds the declared tag rules to a publish job: part values off its axes, its cells off its matrix.
+func namingView(n *ci.ImageNaming, axes, subst []ci.Axis, excludes []ci.Exclusion) (*NamingView, error) {
+	view := &NamingView{Heads: n.Heads}
+	v := n.Variant
+	if v == nil {
+		return view, nil
+	}
+	view.Join, view.Aliases, view.Tag, view.Bare = v.Join, v.Aliases, v.Tag, strings.Join(v.Bare, " ")
+	exprs := make(map[string]string, len(subst))
+	for _, a := range subst {
+		exprs[a.Key] = "${{ matrix." + a.Key + " }}"
+	}
+	for _, p := range v.Parts {
+		value, _ := p.Fill(exprs)
+		def, ok := p.Fill(nil)
+		if !ok {
+			def = "-"
+		}
+		genlog.Debug("image variant part bound", "part", p.Name, "value", value, "default", def)
+		view.Variant = append(view.Variant, value+" "+def)
+	}
+	cells := ci.Cells(axes, excludes)
+	if len(cells) == 0 {
+		cells = []map[string]string{{}}
+	}
+	seen := map[string]bool{}
+	for _, c := range cells {
+		vals := make([]string, 0, len(v.Parts))
+		for _, p := range v.Parts {
+			val, ok := p.Fill(c)
+			if !ok || strings.ContainsAny(val, " \t") || val == "" {
+				return view, fmt.Errorf("variant part %q = %q has no single value in cell %v: name a matrix axis or a build arg with a default", p.Name, p.Template, c)
+			}
+			vals = append(vals, val)
+		}
+		line := strings.Join(vals, " ")
+		if !seen[line] {
+			seen[line] = true
+			view.Cells = append(view.Cells, line)
+		}
+	}
+	genlog.Debug("image variant cells", "cells", view.Cells, "join", view.Join, "aliases", view.Aliases, "tag", view.Tag, "bare", view.Bare)
+	return view, nil
 }
 
 // ArchiveView is one architecture's build output: the arch as the projectfile declared
@@ -3330,6 +3388,13 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			if step.PublishPreview != "" && hasEvent(job.Events, ci.EventPrimary) {
 				step.PublishPrimary = strings.Join(primaryBranches(b), " ")
 			}
+			if man.Action == ActionOciPush && b != nil && b.Naming != nil {
+				naming, err := namingView(b.Naming, j.Axes, substKeys(j.Axes, st), j.Excludes)
+				if err != nil && buildErr == nil {
+					buildErr = fmt.Errorf("org.projectfile.image: node %q: %w", nv.Name, err)
+				}
+				step.Naming = naming
+			}
 			// Any member that emits a `reports:` glob flags the job for ONE rolled-up
 			// reports upload (set after the loop), not a per-tool upload.
 			if man.Reports != "" && man.Action == "" {
@@ -4276,6 +4341,8 @@ var funcs = template.FuncMap{
 	"onlyArchesExpr": func() string { return VarRef(OnlyVar(ci.ArchAxis)) },
 	// onlyVar names an axis's allow-list variable, for the refusal message a pinned cell prints
 	"onlyVar": OnlyVar,
+	// quote spells a scalar as a double-quoted YAML string, so a separator like `-` or `.` stays a string
+	"quote": strconv.Quote,
 	// cellEnv names the step-env key the emit fragment binds the matrix JSON to, so the
 	// template and the shell that reads it back share ONE literal.
 	"cellEnv": func() string { return CellEnv },

@@ -941,6 +941,8 @@ type Build struct {
 	// applies DefaultPrimaryBranches; it is empty far more often than not, because
 	// nothing in the fleet writes that field yet.
 	PrimaryBranches []string
+	// Naming is the tag rules org.projectfile.image declares (heads, variant); nil => the publish action's own cascade.
+	Naming *ImageNaming
 }
 
 // SinkRef is one composed publish destination: the sink NAME the credentials key on,
@@ -1300,15 +1302,19 @@ func LoadBuild(pfPath, lowering string) (*Build, error) {
 		return nil, err
 	}
 	primaryBranches := r.primaryBranches()
+	naming, err := r.imageNaming(inputs)
+	if err != nil {
+		return nil, err
+	}
 	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
 		len(buildTarget) == 0 && len(publishRefs) == 0 && len(pullRefs) == 0 && len(releaseTargets) == 0 &&
-		len(primaryBranches) == 0 {
+		len(primaryBranches) == 0 && naming == nil {
 		return nil, nil
 	}
 	return &Build{
 		Images: images, ImageHeads: heads, Args: inputs, Events: events, Secrets: secRaw,
 		BuildTarget: buildTarget, PublishRefs: publishRefs, PullRefs: pullRefs,
-		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches,
+		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches, Naming: naming,
 	}, nil
 }
 
