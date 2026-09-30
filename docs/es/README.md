@@ -24,7 +24,7 @@ pf-ci convierte el DAG de señales neutro respecto al proveedor org.projectfile.
 
 - Reducción del DAG de CI a flujos de trabajo
 
-Consulta [FEATURES.md](FEATURES.md) para ver la lista completa.
+Consulta [Características](FEATURES.md) para ver la lista completa.
 
 ## Qué entrega este proyecto
 

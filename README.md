@@ -22,7 +22,7 @@ pf-ci lowers the vendor-neutral org.projectfile.ci signal DAG to concrete CI wor
 
 - CI DAG to workflow lowering
 
-See [FEATURES.md](FEATURES.md) for the full list.
+See [Features](docs/FEATURES.md) for the full list.
 
 ## What this provides
 
