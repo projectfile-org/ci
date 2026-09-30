@@ -995,7 +995,7 @@ jobs:
           image: ${{ vars.DOCKER_CLI_IMAGE || 'docker' }}
           version: 29.8.1-cli
           pull: missing
-          run: sh -c 'test ! -f .compose/example.yaml || docker compose --file .compose/example.yaml config --quiet'
+          run: sh -c 'test ! -f .compose/example.yaml || docker compose --file .compose/example.yaml config --no-interpolate --quiet'
       - name: restore go
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_GO_VET != 'true'
