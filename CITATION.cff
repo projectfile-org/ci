@@ -32,5 +32,5 @@ keywords:
   - workflow
   - forgejo
   - go
-version: 2.2.1
+version: 2.2.2
 date-released: "2026-10-01"
