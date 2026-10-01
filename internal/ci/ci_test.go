@@ -1205,6 +1205,37 @@ func TestForTargetKeepsArchesARouteCannotBuild(t *testing.T) {
 	}
 }
 
+// TestForTargetNarrowsToolArchAxis pins that a per-node axis a tool executes (arch-axis) narrows on every node fanning it, while other axes stay whole.
+func TestForTargetNarrowsToolArchAxis(t *testing.T) {
+	const axis, built, released, crossed = "TARGET_ARCH", "built", "released", "crossed"
+	fan := []Axis{{Key: axis, Values: []string{archAMD64, archARM64}}, {Key: "TARGET_OS", Values: []string{"linux"}}}
+	st := &Subtree{
+		Nodes: map[string]Node{
+			built:    {Name: built, Matrix: true, Axes: fan, Excludes: []Exclusion{{{Key: axis, Value: archARM64}}}},
+			released: {Name: released, Matrix: true, Axes: fan},
+			crossed:  {Name: crossed, Matrix: true, Axes: []Axis{{Key: "CROSS_ARCH", Values: []string{archAMD64, archARM64}}}},
+		},
+		Tools:       map[string]Manifest{"build": {ArchAxis: axis}},
+		RouteArches: map[string][]string{LoweringForgejo: {archAMD64}},
+	}
+	got := st.ForTarget(LoweringForgejo)
+	want := []Axis{{Key: axis, Values: []string{archAMD64}}, fan[1]}
+	for _, name := range []string{built, released} {
+		if !reflect.DeepEqual(got.Nodes[name].Axes, want) {
+			t.Errorf("%s axes: got %#v, want %#v", name, got.Nodes[name].Axes, want)
+		}
+	}
+	if len(got.Nodes[built].Excludes) != 0 {
+		t.Errorf("built excludes: got %#v, want none", got.Nodes[built].Excludes)
+	}
+	if !reflect.DeepEqual(got.Nodes[crossed].Axes, st.Nodes[crossed].Axes) {
+		t.Errorf("crossed axes: got %#v, want the declared set", got.Nodes[crossed].Axes)
+	}
+	if len(st.Nodes[built].Axes[0].Values) != 2 {
+		t.Errorf("ForTarget mutated the shared subtree: %#v", st.Nodes[built])
+	}
+}
+
 // TestPublishRefsAbsentWithoutRoutes pins the back-compatible half: a project
 // that declares no route composes nothing, so oci-push keeps the single
 // OUTPUT_REGISTRY destination every project had before this plane existed.

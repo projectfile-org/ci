@@ -718,32 +718,23 @@ func (st *Subtree) ForTarget(target string) *Subtree {
 	return &out
 }
 
-// narrowArches returns a copy whose arch axis, overrides and excludes keep only the architectures the target's route builds.
+// narrowArches returns a copy whose arch axes (global and per-node), overrides and excludes keep only the architectures the target's route builds.
 func (st *Subtree) narrowArches(target string) *Subtree {
 	allowed := st.RouteArches[target]
 	if len(allowed) == 0 {
 		return st
 	}
-	out := *st
-	out.Axes = make([]Axis, 0, len(st.Axes))
-	for _, ax := range st.Axes {
-		if ax.Key != ArchAxis {
-			out.Axes = append(out.Axes, ax)
-			continue
-		}
-		kept := slices.DeleteFunc(slices.Clone(ax.Values), func(v string) bool { return !slices.Contains(allowed, v) })
-		if len(kept) == 0 {
-			genlog.Warn("arch axis: publish route builds none of the declared architectures, keeping them all",
-				"target", target, "route", allowed, "declared", ax.Values)
-			return st
-		}
-		genlog.Debug("arch axis: narrowed to the publish route", "target", target, "declared", ax.Values, "kept", kept)
-		out.Axes = append(out.Axes, Axis{Key: ax.Key, Values: kept})
+	keys := st.archAxisKeys()
+	axes, ok := narrowArchAxes(st.Axes, keys, allowed, target)
+	if !ok {
+		return st
 	}
+	out := *st
+	out.Axes = axes
 	pruned := func(match []KV) bool {
 		for _, kv := range match {
-			if kv.Key == ArchAxis && !slices.Contains(allowed, kv.Value) {
-				genlog.Debug("arch axis: dropping a matrix row for a pruned architecture", "target", target, "arch", kv.Value)
+			if keys[kv.Key] && !slices.Contains(allowed, kv.Value) {
+				genlog.Debug("arch axis: dropping a matrix row for a pruned architecture", "target", target, "axis", kv.Key, "arch", kv.Value)
 				return true
 			}
 		}
@@ -751,7 +742,48 @@ func (st *Subtree) narrowArches(target string) *Subtree {
 	}
 	out.Overrides = slices.DeleteFunc(slices.Clone(st.Overrides), func(o OverrideEntry) bool { return pruned(o.Match) })
 	out.Excludes = slices.DeleteFunc(slices.Clone(st.Excludes), func(e Exclusion) bool { return pruned(e) })
+	out.Nodes = make(map[string]Node, len(st.Nodes))
+	for name, n := range st.Nodes {
+		if nodeAxes, ok := narrowArchAxes(n.Axes, keys, allowed, target); ok && len(n.Axes) > 0 {
+			genlog.Debug("arch axis: narrowing a per-node matrix", "target", target, "node", name)
+			n.Axes = nodeAxes
+			n.Excludes = slices.DeleteFunc(slices.Clone(n.Excludes), func(e Exclusion) bool { return pruned(e) })
+		}
+		out.Nodes[name] = n
+	}
 	return &out
+}
+
+// archAxisKeys is the derived arch axis plus every axis a tool declares it executes (arch-axis).
+func (st *Subtree) archAxisKeys() map[string]bool {
+	keys := map[string]bool{ArchAxis: true}
+	for name, man := range st.Tools {
+		if man.ArchAxis != "" && !keys[man.ArchAxis] {
+			genlog.Debug("arch axis: tool executes a matrix axis", "tool", name, "axis", man.ArchAxis)
+			keys[man.ArchAxis] = true
+		}
+	}
+	return keys
+}
+
+// narrowArchAxes keeps only allowed values on every arch axis; false when one would be left empty.
+func narrowArchAxes(axes []Axis, keys map[string]bool, allowed []string, target string) ([]Axis, bool) {
+	out := make([]Axis, 0, len(axes))
+	for _, ax := range axes {
+		if !keys[ax.Key] {
+			out = append(out, ax)
+			continue
+		}
+		kept := slices.DeleteFunc(slices.Clone(ax.Values), func(v string) bool { return !slices.Contains(allowed, v) })
+		if len(kept) == 0 {
+			genlog.Warn("arch axis: publish route builds none of the declared architectures, keeping them all",
+				"target", target, "axis", ax.Key, "route", allowed, "declared", ax.Values)
+			return axes, false
+		}
+		genlog.Debug("arch axis: narrowed to the publish route", "target", target, "axis", ax.Key, "declared", ax.Values, "kept", kept)
+		out = append(out, Axis{Key: ax.Key, Values: kept})
+	}
+	return out, true
 }
 
 // ForGoal returns a copy of the subtree pinned to a SINGLE goal — the one-file-per-
