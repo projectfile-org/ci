@@ -14,6 +14,9 @@ name: check-outdated
     - cron: "0 7 * * 1"
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 env:
   M6E_TAG: ${{ vars.BASE_IMAGE_DEFAULT_VERSION || 'latest' }}
   M6E_RUN_SCOPE: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -38,7 +41,7 @@ jobs:
             ci-cache-go-
       - name: check-outdated-go
         if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
-        uses: projectfile-org/actions/run-tool@c3575dd4a3b40e5de7a2f7a91bb5f58d04e17945 # v1
+        uses: projectfile-org/actions/run-tool@9a9cd29c5f8bc069109db84d6da233028c4cac0f # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
