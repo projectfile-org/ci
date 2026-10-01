@@ -249,7 +249,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
         with:
           artifact-name: {{ .Step.Stem }}
 {{- if .Step.ImageBasename }}
-          image: {{ composeImage "" .Step.ImageBasename .Step.Arch }}
+          image: {{ composeImage "" .Step.ImageBasename .Step.ImageCell .Step.Arch }}
 {{- end }}
 {{- if .Step.BuildArgs }}
           build-args: |-
@@ -303,7 +303,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- else }}
           artifact-name: {{ .Step.Stem }}
 {{- end }}
-          image: {{ composeImage "" .Step.ImageBasename .Step.Arch }}
+          image: {{ composeImage "" .Step.ImageBasename .Step.ImageCell .Step.Arch }}
 {{- if .Step.PublishVersion }}
           version: {{ .Step.PublishVersion }}
 {{- end }}

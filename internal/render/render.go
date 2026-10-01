@@ -289,23 +289,20 @@ func imageTagExpr() string { return "${{ env." + TagEnvVar + " }}" }
 // (a run must finish before it can be re-run), so they cannot collide in the store.
 // It takes the cell's ARCH for the same reason it takes the run: the tag has to be
 // unique among everything sharing a docker store, and a host-mode runner shares one
-// across concurrent jobs. Every other cell dimension is already in the image NAME (the
-// basename carries its {AXIS} placeholders), but the arch axis is derived and reaches
-// no basename — so without this, one series' arch cells all load different images under
-// one ref and the last `docker load` wins. Empty arch (no axis, or a node that pinned
-// it away) => today's tag exactly.
-func selfImageTagExpr(arch string) string {
-	return imageTagExpr() + artifactScopeSuffix + archSuffix(arch)
+// across concurrent jobs. The cell's declared variant and its arch both go in the tag,
+// so cells of one image never share a ref and the last `docker load` never wins.
+func selfImageTagExpr(cell, arch string) string {
+	return imageTagExpr() + artifactScopeSuffix + cellSuffix(cell) + cellSuffix(arch)
 }
 
-// archSuffix is the one spelling of "…and this cell's architecture", shared by the
+// cellSuffix is the one spelling of "…and this part of the cell", shared by the
 // self-image tag and the compose stack identity so the two can never disagree about
 // what makes a cell distinct.
-func archSuffix(arch string) string {
-	if arch == "" {
+func cellSuffix(part string) string {
+	if part == "" {
 		return ""
 	}
-	return "-" + arch
+	return "-" + part
 }
 
 // PfCliImageVar is the ci.images var NAME carrying the projectfile/cli ref (registry +
@@ -1699,6 +1696,7 @@ type StepView struct {
 	// ImageBasename / BuildArgNames / FileArgs / MountsArg are the container-build action
 	// `with:` inputs (Phase 2 clean scalars); ImageBasename is also the oci-push push ref.
 	ImageBasename string `json:"image-basename,omitempty"`
+	ImageCell     string `json:"image-cell,omitempty"` // this cell's variant, the working tag's per-cell part
 	// PublishVersion is the oci-push `version:` input — the git tag that drives the
 	// SEMVER tag cascade (X.Y.Z fans out to X.Y, X, latest; a pre-release publishes its
 	// exact spelling only). It is the SAME `ci:version` context the M6E_VERSION build-arg
@@ -2932,6 +2930,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// build PRODUCER stamps it into the OCI archive, the publish CONSUMER re-tags to it.
 	if man.Action == ActionContainerBuild || publishes {
 		step.ImageBasename = substAxes(st.Image, subst)
+		step.ImageCell = substAxes(variantCell(b, subst), subst)
 	}
 	// container-build reads the projectfile for its labels via pf-cli; a hostexecutor
 	// runner has none, so it takes the projectfile/cli image (PF_CLI_IMAGE var) as an
@@ -3102,7 +3101,8 @@ func secretsStep(b *ci.Build, st *ci.Subtree, axes []ci.Axis, arch string) StepV
 		SecretsDefaultImage: miscToolsImageRef(b),
 	}
 	if st.Image != "" {
-		s.SecretsImage = composeImage("", substAxes(st.Image, substKeys(axes, st)), arch)
+		keys := substKeys(axes, st)
+		s.SecretsImage = composeImage("", substAxes(st.Image, keys), substAxes(variantCell(b, keys), keys), arch)
 	}
 	return s
 }
@@ -3466,14 +3466,13 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 						img := substAxes(st.Image, keys)
 						arch := loadArch
 						jobLoadArch = loadArch
-						loadedRef := composeImage("", img, arch)
+						cell := variantCell(b, keys)
+						loadedRef := composeImage("", img, substAxes(cell, keys), arch)
 						// run-scoped (not just cell-scoped) so two runs of the same
 						// pipeline never name one stack; image ref stays unscoped.
-						// Arch-scoped for the cell half of the same problem: the basename
-						// carries every axis but the derived one, so two arch cells of one
-						// series would otherwise share a pod and reap each other's stack.
+						// Variant- and arch-scoped so two cells never share a pod and reap each other's stack.
 						// Slug-spelled where an axis value carries a dot compose refuses.
-						proj := composeProject(substSlugs(st.Image, keys, slugAxes(j.Axes))) + archSuffix(arch) + runScopeSuffix
+						proj := composeProject(substSlugs(st.Image, keys, slugAxes(j.Axes))) + cellSuffix(substSlugs(cell, keys, slugAxes(j.Axes))) + cellSuffix(arch) + runScopeSuffix
 						step.Env = append(step.Env,
 							EnvVar{Key: ImageFullnameEnv, Value: loadedRef},
 							EnvVar{Key: ComposeProjectEnv, Value: proj},
@@ -4206,14 +4205,41 @@ func appendUnique(vals []string, v string) []string {
 // imageTagExpr (they never enter the docker store via load). oci-push's image: is also
 // routed here, but skopeo copies the tar DIRECTLY to the registry and ignores the tag
 // half, so the run scope is harmless there.
-func composeImage(registry, img, arch string) string {
+func composeImage(registry, img, cell, arch string) string {
 	if strings.Contains(img, ":") {
 		return img
 	}
 	if registry == "" {
-		return img + ":" + selfImageTagExpr(arch)
+		return img + ":" + selfImageTagExpr(cell, arch)
 	}
-	return VarRef(registry) + "/" + img + ":" + selfImageTagExpr(arch)
+	return VarRef(registry) + "/" + img + ":" + selfImageTagExpr(cell, arch)
+}
+
+// variantCell is the declared image variant as a `{AXIS}` template over these axes, joined as declared; "" without one.
+func variantCell(b *ci.Build, axes []ci.Axis) string {
+	if b == nil || b.Naming == nil || b.Naming.Variant == nil {
+		return ""
+	}
+	v := b.Naming.Variant
+	keep := make(map[string]string, len(axes))
+	for _, a := range axes {
+		keep[a.Key] = "{" + a.Key + "}"
+	}
+	parts := make([]string, 0, len(v.Parts))
+	for _, p := range v.Parts {
+		val, ok := p.Fill(keep)
+		if !ok {
+			genlog.Warn("image variant part has no value in this job", "part", p.Name, "template", p.Template)
+		}
+		parts = append(parts, val)
+	}
+	join := v.Join
+	if join == "" {
+		join = "-"
+	}
+	cell := strings.Join(parts, join)
+	genlog.Debug("image working tag cell", "cell", cell, "parts", len(parts))
+	return cell
 }
 
 // publishedImageRef renders the FALLBACK published ref of a project's per-cell image at the

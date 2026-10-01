@@ -5373,7 +5373,7 @@ func TestSelfImageRefIsArchScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamp := "b19/ubuntu:" + selfImageTagExpr(archExpr)
+	stamp := "b19/ubuntu:" + selfImageTagExpr("", archExpr)
 	if !strings.Contains(string(out), "          image: "+stamp) {
 		t.Fatalf("container-build must stamp the arch-scoped ref %q:\n%s", stamp, out)
 	}

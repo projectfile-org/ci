@@ -606,6 +606,7 @@ type Subtree struct {
 	Goals         []string        // goal nodes (flagged goal:true), sorted (empty => infer every sink)
 	GoalsExplicit bool            // any node flagged goal:true (else fall back to sink inference)
 	Image         string          // built-image BASENAME: registry-relative path (`b19/ubuntu`, composed <registry>/<image>:<tag> at render) OR a complete `:tag`-bearing ref (verbatim). Explicit `image:` wins; empty => Load DERIVES <last-label(identity.namespace)>/<identity.name>. Stamped into the OCI archive (container-build name=) so a consumer `docker load`s a TAGGED image (no anonymous archives).
+	Variant       bool            // org.projectfile.image.variant is declared, so the tag tells the cells apart
 	Axes          []Axis          // matrix axes, key-sorted (empty => no matrix)
 	Overrides     []OverrideEntry // matrix.overrides rows (extra per-cell vars keyed by an axis-value match); empty => none
 	Excludes      []Exclusion     // matrix.exclude rows (cells the axes mint but nothing builds); empty => the full grid
@@ -1748,6 +1749,12 @@ func Load(pfPath string) (*Subtree, error) {
 	if st.Image == "" {
 		st.Image = r.imageBasename()
 	}
+	variant, err := r.subtree(imageScope + ".variant")
+	if err != nil {
+		return nil, err
+	}
+	st.Variant = len(variant) > 0
+	genlog.Debug("image variant declared", "variant", st.Variant, "image", st.Image)
 	// Resolve every `${<pf-path>}` generation-time reference in the tool invocations
 	// (run / positional args / set-env / string build-args) against the merged doc. A
 	// miss resolves to EMPTY (D4, reversed) — a preset ref to an artifact this project
@@ -1802,9 +1809,7 @@ var imagePlaceholder = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 //   - unknown-axis: a {KEY} placeholder names an axis the project never declares,
 //     so the ref would render a literal `{KEY}` into an image name (a typo'd template).
 //   - collision: the oci-push JOB itself fans more than one cell (see imagePushFans),
-//     yet the ref carries NO {AXIS} placeholder — every cell would push the SAME ref.
-//     The consumer must template the ref (e.g. `b19/ubuntu-{B19_UBUNTU_SERIES}`) so
-//     each cell publishes to its own image.
+//     yet neither the ref nor a declared image variant tells the cells apart.
 //
 // A non-matrix project, a matrix with no push, OR a SINGLE image push that merely
 // coexists with an unrelated matrix (e.g. a Go CLI whose binaries fan {GOOS,GOARCH}
@@ -1826,10 +1831,10 @@ func (st *Subtree) ValidateImage() error {
 				st.Image, m[1], sortedKeys(axes))
 		}
 	}
-	if len(placeholders) == 0 && st.imagePushFans() {
-		return fmt.Errorf("org.projectfile.ci.image %q is a matrix build consumed by an %s but carries no {AXIS} placeholder — "+
-			"every cell would push the same ref; template it per axis (e.g. %q)",
-			st.Image, ActionOciPush, st.Image+"-{"+st.firstAxis()+"}")
+	if len(placeholders) == 0 && !st.Variant && st.imagePushFans() {
+		return fmt.Errorf("org.projectfile.ci.image %q is a matrix build consumed by an %s but declares no org.projectfile.image.variant — "+
+			"every cell would push the same ref; declare a variant part over {%s}",
+			st.Image, ActionOciPush, st.firstAxis())
 	}
 	return nil
 }
