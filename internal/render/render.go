@@ -1064,7 +1064,7 @@ func toolImageParts(varName string, b *ci.Build) (path, pinnedTag string) {
 		return VarRef(varName), "" // orphan var: bare ref, flip tag (imageExpr parity)
 	}
 	if tag := imageTag(val); tag != "" && tag != "${"+imageTagMakeVar+"}" {
-		pinnedTag = lowerMakeExpr(tag, nil, nil, nil) // a plain literal stays verbatim
+		pinnedTag = lowerMakeExpr(tag, buildArgDefaults(b), nil, nil) // a plain literal stays verbatim
 	}
 	return path, pinnedTag
 }

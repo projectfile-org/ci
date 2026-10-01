@@ -766,6 +766,30 @@ func TestExternalPinnedToolImage(t *testing.T) {
 	}
 }
 
+// TestToolImageTagKeepsBuildArgDefault pins a composed tool tag ref falling back to its build-arg default.
+func TestToolImageTagKeepsBuildArgDefault(t *testing.T) {
+	const subtree = `{
+  "tools": {"npm-install": {"image": "NODE_TOOL_IMAGE", "run": "npm ci"}},
+  "nodes": {"deps-installed": {"goal": true, "needs": {"npm-install": true}}}
+}`
+	build := &ci.Build{
+		Images: map[string]string{"NODE_TOOL_IMAGE": "${B19_DOCKER_REGISTRY}/b19/node:${M6E_BASE_IMAGE_VARIANT_PREFIX}${B19_NODE_SERIES}"},
+		Args:   []ci.BuildInput{{Name: "B19_NODE_SERIES", Default: "26"}},
+	}
+	st, err := ci.Parse([]byte(subtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	got := steps(Build(rm, st, build))["npm-install"].PinnedTag
+	if want := "${{ vars.M6E_BASE_IMAGE_VARIANT_PREFIX }}${{ vars.B19_NODE_SERIES || '26' }}"; got != want {
+		t.Errorf("npm-install PinnedTag: got %q, want %q", got, want)
+	}
+}
+
 // TestMatrixOverridesLowering pins the matrix.overrides lowering end-to-end (the
 // b19/zig case): a per-series LLVM build-arg varies per cell. The container-build step
 // forwards B19_LLVM_SERIES as ${{ matrix.B19_LLVM_SERIES }} (matrix-passed, NOT a
