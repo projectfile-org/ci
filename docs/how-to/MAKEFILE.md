@@ -1591,7 +1591,7 @@ Run the full CI pipeline locally — isolated ci- resources, matrix sweep, teard
 
 Generated from `org.projectfile.ci.nodes` — each is invocable as `make <target>`.
 
-### `analyze`
+### `analyzed`
 
 Run the heavy analysis sweep (mutation testing, benchmarks)
 
