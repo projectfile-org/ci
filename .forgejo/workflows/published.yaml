@@ -814,6 +814,7 @@ jobs:
           run: auto-golangci-lint
           env: |-
             GOPROXY
+            M6E_CHECK_OUTDATED_STRICT
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
       - name: auto-gosec
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_GOSEC != 'true'

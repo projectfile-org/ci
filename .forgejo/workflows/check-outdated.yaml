@@ -35,7 +35,7 @@ jobs:
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: go-outdated
+          run: .makefile/core/scripts/check-outdated.sh ' -> v' go-outdated
           env: |-
             GOPROXY
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw

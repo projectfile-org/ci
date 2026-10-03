@@ -45,7 +45,7 @@ jobs:
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
-          run: go-outdated
+          run: .makefile/core/scripts/check-outdated.sh ' -> v' go-outdated
           env: |-
             GOPROXY
           mounts: ${{ runner.temp }}/ci-cache/go:/app/.cache/go:rw
