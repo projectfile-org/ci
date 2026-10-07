@@ -62,11 +62,11 @@ docker pull kiota.ch/projectfile/ci:latest
 
 ### Готовий бінарний файл
 
-Завантажте готовий бінарний файл для своєї платформи з останнього випуску на GitHub:
+Завантажте готовий бінарний файл для своєї платформи з випусків на GitHub:
 
 ```sh
-curl --fail --location --output pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-$(uname -s | tr A-Z a-z)-$(uname -m | sed -e s/x86_64/amd64/ -e s/aarch64/arm64/) && chmod +x pf-ci
-./pf-ci --help
+mkdir -p ~/.local/bin && curl --fail --location --output ~/.local/bin/pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-$(uname -s | tr A-Z a-z)-$(uname -m) && chmod +x ~/.local/bin/pf-ci
+~/.local/bin/pf-ci --help
 ```
 
 Опубліковано для: `linux/amd64`, `linux/arm64`, `linux/riscv64`, `darwin/amd64`, `darwin/arm64`
