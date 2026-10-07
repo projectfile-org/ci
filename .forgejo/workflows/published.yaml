@@ -77,13 +77,13 @@ jobs:
       GOARCH: ${{ matrix.GOARCH }}
       GOOS: ${{ matrix.GOOS }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: build-binaries
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -94,7 +94,7 @@ jobs:
             GITHUB_REF_NAME
             GOPROXY
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
@@ -118,20 +118,20 @@ jobs:
     env:
       GOARCH: ${{ matrix.GOARCH }}
       GOOS: ${{ matrix.GOOS }}
-      FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
         with:
           name: gpg-sign-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
       - name: forgejo-release
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_RELEASED != 'true' && vars.CI_SKIP_FORGEJO_RELEASE != 'true'
-        uses: projectfile/actions/forgejo-release@v1
+        uses: projectfile/actions/forgejo-release@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           version: ${{ github.ref_name }}
           # The unsuffixed binary path resolved from org.projectfile.artifacts (the single
@@ -155,11 +155,11 @@ jobs:
       M6E_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       M6E_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
@@ -169,7 +169,7 @@ jobs:
         run: .makefile/core/scripts/gpg-key-file.sh
       - name: gpg-sign
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -178,7 +178,7 @@ jobs:
             GOARCH=${{ matrix.GOARCH }}
             GOOS=${{ matrix.GOOS }}
             M6E_GPG_PASSPHRASE=${{ secrets.GPG_PASSPHRASE }}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
         with:
           name: gpg-sign-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
@@ -205,7 +205,7 @@ jobs:
       M6E_COMPOSE_PROJECT_NAME: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}
       M6E_CONTAINER_INSTANCE: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
@@ -213,7 +213,7 @@ jobs:
       - name: refuse a withheld M6E_ARCH
         if: vars.CI_ONLY_M6E_ARCH != '' && !contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',amd64,') && vars.CI_SKIP_CONTAINER_IS_VERIFIED != 'true'
         run: echo "CI_ONLY_M6E_ARCH withholds M6E_ARCH=amd64, the one value this node runs on" >&2; exit 1
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
         with:
           name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
@@ -221,7 +221,7 @@ jobs:
       # can delete a layer record mid-copy — podman then buries the real cause under a
       # four-transport probe that claims the tar matches no supported format. The retry
       # for that class lives in the pinned action, not inline (Law 2).
-      - uses: projectfile/actions/container-load@v1
+      - uses: projectfile/actions/container-load@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH)))
         with:
           archive: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
@@ -236,7 +236,7 @@ jobs:
         run: .makefile/container/scripts/configuration-capture.sh --check --default-lang= es uk
       - name: container-test
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_READY_TO_TEST != 'true' && vars.CI_SKIP_CONTAINER_TEST != 'true'
-        uses: projectfile/actions/container-exec@v1
+        uses: projectfile/actions/container-exec@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           container: ${{ env.M6E_CONTAINER_INSTANCE }}
           run: test.d
@@ -257,7 +257,7 @@ jobs:
       # site), so one docker-cleanup step reaps both — the imperative reaps + their
       # `inspect` guard live in the pinned action, not inline (Law 2).
       - if: ${{ always() }}
-        uses: projectfile/actions/docker-cleanup@v1
+        uses: projectfile/actions/docker-cleanup@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
           network: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ env.M6E_RUN_SCOPE }}-network
@@ -274,20 +274,20 @@ jobs:
   documentation-passes-lint:
     runs-on: docker
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: auto-markdownlint
         if: vars.CI_SKIP_DOCUMENTATION_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_MARKDOWNLINT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-markdownlint
       - name: auto-textlint
         if: vars.CI_SKIP_DOCUMENTATION_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_TEXTLINT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -310,18 +310,18 @@ jobs:
       GOARCH: ${{ matrix.GOARCH }}
       GOOS: ${{ matrix.GOOS }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
       - name: auto-gsa
         if: (vars.CI_ONLY_GOARCH == '' || contains(format(',{0},', vars.CI_ONLY_GOARCH), format(',{0},', matrix.GOARCH))) && (vars.CI_ONLY_GOOS == '' || contains(format(',{0},', vars.CI_ONLY_GOOS), format(',{0},', matrix.GOOS))) && vars.CI_SKIP_GSA != 'true' && vars.CI_SKIP_AUTO_GSA != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -340,17 +340,17 @@ jobs:
       M6E_ARCH: ${{ matrix.M6E_ARCH }}
       M6E_IMAGE_ARCHIVE: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
         with:
           name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
       - name: syft-sbom-tar
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -358,7 +358,7 @@ jobs:
           env: |-
             M6E_ARCH=${{ matrix.M6E_ARCH }}
             M6E_IMAGE_ARCHIVE=image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
         with:
           name: syft-sbom-tar-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
@@ -380,40 +380,40 @@ jobs:
       REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-amd64-linux-${{ github.run_id }}
           path: dist
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-amd64-darwin-${{ github.run_id }}
           path: dist
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-arm64-linux-${{ github.run_id }}
           path: dist
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-arm64-darwin-${{ github.run_id }}
           path: dist
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
         with:
           name: build-binaries-riscv64-linux-${{ github.run_id }}
           path: dist
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), ',amd64,')) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
         with:
           name: image-amd64-${{ github.run_id }}
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
         with:
           name: syft-sbom-tar-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
@@ -421,7 +421,7 @@ jobs:
       - name: oci-push
         # The cell's run-time override gate, on the STEP because a job `if:` may not read the matrix context
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_PUBLISH_IMAGE != 'true' && vars.CI_SKIP_OCI_PUSH != 'true'
-        uses: projectfile/actions/oci-push@v1
+        uses: projectfile/actions/oci-push@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           # One tar per DECLARED architecture, published together as a manifest list at
           # each cascade tag. Per-arch TAGS are deliberately not published: they are
@@ -465,7 +465,7 @@ jobs:
         run: .makefile/b19/scripts/cosign-key-file.sh
       - name: cosign-sbom-attest
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_SBOM_ATTEST != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -475,7 +475,7 @@ jobs:
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
       - name: cosign-sign
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_SIGN != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -515,13 +515,13 @@ jobs:
       M6E_NEAR_CACHE_PORT: ${{ inputs.M6E_NEAR_CACHE_PORT || vars.M6E_NEAR_CACHE_PORT }}
       SOURCE_DOCKER_REGISTRY: ${{ inputs.SOURCE_DOCKER_REGISTRY || vars.SOURCE_DOCKER_REGISTRY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: container-build
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
-        uses: projectfile/actions/container-build/buildah@v1
+        uses: projectfile/actions/container-build/buildah@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           artifact-name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
@@ -567,17 +567,17 @@ jobs:
       M6E_IMAGE_ARCHIVE: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
       CI_IGNORE_VULNERABILITIES: ${{ vars.CI_IGNORE_VULNERABILITIES }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
         with:
           name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
       - name: grype-scan-tar
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -590,7 +590,7 @@ jobs:
           mounts: /app/data/ci-cache/grype-db:/app/.cache/grype:rw
       - name: trivy-scan-tar
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -602,7 +602,7 @@ jobs:
             M6E_SHARED_CACHE=Y
             TRIVY_CACHE_BACKEND
           mounts: /app/data/ci-cache/trivy-db:/app/.cache/trivy:rw
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         if: ${{ always() }}
         with:
           name: reports-image-is-secure-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
@@ -628,13 +628,13 @@ jobs:
     runs-on: docker
     needs: ["projectfile-is-valid"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: pf-bridge-check
         if: vars.CI_SKIP_PROJECTFILE_IS_OK != 'true' && vars.CI_SKIP_PF_BRIDGE_CHECK != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -642,13 +642,13 @@ jobs:
   projectfile-is-valid:
     runs-on: docker
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: pf-validate
         if: vars.CI_SKIP_PROJECTFILE_IS_VALID != 'true' && vars.CI_SKIP_PF_VALIDATE != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -661,7 +661,7 @@ jobs:
       - run: echo publish-image
   published:
     runs-on: docker
-    needs: ["binaries-are-released", "image-has-sbom", "image-is-attested", "image-is-signed", "publish-image", "ready-to-publish"]
+    needs: ["binaries-are-released", "image-has-sbom", "image-is-attested", "image-is-signed", "publish-image", "ready-to-publish", "release-notes-are-published"]
     steps:
       - run: echo published
   ready-to-publish:
@@ -669,6 +669,30 @@ jobs:
     needs: ["artifacts-are-ok"]
     steps:
       - run: echo ready-to-publish
+  release-notes-are-published:
+    runs-on: docker
+    needs: ["binaries-are-released"]
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: release-notes-forgejo
+        if: vars.CI_SKIP_RELEASE_NOTES_ARE_PUBLISHED != 'true' && vars.CI_SKIP_RELEASE_NOTES_FORGEJO != 'true'
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
+        with:
+          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: pf-bridge release-notes publish
+          env: |-
+            FORGEJO_TOKEN=${{ secrets.RELEASE_TOKEN || github.token }}
+            GITHUB_API_URL
+            GITHUB_REF_NAME
+            GITHUB_REPOSITORY
+            GITHUB_SERVER_URL
   secrets-ready:
     runs-on: docker
     needs: ["image-is-built"]
@@ -681,7 +705,7 @@ jobs:
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
       COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
@@ -690,7 +714,7 @@ jobs:
         run: .makefile/b19/scripts/cosign-key-file.sh
       - name: cosign-preflight
         if: vars.CI_SKIP_SIGNING_IS_READY != 'true' && vars.CI_SKIP_COSIGN_PREFLIGHT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -700,20 +724,20 @@ jobs:
   source-is-compliant:
     runs-on: docker
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: i18n-check
         if: vars.CI_SKIP_SOURCE_IS_COMPLIANT != 'true' && vars.CI_SKIP_I18N_CHECK != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-i18n check
       - name: reuse-lint
         if: vars.CI_SKIP_SOURCE_IS_COMPLIANT != 'true' && vars.CI_SKIP_REUSE_LINT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -729,13 +753,13 @@ jobs:
       OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: /app/.cache/osv
       CI_IGNORE_VULNERABILITIES: ${{ vars.CI_IGNORE_VULNERABILITIES }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: grype-scan-source
         if: vars.CI_SKIP_SOURCE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_SOURCE != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -746,7 +770,7 @@ jobs:
           mounts: /app/data/ci-cache/grype-db:/app/.cache/grype:rw
       - name: osv-scanner-scan-source
         if: vars.CI_SKIP_SOURCE_IS_SECURE != 'true' && vars.CI_SKIP_OSV_SCANNER_SCAN_SOURCE != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -758,7 +782,7 @@ jobs:
           mounts: /app/data/ci-cache/osv-db:/app/.cache/osv:rw
       - name: trivy-scan-source
         if: vars.CI_SKIP_SOURCE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_SOURCE != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -768,7 +792,7 @@ jobs:
             M6E_SHARED_CACHE=Y
             TRIVY_CACHE_BACKEND
           mounts: /app/data/ci-cache/trivy-db:/app/.cache/trivy:rw
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         if: ${{ always() }}
         with:
           name: reports-source-is-secure-${{ github.run_id }}
@@ -777,13 +801,13 @@ jobs:
   source-is-tested:
     runs-on: docker
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: go-test
         if: vars.CI_SKIP_SOURCE_IS_TESTED != 'true' && vars.CI_SKIP_GO_TEST != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -794,20 +818,20 @@ jobs:
   source-passes-lint:
     runs-on: docker
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
           persist-credentials: false
       - name: auto-cffr-validate
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_CFFR_VALIDATE != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_R_TOOLS_IMAGE || format('{0}/d9t/r-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-cffr-validate
       - name: auto-golangci-lint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_GOLANGCI_LINT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -818,7 +842,7 @@ jobs:
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
       - name: auto-gosec
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_GOSEC != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -828,35 +852,35 @@ jobs:
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
       - name: auto-jsonlint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_JSONLINT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-jsonlint
       - name: auto-shellcheck
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_SHELLCHECK != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-shellcheck
       - name: auto-yamllint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_YAMLLINT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-yamllint
-      - name: auto-zizmor
-        if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_ZIZMOR != 'true'
-        uses: projectfile/actions/run-tool@v1
+      - name: auto-zizmor-forgejo
+        if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_AUTO_ZIZMOR_FORGEJO != 'true'
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.D9T_RUST_TOOLS_IMAGE || format('{0}/d9t/rust-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: auto-zizmor
+          run: auto-zizmor --forge forgejo
       - name: compose-example-check
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_COMPOSE_EXAMPLE_CHECK != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.DOCKER_CLI_IMAGE || 'docker' }}
           version: 29.8.1-cli
@@ -864,7 +888,7 @@ jobs:
           run: sh -c 'test ! -f .compose/example.yaml || docker compose --file .compose/example.yaml config --no-interpolate --quiet'
       - name: go-vet
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_GO_VET != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -874,7 +898,7 @@ jobs:
           mounts: /app/data/ci-cache/go:/app/.cache/go:rw
       - name: hadolint
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_HADOLINT != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.HADOLINT_IMAGE || 'hadolint/hadolint' }}
           version: v2.15.1
@@ -882,7 +906,7 @@ jobs:
           run: hadolint Dockerfile
       - name: ignorelint-check
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_IGNORELINT_CHECK != 'true'
-        uses: projectfile/actions/run-tool@v1
+        uses: projectfile/actions/run-tool@3e3cc4774b3bdd20b645a535fa13cd638d2c1d92 # v1
         with:
           image: ${{ vars.IGNORELINT_IMAGE || format('{0}/damian-buho/ignorelint', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
