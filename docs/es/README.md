@@ -65,7 +65,9 @@ docker pull kiota.ch/projectfile/ci:latest
 Descarga el binario precompilado para tu plataforma desde las versiones de GitHub:
 
 ```sh
-mkdir -p ~/.local/bin && curl --fail --location --output ~/.local/bin/pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-$(uname -s | tr A-Z a-z)-$(uname -m) && chmod +x ~/.local/bin/pf-ci
+mkdir -p ~/.local/bin
+curl --fail --location --output ~/.local/bin/pf-ci https://github.com/projectfile-org/ci/releases/latest/download/pf-ci-$(uname -s | tr A-Z a-z)-$(uname -m)
+chmod +x ~/.local/bin/pf-ci
 ~/.local/bin/pf-ci --help
 ```
 
