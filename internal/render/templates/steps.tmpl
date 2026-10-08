@@ -160,10 +160,10 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "frag/run-tool" }}
 {{- if .Target.CacheRestore }}
-{{- range .Step.Caches }}
+{{- range .Step.Caches }}{{ if .Restore }}
       - name: restore {{ .Name }}
         uses: {{ $.Target.CacheRestore }}
-{{- with $.Step.Gate }}
+{{- with .Gate }}
         if: {{ . }}
 {{- end }}
         with:
@@ -171,6 +171,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
           key: {{ cacheKey .Name }}
           restore-keys: |
             {{ cacheKey .Name }}
+{{- end }}
 {{- end }}
 {{- end }}
       - name: {{ .Step.Name }}
@@ -210,7 +211,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- range writerCaches .Step }}
       - name: save {{ .Name }}
         uses: {{ $.Target.CacheSave }}
-{{- with $.Step.Gate }}
+{{- with .Gate }}
         if: {{ . }}
 {{- end }}
         with:

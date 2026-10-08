@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1852,6 +1853,12 @@ type Cache struct {
 	// Mode is the resolved docker `--volume` access opt (`ro`/`rw`) from the mount's
 	// mode — RO for a scan that reads the shared DB, RW for a `*-db-update` writer.
 	Mode string `json:"mode"`
+	// Restore marks the job's first step mounting this name: the one that restores it on an ephemeral runner
+	Restore bool `json:"restore,omitempty"`
+	// Save marks the job's last step mounting this name: the one that saves an `rw` cache back
+	Save bool `json:"save,omitempty"`
+	// Gate is the `if:` of that restore and save: the OR of every gate in the job that mounts this name
+	Gate string `json:"gate,omitempty"`
 }
 
 // DownloadView is one artifact a node-job pulls ONCE before its steps run: the
@@ -3840,6 +3847,8 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		jobs[i] = publishCells(jobs[i], target.Key)
 		// after publishCells, so the destination axis is gated like every other
 		jobs[i] = forgeGates(jobs[i])
+		// after forgeGates, so each cache's restore and save gate reads the final step gates
+		jobs[i] = cacheOnce(jobs[i])
 		// Route this job's arch cells to their runners, after publishCells so the two
 		// include lowerings compose on one final matrix rather than one overwriting the
 		// other's rows.
@@ -4019,6 +4028,50 @@ func forgeGates(j JobView) JobView {
 		genlog.Debug("forge gates", "job", j.Name, "axes", len(j.Matrix), "steps", len(j.Steps), "pins", len(j.Pins))
 	}
 	return j
+}
+
+// cacheOnce restores each named cache once, before its first step in the job, and saves it once, after its last.
+func cacheOnce(j JobView) JobView {
+	first, last, gates := map[string]int{}, map[string]int{}, map[string][]string{}
+	for si := range j.Steps {
+		st := &j.Steps[si]
+		// a fresh slice: StepViews are shared across the per-target renders
+		st.Caches = append([]Cache(nil), st.Caches...)
+		for _, c := range st.Caches {
+			if _, seen := first[c.Name]; !seen {
+				first[c.Name] = si
+			}
+			last[c.Name] = si
+			gates[c.Name] = append(gates[c.Name], st.Gate())
+		}
+	}
+	for si := range j.Steps {
+		for k := range j.Steps[si].Caches {
+			c := &j.Steps[si].Caches[k]
+			c.Restore, c.Save, c.Gate = first[c.Name] == si, last[c.Name] == si, anyGate(gates[c.Name])
+		}
+	}
+	for name, at := range first {
+		genlog.Debug("cache once", "job", j.Name, "cache", name, "restore-step", at, "save-step", last[name], "users", len(gates[name]))
+	}
+	return j
+}
+
+// anyGate is the OR of step gates: empty when any of them is ungated, the one gate when they all agree.
+func anyGate(gates []string) string {
+	uniq := []string{}
+	for _, g := range gates {
+		if g == "" {
+			return ""
+		}
+		if !slices.Contains(uniq, g) {
+			uniq = append(uniq, g)
+		}
+	}
+	if len(uniq) == 1 {
+		return uniq[0]
+	}
+	return "(" + strings.Join(uniq, ") || (") + ")"
 }
 
 // clauses is a gate as the list it conjoins, empty for the empty gate.
@@ -4322,13 +4375,13 @@ func cacheKey(name string) string { return CacheKeyPrefix + "-" + name + "-" }
 // Same stem as cacheKey so the two sides provably agree.
 func cacheSaveKey(name string) string { return cacheKey(name) + "${{ github.run_id }}" }
 
-// writerCaches is the `rw` subset of a step's caches — the `*-db-update` writers whose
+// writerCaches is the `rw` subset of a step's caches it saves (the job's last user) — the `*-db-update` writers whose
 // refreshed DB must be saved back on an ephemeral runner. Scans (ro) restore only, so
 // they are filtered out here rather than gated in the template (logic stays in Build).
 func writerCaches(s StepView) []Cache {
 	out := make([]Cache, 0, len(s.Caches))
 	for _, c := range s.Caches {
-		if c.Mode == "rw" {
+		if c.Mode == "rw" && c.Save {
 			out = append(out, c)
 		}
 	}

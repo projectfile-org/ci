@@ -2214,6 +2214,51 @@ func TestScannerCacheLowering(t *testing.T) {
 	}
 }
 
+// sharedCacheSubtree is one job whose two tools mount the same read-write cache.
+const sharedCacheSubtree = `{
+  "tools": {
+    "go-build": {"image": "d9t/go-tools", "run": "go build ./...", "mounts": [{"from": "go", "to": "/app/.cache/go", "mode": "read-write"}]},
+    "go-test": {"image": "d9t/go-tools", "run": "go test ./...", "mounts": [{"from": "go", "to": "/app/.cache/go", "mode": "read-write"}]}
+  },
+  "nodes": {
+    "source-is-tested": {"goal": true, "needs": {"go-build": true, "go-test": true}}
+  }
+}`
+
+// TestSharedCacheOncePerJob pins one restore before a cache's first step and one save after its last, gated by either step.
+func TestSharedCacheOncePerJob(t *testing.T) {
+	st, err := ci.Parse([]byte(sharedCacheSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	gha, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(gha)
+	if n := strings.Count(s, "- name: restore go\n"); n != 1 {
+		t.Errorf("gha: want ONE restore of the shared cache, got %d:\n%s", n, s)
+	}
+	if n := strings.Count(s, "- name: save go\n"); n != 1 {
+		t.Errorf("gha: want ONE save of the shared cache, got %d:\n%s", n, s)
+	}
+	restore, save := strings.Index(s, "- name: restore go\n"), strings.Index(s, "- name: save go\n")
+	if restore > strings.Index(s, "go build ./...") || restore > strings.Index(s, "go test ./...") {
+		t.Errorf("gha: the restore must precede both tools:\n%s", s)
+	}
+	if save < strings.Index(s, "go build ./...") || save < strings.Index(s, "go test ./...") {
+		t.Errorf("gha: the save must follow both tools:\n%s", s)
+	}
+	either := "        if: (" + forgeGate(nil, "source-is-tested", "go-build") + ") || (" + forgeGate(nil, "source-is-tested", "go-test") + ")\n"
+	if strings.Count(s, either) != 2 {
+		t.Errorf("gha: the restore and the save must both run when either tool runs (%q):\n%s", either, s)
+	}
+}
+
 // writerCacheSubtree is a `*-db-update` writer: a run-tool whose named cache mounts
 // read-write (it REFRESHES the shared scanner DB in place).
 const writerCacheSubtree = `{
