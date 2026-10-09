@@ -112,6 +112,8 @@ type Node struct {
 	// maps them to the target's `on:`/`if:` spelling — the model never names one.
 	// Sorted+deduped in decodeWhen for byte-stable output.
 	When []string
+	// Follows names the node whose resolved When this node adopts (resolveFollows); empty => own When.
+	Follows string
 	// Schedule and Dispatch carry the workflow-level trigger DATA a node's `when`
 	// event tokens can only narrow to: the cron timer and the manual-run button.
 	// They are meaningful on a GOAL node (each goal lowers to its OWN file, so the
@@ -892,7 +894,8 @@ type rawNode struct {
 // rawWhen mirrors the on-the-wire `when: {events: [...]}` shape. A nil pointer
 // (the field absent) means "no predicate" — the node runs on every event.
 type rawWhen struct {
-	Events []string `json:"events"`
+	Events  []string `json:"events"`
+	Follows string   `json:"follows"` // adopt another node's resolved events; own events are the fallback
 }
 
 // Build holds the data the resolver needs at CI render time, drawn from TWO
@@ -2057,6 +2060,10 @@ func Parse(data []byte) (*Subtree, error) {
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", name, err)
 		}
+		follows := ""
+		if rn.When != nil {
+			follows = rn.When.Follows
+		}
 		schedule, dispatch, err := decodeNodeTriggers(name, rn)
 		if err != nil {
 			return nil, err
@@ -2070,7 +2077,7 @@ func Parse(data []byte) (*Subtree, error) {
 			}
 			concurrency = &Concurrency{Group: rn.Concurrency.Group, CancelInProgress: rn.Concurrency.CancelInProgress}
 		}
-		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, Excludes: excludes, Without: without, Pin: pin, MaxParallel: rn.MaxParallel, Serialise: rn.Serialise, Concurrency: concurrency, Needs: needs, When: when, Schedule: schedule, Dispatch: dispatch}
+		st.Nodes[name] = Node{Name: name, Goal: rn.Goal, Matrix: isCell, Axes: axes, Excludes: excludes, Without: without, Pin: pin, MaxParallel: rn.MaxParallel, Serialise: rn.Serialise, Concurrency: concurrency, Needs: needs, When: when, Follows: follows, Schedule: schedule, Dispatch: dispatch}
 		st.NodeOrder = append(st.NodeOrder, name)
 	}
 	sort.Strings(st.NodeOrder)
@@ -2116,6 +2123,9 @@ func Parse(data []byte) (*Subtree, error) {
 	// A node may only GATE on dispatch/schedule if some goal actually declares that
 	// trigger, else the `on:` surface never carries it and the gated step is a dead
 	// branch. Validated against the node-level trigger data lifted above.
+	if err := st.resolveFollows(); err != nil {
+		return nil, err
+	}
 	if err := st.validateEventGates(); err != nil {
 		return nil, err
 	}
@@ -2450,6 +2460,9 @@ func decodeWhen(rw *rawWhen) ([]string, error) {
 		return nil, nil
 	}
 	if len(rw.Events) == 0 {
+		if rw.Follows != "" {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("when.events must list at least one event")
 	}
 	out := make([]string, 0, len(rw.Events))
@@ -2555,6 +2568,48 @@ func validateDefault(name, typ, def string, options []string) error {
 			}
 		}
 		return fmt.Errorf("dispatch.inputs.%s: choice default %q is not one of %v", name, def, options)
+	}
+	return nil
+}
+
+// resolveFollows copies each `when.follows` target's resolved When onto the follower, so a
+// project override of the target carries to every node gating it. A target absent from the
+// document leaves the follower's own events (nil => no gate); a follow cycle fails the parse.
+func (st *Subtree) resolveFollows() error {
+	resolved := make(map[string][]string, len(st.Nodes))
+	var resolve func(name string, path []string) ([]string, error)
+	resolve = func(name string, path []string) ([]string, error) {
+		if w, ok := resolved[name]; ok {
+			return w, nil
+		}
+		n := st.Nodes[name]
+		for _, p := range path {
+			if p == name {
+				return nil, fmt.Errorf("node %q: when.follows forms a cycle (%s -> %s)", path[0], strings.Join(path, " -> "), name)
+			}
+		}
+		w := n.When
+		if t, ok := st.Nodes[n.Follows]; ok && n.Follows != "" {
+			tw, err := resolve(t.Name, append(path, name))
+			if err != nil {
+				return nil, err
+			}
+			w = tw
+		}
+		resolved[name] = w
+		return w, nil
+	}
+	for _, name := range st.NodeOrder {
+		if st.Nodes[name].Follows == "" {
+			continue
+		}
+		w, err := resolve(name, nil)
+		if err != nil {
+			return err
+		}
+		n := st.Nodes[name]
+		n.When = w
+		st.Nodes[name] = n
 	}
 	return nil
 }

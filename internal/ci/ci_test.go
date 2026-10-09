@@ -2088,3 +2088,41 @@ org:
 		t.Fatalf("args:\n got %#v\nwant %#v", got, want)
 	}
 }
+
+func TestWhenFollowsAdoptsTargetEvents(t *testing.T) {
+	const doc = `{
+  "tools": {"push": {"run": "push"}, "sign": {"run": "sign"}},
+  "nodes": {
+    "gate":    {"when": {"follows": "publish"}, "needs": {"sign": true}},
+    "publish": {"when": {"events": ["tag", "primary"]}, "needs": {"push": true, "gate": true}},
+    "orphan":  {"when": {"follows": "absent", "events": ["tag"]}, "needs": {"sign": true}},
+    "bare":    {"when": {"follows": "absent"}, "needs": {"sign": true}}
+  }
+}`
+	st, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got, want := st.Nodes["gate"].When, st.Nodes["publish"].When; strings.Join(got, ",") != strings.Join(want, ",") || len(got) != 2 {
+		t.Errorf("follower When = %v, want target's %v", got, want)
+	}
+	if got := st.Nodes["orphan"].When; len(got) != 1 || got[0] != "tag" {
+		t.Errorf("absent target must keep own events, got %v", got)
+	}
+	if got := st.Nodes["bare"].When; got != nil {
+		t.Errorf("absent target without own events must not gate, got %v", got)
+	}
+}
+
+func TestWhenFollowsCycleFailsParse(t *testing.T) {
+	const doc = `{
+  "tools": {"sign": {"run": "sign"}},
+  "nodes": {
+    "a": {"when": {"follows": "b"}, "needs": {"sign": true}},
+    "b": {"when": {"follows": "a"}, "needs": {"sign": true}}
+  }
+}`
+	if _, err := Parse([]byte(doc)); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("want a follows-cycle error, got %v", err)
+	}
+}
