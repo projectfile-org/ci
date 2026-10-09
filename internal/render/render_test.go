@@ -5872,6 +5872,50 @@ func TestAdvisoryLowering(t *testing.T) {
 	}
 }
 
+const keepGoingSubtree = `{
+  "tools": {
+    "grype-scan":  {"image": "reg.example/go-tools:latest", "run": "auto-grype"},
+    "trivy-scan":  {"image": "reg.example/go-tools:latest", "run": "auto-trivy fs", "keep-going": true},
+    "site-build":  {"run": "make site"}
+  },
+  "nodes": {
+    "source-is-secure": {"goal": true, "needs": {"grype-scan": true, "trivy-scan": true, "site-build": true}}
+  }
+}`
+
+// TestKeepGoingLowering pins that a keep-going step survives an earlier failure WITHOUT losing its mute gate, and that a sibling without the key renders unchanged.
+func TestKeepGoingLowering(t *testing.T) {
+	st, err := ci.Parse([]byte(keepGoingSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	for name, want := range map[string]bool{"trivy-scan": true, "grype-scan": false, "site-build": false} {
+		if got := steps(m)[name].KeepGoing; got != want {
+			t.Errorf("%s.KeepGoing = %v, want %v", name, got, want)
+		}
+	}
+	for _, tgt := range []string{TargetGHA, TargetForgejo} {
+		out, err := Workflow(m, Targets[tgt], ci.Platform{})
+		if err != nil {
+			t.Fatalf("%s: %v", tgt, err)
+		}
+		s := string(out)
+		// the status function and the mute gate share one expression
+		if !strings.Contains(s, "      - name: trivy-scan\n        if: (!cancelled()) && vars.CI_SKIP_") {
+			t.Errorf("%s: keep-going step lost its status function or its mute gate:\n%s", tgt, s)
+		}
+		// keyed on the step header so prose in comments never satisfies it
+		if n := strings.Count(s, "(!cancelled())"); n != 1 {
+			t.Errorf("%s: want exactly 1 keep-going gate (the one tool that asked), got %d", tgt, n)
+		}
+	}
+}
+
 // singleTorrentSubtree is the one-torrent-per-release shape: a MATRIXED producer, a
 // consumer that DROPPED the matrix to bundle every cell into one artifact, and a
 // matrixed release that consumes that single artifact back. Both fan-in directions

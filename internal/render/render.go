@@ -1656,6 +1656,8 @@ type StepView struct {
 	Run      string `json:"run"`
 	Args     string `json:"args,omitempty"`
 	Image    string `json:"image,omitempty"` // AGNOSTIC image PATH; RunTool* split it for the action
+	// KeepGoing carries Manifest.KeepGoing: the step runs after an earlier step failed, and the job still fails.
+	KeepGoing bool `json:"keep-going,omitempty"`
 	// PinnedTag is a tool image's HARD-pinned tag (an external vendor release like
 	// `v2.14.0`) carried SEPARATELY from Image, which stays path-only. Set ONLY when the
 	// ci.images value's tag is a literal — NOT the mutable `${M6E_BASE_IMAGE_DEFAULT_VERSION}`
@@ -2834,6 +2836,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		SelfImage: self,
 		Action:    man.Action,
 		Advisory:  man.Advisory,
+		KeepGoing: man.KeepGoing,
 		Network:   man.Network,
 		ArchAxis:  fanningAxis(j.Axes, man.ArchAxis),
 		Stem:      artifactStem("image", AxisMap(j.Axes)),
@@ -4104,6 +4107,10 @@ func forgeGates(j JobView) JobView {
 		st.RunIf = ""
 		if st.If == "" {
 			st.RunIf = withEvent(st.EventIf, forgeGate(j.Matrix, st.Node, st.Name))
+			if st.KeepGoing {
+				st.RunIf = keepGoingGate(st.RunIf)
+				genlog.Debug("step keeps going", "job", j.Name, "step", st.Name, "gate", st.RunIf)
+			}
 		}
 	}
 	for pi := range j.Pins {
@@ -4158,6 +4165,11 @@ func anyGate(gates []string) string {
 		return uniq[0]
 	}
 	return "(" + strings.Join(uniq, ") || (") + ")"
+}
+
+// keepGoingGate prefixes a gate with a status function, which switches off the implicit success(); parenthesised because a bare leading ! is a YAML tag.
+func keepGoingGate(gate string) string {
+	return strings.Join(append([]string{"(!cancelled())"}, clauses(gate)...), " && ")
 }
 
 // clauses is a gate as the list it conjoins, empty for the empty gate.

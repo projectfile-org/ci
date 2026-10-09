@@ -466,8 +466,9 @@ type Manifest struct {
 	// action, because run.sh already decodes the rc into a named cause and the recipe
 	// belongs in the versioned action (Law 2). Distinct from `guard`/`inputs`, which decide
 	// WHETHER a tool runs; this decides what its exit status MEANS.
-	Advisory bool     `json:"advisory"`
-	Tags     []string `json:"tags"` // advisory open-vocabulary labels (no lowering semantics)
+	Advisory  bool     `json:"advisory"`
+	KeepGoing bool     `json:"keep-going"` // runs after an earlier step failed; the job still fails
+	Tags      []string `json:"tags"`       // advisory open-vocabulary labels (no lowering semantics)
 	// `guard` (a file-existence predicate) is DELIBERATELY not decoded here: this
 	// lowering does not gate a tool on a file. The only fleet users (cffr-validate /
 	// hadolint) name a file their bolt-on always ships, so the predicate is constant-
