@@ -1758,6 +1758,8 @@ type StepView struct {
 	PublishSink string `json:"-"`
 	// RunIf is this step's run-time override gate (forgeGate), on the STEP because a job `if:` may not read `matrix`.
 	RunIf string `json:"-"`
+	// EventIf is the owning node's event gate when it is narrower than the fused job's.
+	EventIf string `json:"-"`
 	// Node is the DAG node that owns this step, which a fused host job draws from several.
 	Node string `json:"node,omitempty"`
 	// Arch is this cell's target architecture, bound to the M6E_ARCH axis ci.Load mints
@@ -1874,6 +1876,8 @@ type DownloadView struct {
 	Tool string `json:"-"`
 	// If is the download's run-time override gate, spelled per target by forgeGates.
 	If string `json:"-"`
+	// EventIf is the producer node's event gate when it is narrower than the job's.
+	EventIf string `json:"-"`
 }
 
 // PinView is one axis a node pins to a single value (matrix.pin), refused at run time when a scope withholds that value.
@@ -2008,6 +2012,8 @@ type JobView struct {
 	// the downloads — the fused `live` stack needs the image present for `compose up`
 	// (a scanner instead reads the tar as a file via M6E_IMAGE_ARCHIVE, so Load is false).
 	Downloads []DownloadView `json:"downloads,omitempty"`
+	// SkippableNeeds maps each need a fused host may see skipped to that need's event gate.
+	SkippableNeeds map[string]string `json:"-"`
 	// CellIf is the job's run-time axis gate (forgeGates), carried by the load step and every download.
 	CellIf string `json:"-"`
 	// Pins are the axes this node narrows to one value (matrix.pin), each rendered as a refusal step ahead of the downloads.
@@ -3304,6 +3310,11 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// none (a pure join, or one whose only tool was absorbed into another node's fused
 	// job) renders as an echo GATE. Needs are the authored node→node edges (NodeDeps) —
 	// the fuse merge needs no extra edge (see above).
+	// The single goal's `when` scopes the whole file: the trigger surface, and what a fused member is measured against.
+	var goalScope []string
+	if st.GoalsExplicit && len(st.Goals) == 1 {
+		goalScope = st.Nodes[st.Goals[0]].When
+	}
 	jobs := make([]JobView, 0, len(nodes.Views))
 	for _, nv := range nodes.Views {
 		needs := append([]string(nil), nv.NodeDeps...)
@@ -3603,6 +3614,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		// chain link is the SAME node run at one axis value — splitting it earlier would
 		// hand two nodes the same tools, and tool ownership is per node (a multi-homed
 		// tool is assigned to exactly one owner, so the second link would render hollow).
+		if len(ownerNames) > 1 {
+			job = narrowFused(job, whenByNode, goalScope, primaryBranches(b))
+		}
 		if axesSet && nv.Serialise != "" {
 			chain, err := serialiseChain(job, nv.Serialise, axes)
 			if err != nil {
@@ -3627,7 +3641,6 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// Otherwise it is the combined neutral model ("ci") whose surface derives from the
 	// jobs' union (interior `when` gates must be able to fire).
 	name, triggers := "ci", (*TriggersView)(nil)
-	var goalScope []string
 	if st.GoalsExplicit && len(st.Goals) == 1 {
 		g := st.Nodes[st.Goals[0]]
 		name = g.Name
@@ -3636,7 +3649,6 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			buildInputs = b.Args // fuels `dispatch:{build-args:true}` — one input per declared arg
 		}
 		triggers = buildTriggers(g.Schedule, g.Dispatch, buildInputs, b)
-		goalScope = g.When
 	}
 	// The `on:` surface derives from the REAL jobs only. The synthetic notify job is
 	// appended AFTER: it is un-gated (empty Events), so folding it into buildOn would
@@ -3840,6 +3852,9 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		} else {
 			jobs[i].If = jobIf(jobs[i].Events, m.PrimaryBranches)
 		}
+		if len(jobs[i].SkippableNeeds) > 0 {
+			jobs[i].If = needsIf(jobs[i].Needs, jobs[i].SkippableNeeds, jobs[i].If)
+		}
 		// Fan the publish job over its destinations, per lowering. Before the env
 		// folds below: the axis is an action INPUT, not an env binding, so nothing
 		// downstream reads it — but a job whose matrix grows must do so before its
@@ -3982,6 +3997,77 @@ func forgeGate(axes AxisMap, node, tool string) string {
 	return strings.Join(append(clauses, muteGates(node, tool)...), " && ")
 }
 
+// withEvent prefixes a gate with an event clause, either side optional.
+func withEvent(event, gate string) string {
+	switch {
+	case event == "":
+		return gate
+	case gate == "":
+		return "(" + event + ")"
+	}
+	return "(" + event + ") && " + gate
+}
+
+// narrowFused gates every member, download and need of a fused job whose node runs on fewer events than the job.
+func narrowFused(job JobView, when map[string][]string, scope, primary []string) JobView {
+	// an unconditional job still runs only on what the file triggers on
+	events := job.Events
+	if len(events) == 0 {
+		events = scope
+	}
+	narrower := func(node string) string {
+		w := when[node]
+		if len(w) == 0 || (len(events) > 0 && subsetOf(events, w)) {
+			return ""
+		}
+		return jobIf(w, primary)
+	}
+	for i := range job.Steps {
+		job.Steps[i].EventIf = narrower(job.Steps[i].Node)
+	}
+	for i := range job.Downloads {
+		job.Downloads[i].EventIf = narrower(job.Downloads[i].Node)
+	}
+	for _, n := range job.Needs {
+		e := narrower(n)
+		if e == "" {
+			continue
+		}
+		if job.SkippableNeeds == nil {
+			job.SkippableNeeds = map[string]string{}
+		}
+		job.SkippableNeeds[n] = e
+		genlog.Debug("fused job tolerates an event-skipped need", "job", job.Name, "need", n, "events", when[n])
+	}
+	return job
+}
+
+// subsetOf reports whether every token of a is in b.
+func subsetOf(a, b []string) bool {
+	for _, e := range a {
+		if !hasEvent(b, e) {
+			return false
+		}
+	}
+	return true
+}
+
+// needsIf spells a job `if:` that accepts a skip from a need only on the events that need does not run on.
+func needsIf(needs []string, skippable map[string]string, events string) string {
+	clauses := []string{"!cancelled()"}
+	for _, n := range needs {
+		ok := "needs." + n + ".result == 'success'"
+		if e, narrow := skippable[n]; narrow {
+			ok = "(" + ok + " || (needs." + n + ".result == 'skipped' && !(" + e + ")))"
+		}
+		clauses = append(clauses, ok)
+	}
+	if events != "" {
+		clauses = append(clauses, "("+events+")")
+	}
+	return "${{ " + strings.Join(clauses, " && ") + " }}"
+}
+
 // muteGates is the mute clause of a node and of a tool, each only when named.
 func muteGates(node, tool string) []string {
 	var out []string
@@ -4010,14 +4096,14 @@ func forgeGates(j JobView) JobView {
 			gate = append(gate, onlyGate(ci.ArchAxis, literalValue(d.Arch)))
 		}
 		// a muted producer uploaded nothing, so its download answers to the same mutes
-		d.If = strings.Join(append(gate, muteGates(d.Node, d.Tool)...), " && ")
+		d.If = withEvent(d.EventIf, strings.Join(append(gate, muteGates(d.Node, d.Tool)...), " && "))
 	}
 	for si := range j.Steps {
 		st := &j.Steps[si]
 		// assigned unconditionally: StepViews are shared across the per-target renders
 		st.RunIf = ""
 		if st.If == "" {
-			st.RunIf = forgeGate(j.Matrix, st.Node, st.Name)
+			st.RunIf = withEvent(st.EventIf, forgeGate(j.Matrix, st.Node, st.Name))
 		}
 	}
 	for pi := range j.Pins {

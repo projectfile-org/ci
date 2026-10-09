@@ -22,6 +22,8 @@ const (
 	testCell            = "cell"
 	testContainerBuild  = "container-build"
 	testOCIPush         = "oci-push"
+	testCosignAttest    = "cosign-attest"
+	testCosignSign      = "cosign-sign"
 	testImageBuilt      = "image-built"
 	testImageMatrixStem = "image-${{ matrix.B19_UBUNTU_SERIES }}" + artifactScopeSuffix
 	testUploadArtifact  = "upload-artifact"
@@ -4578,15 +4580,15 @@ func TestSupplyChainPublishFuse(t *testing.T) {
 	for _, s := range sink.Steps {
 		order = append(order, s.Name)
 	}
-	want := []string{testOCIPush, "cosign-sign", "cosign-attest"}
+	want := []string{testOCIPush, testCosignSign, testCosignAttest}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("fused publish steps must be %v (push→sign→attest), got %v", want, order)
 	}
 
 	// The SBOM producer (syft-sbom-tar) stays its OWN job, and the fused attest job pulls
 	// its artifact — the CycloneDX predicate hand-off into a fused consumer.
-	if jobOf(m, "cosign-attest").Name != "image-is-attested" {
-		t.Errorf("cosign-attest must be absorbed into image-is-attested, got %q", jobOf(m, "cosign-attest").Name)
+	if jobOf(m, testCosignAttest).Name != "image-is-attested" {
+		t.Errorf("cosign-attest must be absorbed into image-is-attested, got %q", jobOf(m, testCosignAttest).Name)
 	}
 	var gotSBOM bool
 	for _, d := range sink.Downloads {
@@ -4600,7 +4602,7 @@ func TestSupplyChainPublishFuse(t *testing.T) {
 
 	// COSIGN_* credential names ride the sign + attest steps (scoped by `env:`), the
 	// key-material surface the credentials overlay binds per job.
-	for _, name := range []string{"cosign-sign", "cosign-attest"} {
+	for _, name := range []string{testCosignSign, testCosignAttest} {
 		var step StepView
 		for _, s := range sink.Steps {
 			if s.Name == name {
@@ -4653,6 +4655,86 @@ func TestPublishFuseNeverEntersTheImageStore(t *testing.T) {
 	}
 	if !gotArchive {
 		t.Errorf("the publish job must still DOWNLOAD the build archive (oci-push reads the tar), got %+v", sink.Downloads)
+	}
+}
+
+// edgeSupplyChainSubtree is the m6e attest+sign shape with publish-image widened to the trunk, as persona/frontend declares it.
+const edgeSupplyChainSubtree = `{
+  "image": "b19/ubuntu",
+  "tools": {
+    "container-build": {"action": "container-build"},
+    "oci-push":        {"action": "oci-push", "fuse": "publish"},
+    "syft-sbom-tar":   {"image": "d9t/go-tools", "run": "auto-syft image", "artifact": "reports"},
+    "cosign-sign":     {"image": "d9t/go-tools", "run": "auto-cosign sign", "fuse": "publish"},
+    "cosign-attest":   {"image": "d9t/go-tools", "run": "auto-cosign attest", "fuse": "publish"}
+  },
+  "nodes": {
+    "image-built":       {"needs": {"container-build": true}},
+    "publish-image":     {"when": {"events": ["tag", "preview", "primary"]}, "needs": {"image-built": true, "oci-push": true}},
+    "image-has-sbom":    {"when": {"events": ["tag"]}, "needs": {"image-built": true, "syft-sbom-tar": true}},
+    "image-is-signed":   {"when": {"events": ["tag"]}, "needs": {"publish-image": true, "cosign-sign": true}},
+    "image-is-attested": {"when": {"events": ["tag"]}, "needs": {"publish-image": true, "image-has-sbom": true, "cosign-attest": true}},
+    "published":         {"goal": true, "needs": {"image-is-attested": true, "image-is-signed": true}}
+  }
+}`
+
+// TestFusedPublishKeepsMemberEventGates pins that a push fused into a tag-only sink still runs on every event its own node declares.
+func TestFusedPublishKeepsMemberEventGates(t *testing.T) {
+	const tagOnly = "startsWith(github.ref, 'refs/tags/')"
+	st, err := ci.Parse([]byte(edgeSupplyChainSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	sink := jobOf(m, testOCIPush)
+	gates := map[string]string{}
+	for _, s := range sink.Steps {
+		gates[s.Name] = s.EventIf
+	}
+	want := map[string]string{testOCIPush: "", testCosignSign: tagOnly, testCosignAttest: tagOnly}
+	if !reflect.DeepEqual(gates, want) {
+		t.Errorf("fused step event gates = %v, want %v", gates, want)
+	}
+	for _, d := range sink.Downloads {
+		if d.Node == "image-has-sbom" && d.EventIf != tagOnly {
+			t.Errorf("the tag-only SBOM download must carry its producer's gate, got %q", d.EventIf)
+		}
+	}
+	if !reflect.DeepEqual(sink.SkippableNeeds, map[string]string{"image-has-sbom": tagOnly}) {
+		t.Errorf("only the tag-only need may be skipped, got %v", sink.SkippableNeeds)
+	}
+	for _, target := range []string{TargetGHA, TargetForgejo} {
+		out, err := Workflow(m, Targets[target], ci.Platform{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job := "    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(" + tagOnly + "))) && needs.publish-image.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (" + tagOnly + ")) }}\n"
+		if !strings.Contains(string(out), job) {
+			t.Errorf("%s: the fused push job must tolerate the event-skipped SBOM need, want %q in:\n%s", target, job, out)
+		}
+	}
+
+	// A fused job whose members share its events renders as before.
+	plain, err := ci.Parse([]byte(supplyChainSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	prm, err := resolve.Resolve(plain)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	ungated := jobOf(Build(prm, plain, nil), testOCIPush)
+	if len(ungated.SkippableNeeds) > 0 {
+		t.Errorf("an ungated fuse must tolerate no skipped need, got %v", ungated.SkippableNeeds)
+	}
+	for _, s := range ungated.Steps {
+		if s.EventIf != "" {
+			t.Errorf("an ungated fuse must gate no step, %s got %q", s.Name, s.EventIf)
+		}
 	}
 }
 
