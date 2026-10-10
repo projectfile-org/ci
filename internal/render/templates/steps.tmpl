@@ -161,14 +161,23 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- define "frag/run-tool" }}
 {{- if .Target.CacheRestore }}
 {{- range .Step.Caches }}{{ if .Restore }}
+{{- if cacheStamp $.Target }}
+      - name: stamp {{ .Name }}
+        id: stamp-{{ .Name }}
+{{- with .Gate }}
+        if: {{ . }}
+{{- end }}
+        run: echo "stamp=$(date -u {{ cacheStamp $.Target }})" >> "$GITHUB_OUTPUT"
+{{- end }}
       - name: restore {{ .Name }}
+        id: restore-{{ .Name }}
         uses: {{ $.Target.CacheRestore }}
 {{- with .Gate }}
         if: {{ . }}
 {{- end }}
         with:
           path: {{ cacheHostPath $.Target .Name }}
-          key: {{ cacheKey .Name }}
+          key: {{ cacheSlot $.Target .Name }}
           restore-keys: |
             {{ cacheKey .Name }}
 {{- end }}
@@ -211,12 +220,12 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- range writerCaches .Step }}
       - name: save {{ .Name }}
         uses: {{ $.Target.CacheSave }}
-{{- with .Gate }}
+{{- with cacheSaveIf $.Target . }}
         if: {{ . }}
 {{- end }}
         with:
           path: {{ cacheHostPath $.Target .Name }}
-          key: {{ cacheSaveKey .Name }}
+          key: {{ cacheSlot $.Target .Name }}
 {{- end }}
 {{- end }}
 {{- if .Step.Upload }}

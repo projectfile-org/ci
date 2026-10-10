@@ -2196,12 +2196,17 @@ func TestScannerCacheLowering(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := forgeGate(nil, "source-is-secure", "auto-grype")
-	want := "      - name: restore grype-db\n" +
+	want := "      - name: stamp grype-db\n" +
+		"        id: stamp-grype-db\n" +
+		"        if: " + gate + "\n" +
+		"        run: echo \"stamp=$(date -u +%F)\" >> \"$GITHUB_OUTPUT\"\n" +
+		"      - name: restore grype-db\n" +
+		"        id: restore-grype-db\n" +
 		"        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5\n" +
 		"        if: " + gate + "\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
-		"          key: ci-cache-grype-db-\n" +
+		"          key: ci-cache-grype-db-${{ steps.stamp-grype-db.outputs.stamp }}\n" +
 		"          restore-keys: |\n" +
 		"            ci-cache-grype-db-\n" +
 		"      - name: auto-grype\n" +
@@ -2298,10 +2303,10 @@ func TestScannerCacheWriterSave(t *testing.T) {
 	}
 	wantSave := "      - name: save grype-db\n" +
 		"        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5\n" +
-		"        if: " + forgeGate(nil, "scanner-db-refreshed", "grype-db-update") + "\n" +
+		"        if: (" + forgeGate(nil, "scanner-db-refreshed", "grype-db-update") + ") && steps.restore-grype-db.outputs.cache-hit != 'true'\n" +
 		"        with:\n" +
 		"          path: ${{ runner.temp }}/ci-cache/grype-db\n" +
-		"          key: ci-cache-grype-db-${{ github.run_id }}\n"
+		"          key: ci-cache-grype-db-${{ steps.stamp-grype-db.outputs.stamp }}\n"
 	if s := string(gha); !strings.Contains(s, wantSave) {
 		t.Errorf("gha: missing the actions/cache/save step for the rw writer:\n%s", s)
 	}
@@ -2320,6 +2325,39 @@ func TestScannerCacheWriterSave(t *testing.T) {
 	}
 	if strings.Contains(string(fj), "actions/cache") {
 		t.Errorf("forgejo (self-hosted) must NOT emit an actions/cache step:\n%s", fj)
+	}
+}
+
+// TestCacheKeyRoll pins the cache-key overlay: daily is the default, weekly/monthly change the stamp format, run restores today’s behaviour, and an unknown roll fails.
+func TestCacheKeyRoll(t *testing.T) {
+	st, err := ci.Parse([]byte(writerCacheSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	for roll, want := range map[string]string{"daily": "date -u +%F", "weekly": "date -u +%G-W%V", "monthly": "date -u +%Y-%m"} {
+		out, err := Workflow(m, Targets[TargetGHA], ci.Platform{CacheKey: roll})
+		if err != nil {
+			t.Fatalf("%s: %v", roll, err)
+		}
+		if s := string(out); !strings.Contains(s, want) || !strings.Contains(s, "cache-hit != 'true'") {
+			t.Errorf("%s: want stamp %q and a hit-gated save:\n%s", roll, want, s)
+		}
+	}
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{CacheKey: "run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "key: ci-cache-grype-db-${{ github.run_id }}\n") || strings.Contains(s, "stamp") || strings.Contains(s, "cache-hit") {
+		t.Errorf("run: want the per-run key, no stamp step, an unconditional save:\n%s", s)
+	}
+	if _, err := Workflow(m, Targets[TargetGHA], ci.Platform{CacheKey: "hourly"}); err == nil || !strings.Contains(err.Error(), "cache-key") {
+		t.Errorf("unknown roll: want a cache-key error, got %v", err)
 	}
 }
 

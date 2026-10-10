@@ -91,6 +91,8 @@ type Target struct {
 	CacheRestore string
 	CacheSave    string
 	CacheDir     string
+	// CacheKey is how a named cache’s key rolls on an ephemeral runner (a CacheKeyModes name)
+	CacheKey string
 	// CheckoutToken is the ready-to-emit `token:` EXPRESSION for the checkout step, or
 	// empty for the run-scoped default. Composed in Go (checkoutTokenExpr), not in the
 	// template, because every `${{ }}` collides with `{{ }}` — the same rule EmitView.Run
@@ -156,7 +158,15 @@ const (
 	// RESTORES `<prefix>-<name>-` (prefix-match the newest entry); the scheduled refresh
 	// SAVES `<prefix>-<name>-<roll>`. One literal so both sides agree.
 	CacheKeyPrefix = "ci-cache"
+	// CacheKeyDefault is the roll an ephemeral target uses when the project names none
+	CacheKeyDefault = "daily"
 )
+
+// CacheKeyModes maps a cache-key roll to the `date -u` format stamped into the key; "" => the run id (a new entry every run)
+var CacheKeyModes = map[string]string{"run": "", "daily": "+%F", "weekly": "+%G-W%V", "monthly": "+%Y-%m"}
+
+// sortedCacheKeyModes lists the recognised rolls (for a deterministic error).
+func sortedCacheKeyModes() []string { return sortedKeys(CacheKeyModes) }
 
 // ActionContainerBuild is the action path whose leaf emits the cell-keyed OCI
 // archive (`<Stem>.tar`). A PORTABLE tool that `needs` such a leaf is an image-scan
@@ -1520,7 +1530,7 @@ var Targets = map[string]Target{
 		UploadOverwrite: true,
 		OutDir:          ".github/workflows", Ext: workflowExt(), Template: "workflow.yaml.tmpl",
 		ActionLib: "projectfile/actions", ActionVer: "afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1", Builder: BackendBuildx,
-		CacheRestore: CacheActionRestore, CacheSave: CacheActionSave, CacheDir: CacheDirGHA,
+		CacheRestore: CacheActionRestore, CacheSave: CacheActionSave, CacheDir: CacheDirGHA, CacheKey: CacheKeyDefault,
 	},
 	TargetForgejo: {
 		Key: TargetForgejo, RunsOn: "docker", Checkout: "actions/checkout@v7",
@@ -3748,6 +3758,14 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		}
 		target.Builder = plat.Builder
 	}
+	// An unknown cache-key roll fails fast, like an unknown builder
+	if plat.CacheKey != "" {
+		if _, ok := CacheKeyModes[plat.CacheKey]; !ok {
+			return nil, fmt.Errorf("org.projectfile.ci.%s.cache-key %q is not a known roll %v",
+				target.Key, plat.CacheKey, sortedCacheKeyModes())
+		}
+		target.CacheKey = plat.CacheKey
+	}
 	// Robot-account checkout token: the overlay (org.projectfile.ci.<target>.checkout-
 	// token) is a plain opt-in, and checkoutTokenExpr names the fleet-wide secret behind
 	// a `||` fallback to the run-scoped token — so opting in never breaks a checkout
@@ -4466,12 +4484,28 @@ func cacheMounts(t Target, s StepView) string {
 // source for the prefix so the refresh pipeline's save key agrees.
 func cacheKey(name string) string { return CacheKeyPrefix + "-" + name + "-" }
 
-// cacheSaveKey is the actions/cache SAVE key a `*-db-update` writer persists its refresh
-// under: the scan-side stem plus a UNIQUE roll (`${{ github.run_id }}`). GitHub cache keys
-// are immutable, so the roll makes every refresh a new entry; the scan's `restore-keys`
-// prefix (cacheKey, trailing `-`) then matches and picks the most-recently-created one.
-// Same stem as cacheKey so the two sides provably agree.
-func cacheSaveKey(name string) string { return cacheKey(name) + "${{ github.run_id }}" }
+// cacheStamp is the `date -u` format a target stamps into a named cache’s key, or "" when the key rolls per run.
+func cacheStamp(t Target) string { return CacheKeyModes[t.CacheKey] }
+
+// cacheSlot is the actions/cache key a named cache restores and saves under: the stem plus the roll.
+func cacheSlot(t Target, name string) string {
+	if cacheStamp(t) == "" {
+		return cacheKey(name) + "${{ github.run_id }}"
+	}
+	return cacheKey(name) + "${{ steps.stamp-" + name + ".outputs.stamp }}"
+}
+
+// cacheSaveIf is the `if:` of a cache save: the cache’s gate, plus "the restore did not hit this period's key" when the key rolls by date.
+func cacheSaveIf(t Target, c Cache) string {
+	if cacheStamp(t) == "" {
+		return c.Gate
+	}
+	miss := "steps.restore-" + c.Name + ".outputs.cache-hit != 'true'"
+	if c.Gate == "" {
+		return miss
+	}
+	return "(" + c.Gate + ") && " + miss
+}
 
 // writerCaches is the `rw` subset of a step's caches it saves (the job's last user) — the `*-db-update` writers whose
 // refreshed DB must be saved back on an ephemeral runner. Scans (ro) restore only, so
@@ -4501,7 +4535,9 @@ var funcs = template.FuncMap{
 	"cacheHostPath":  cacheHostPath,
 	"cacheMounts":    cacheMounts,
 	"cacheKey":       cacheKey,
-	"cacheSaveKey":   cacheSaveKey,
+	"cacheStamp":     cacheStamp,
+	"cacheSlot":      cacheSlot,
+	"cacheSaveIf":    cacheSaveIf,
 	"writerCaches":   writerCaches,
 	// mountCacheName is the per-image stem every cell's mount cache falls back to
 	"mountCacheName": func() string { return MountCacheName },
