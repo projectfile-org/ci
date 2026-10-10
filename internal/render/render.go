@@ -159,14 +159,26 @@ const (
 	// SAVES `<prefix>-<name>-<roll>`. One literal so both sides agree.
 	CacheKeyPrefix = "ci-cache"
 	// CacheKeyDefault is the roll an ephemeral target uses when the project names none
-	CacheKeyDefault = "daily"
+	CacheKeyDefault = "8h"
 )
 
-// CacheKeyModes maps a cache-key roll to the `date -u` format stamped into the key; "" => the run id (a new entry every run)
-var CacheKeyModes = map[string]string{"run": "", "daily": "+%F", "weekly": "+%G-W%V", "monthly": "+%Y-%m"}
-
-// sortedCacheKeyModes lists the recognised rolls (for a deterministic error).
-func sortedCacheKeyModes() []string { return sortedKeys(CacheKeyModes) }
+// cacheRollExpr maps a cache-key roll (run|daily|weekly|monthly|<N>h) to the shell expression stamped into the key; "" => the run id
+func cacheRollExpr(roll string) (string, bool) {
+	switch roll {
+	case "run":
+		return "", true
+	case "daily":
+		return "$(date -u +%F)", true
+	case "weekly":
+		return "$(date -u +%G-W%V)", true
+	case "monthly":
+		return "$(date -u +%Y-%m)", true
+	}
+	if h, err := strconv.Atoi(strings.TrimSuffix(roll, "h")); err == nil && h > 0 && strings.HasSuffix(roll, "h") {
+		return fmt.Sprintf("$(( $(date -u +%%s) / %d ))", h*3600), true
+	}
+	return "", false
+}
 
 // ActionContainerBuild is the action path whose leaf emits the cell-keyed OCI
 // archive (`<Stem>.tar`). A PORTABLE tool that `needs` such a leaf is an image-scan
@@ -3760,9 +3772,9 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 	}
 	// An unknown cache-key roll fails fast, like an unknown builder
 	if plat.CacheKey != "" {
-		if _, ok := CacheKeyModes[plat.CacheKey]; !ok {
-			return nil, fmt.Errorf("org.projectfile.ci.%s.cache-key %q is not a known roll %v",
-				target.Key, plat.CacheKey, sortedCacheKeyModes())
+		if _, ok := cacheRollExpr(plat.CacheKey); !ok {
+			return nil, fmt.Errorf("org.projectfile.ci.%s.cache-key %q is not a known roll (run, daily, weekly, monthly, <N>h)",
+				target.Key, plat.CacheKey)
 		}
 		target.CacheKey = plat.CacheKey
 	}
@@ -4484,8 +4496,8 @@ func cacheMounts(t Target, s StepView) string {
 // source for the prefix so the refresh pipeline's save key agrees.
 func cacheKey(name string) string { return CacheKeyPrefix + "-" + name + "-" }
 
-// cacheStamp is the `date -u` format a target stamps into a named cache’s key, or "" when the key rolls per run.
-func cacheStamp(t Target) string { return CacheKeyModes[t.CacheKey] }
+// cacheStamp is the shell expression a target stamps into a named cache’s key, or "" when the key rolls per run.
+func cacheStamp(t Target) string { e, _ := cacheRollExpr(t.CacheKey); return e }
 
 // cacheSlot is the actions/cache key a named cache restores and saves under: the stem plus the roll.
 func cacheSlot(t Target, name string) string {

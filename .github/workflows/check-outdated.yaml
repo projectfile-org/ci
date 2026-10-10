@@ -31,12 +31,17 @@ jobs:
         with:
           submodules: true
           persist-credentials: false
+      - name: stamp go
+        id: stamp-go
+        if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
+        run: echo "stamp=$(( $(date -u +%s) / 28800 ))" >> "$GITHUB_OUTPUT"
       - name: restore go
+        id: restore-go
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
         with:
           path: ${{ runner.temp }}/ci-cache/go
-          key: ci-cache-go-
+          key: ci-cache-go-${{ steps.stamp-go.outputs.stamp }}
           restore-keys: |
             ci-cache-go-
       - name: check-outdated-go
@@ -51,7 +56,7 @@ jobs:
           mounts: ${{ runner.temp }}/ci-cache/go:/app/.cache/go:rw
       - name: save go
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
-        if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
+        if: (vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true') && steps.restore-go.outputs.cache-hit != 'true'
         with:
           path: ${{ runner.temp }}/ci-cache/go
-          key: ci-cache-go-${{ github.run_id }}
+          key: ci-cache-go-${{ steps.stamp-go.outputs.stamp }}

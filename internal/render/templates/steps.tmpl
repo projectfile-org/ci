@@ -167,7 +167,7 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- with .Gate }}
         if: {{ . }}
 {{- end }}
-        run: echo "stamp=$(date -u {{ cacheStamp $.Target }})" >> "$GITHUB_OUTPUT"
+        run: echo "stamp={{ cacheStamp $.Target }}" >> "$GITHUB_OUTPUT"
 {{- end }}
       - name: restore {{ .Name }}
         id: restore-{{ .Name }}

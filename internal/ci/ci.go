@@ -595,7 +595,7 @@ type Platform struct {
 	CheckoutToken bool
 	// SharedCache: this target's runners mount fleet-shared tool caches an external writer keeps warm
 	SharedCache bool
-	// CacheKey is how an ephemeral runner’s named-cache key rolls (run|daily|weekly|monthly; "" => adapter default)
+	// CacheKey is how an ephemeral runner’s named-cache key rolls (run|daily|weekly|monthly|<N>h; "" => adapter default)
 	CacheKey string
 }
 
@@ -860,7 +860,7 @@ type rawPlatform struct {
 	Library        string            `json:"library"`        // action-library `repo@tag` prefix; recomposed as <repo>/<provider>@<tag>
 	CheckoutToken  bool              `json:"checkout-token"` // opt the checkout step into the fleet-wide robot-account secret (private submodules)
 	SharedCache    bool              `json:"shared-cache"`   // this target's runners mount fleet-shared tool caches an external writer keeps warm
-	CacheKey       string            `json:"cache-key"`      // named-cache key roll on an ephemeral runner (run|daily|weekly|monthly)
+	CacheKey       string            `json:"cache-key"`      // named-cache key roll on an ephemeral runner (run|daily|weekly|monthly|<N>h)
 }
 
 type rawConcurrency struct {

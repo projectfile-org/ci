@@ -2199,7 +2199,7 @@ func TestScannerCacheLowering(t *testing.T) {
 	want := "      - name: stamp grype-db\n" +
 		"        id: stamp-grype-db\n" +
 		"        if: " + gate + "\n" +
-		"        run: echo \"stamp=$(date -u +%F)\" >> \"$GITHUB_OUTPUT\"\n" +
+		"        run: echo \"stamp=$(( $(date -u +%s) / 28800 ))\" >> \"$GITHUB_OUTPUT\"\n" +
 		"      - name: restore grype-db\n" +
 		"        id: restore-grype-db\n" +
 		"        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5\n" +
@@ -2339,7 +2339,7 @@ func TestCacheKeyRoll(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	m := Build(rm, st, nil)
-	for roll, want := range map[string]string{"daily": "date -u +%F", "weekly": "date -u +%G-W%V", "monthly": "date -u +%Y-%m"} {
+	for roll, want := range map[string]string{"daily": "$(date -u +%F)", "weekly": "$(date -u +%G-W%V)", "monthly": "$(date -u +%Y-%m)", "8h": "$(( $(date -u +%s) / 28800 ))", "": "$(( $(date -u +%s) / 28800 ))"} {
 		out, err := Workflow(m, Targets[TargetGHA], ci.Platform{CacheKey: roll})
 		if err != nil {
 			t.Fatalf("%s: %v", roll, err)
