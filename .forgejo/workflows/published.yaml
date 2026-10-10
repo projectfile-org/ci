@@ -888,6 +888,9 @@ jobs:
           image: ${{ vars.D9T_RUST_TOOLS_IMAGE || format('{0}/d9t/rust-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-zizmor --forge forgejo
+      - name: compose-config-check
+        if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_COMPOSE_CONFIG_CHECK != 'true'
+        run: .makefile/container/scripts/compose-config.sh
       - name: compose-example-check
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_COMPOSE_EXAMPLE_CHECK != 'true'
         uses: projectfile/actions/run-tool@ffe2de775b8b50b564f401adc488fce3df2fd607 # v1
@@ -896,6 +899,12 @@ jobs:
           version: 29.8.1-cli
           pull: missing
           run: sh -c 'test ! -f .compose/example.yaml || docker compose --file .compose/example.yaml config --no-interpolate --quiet'
+      - name: dockerfile-parse-buildah
+        if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_DOCKERFILE_PARSE_BUILDAH != 'true'
+        run: .makefile/container/scripts/dockerfile-parse.sh buildah
+      - name: dockerfile-parse-buildx
+        if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_DOCKERFILE_PARSE_BUILDX != 'true'
+        run: .makefile/container/scripts/dockerfile-parse.sh docker
       - name: go-vet
         if: vars.CI_SKIP_SOURCE_PASSES_LINT != 'true' && vars.CI_SKIP_GO_VET != 'true'
         uses: projectfile/actions/run-tool@ffe2de775b8b50b564f401adc488fce3df2fd607 # v1
