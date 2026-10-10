@@ -40,7 +40,7 @@ USER 0
 WORKDIR ${B19_HOME}
 
 RUN --mount=type=bind,from=fetch,source=.,target=/fetch                                           \
-    --mount=type=cache,target=${B19_DOWNLOAD_PATH},sharing=shared                                 \
+    --mount=type=cache,target=${B19_DOWNLOAD_PATH},sharing=shared,uid=${B19_UID},gid=${B19_GID}   \
     --mount=type=cache,target=${GOCACHE},sharing=locked                                           \
     --mount=type=cache,target=${GOMODCACHE},sharing=locked                                        \
     --mount=type=cache,id=apt-cache-${B19_UBUNTU_SERIES}-${TARGETARCH},target=/var/cache/apt,sharing=shared     \
@@ -77,7 +77,7 @@ USER 0
 WORKDIR ${B19_HOME}
 
 RUN --mount=type=bind,from=fetch,source=.,target=/fetch                                           \
-    --mount=type=cache,target=${B19_DOWNLOAD_PATH},sharing=shared                                 \
+    --mount=type=cache,target=${B19_DOWNLOAD_PATH},sharing=shared,uid=${B19_UID},gid=${B19_GID}   \
     --mount=type=cache,id=apt-cache-${B19_UBUNTU_SERIES}-${TARGETARCH},target=/var/cache/apt,sharing=shared     \
     --mount=type=cache,id=apt-lists-${B19_UBUNTU_SERIES}-${TARGETARCH},target=/var/lib/apt,sharing=shared       \
     --mount=type=tmpfs,target=${B19_TEMP_PATH}                                                    \
