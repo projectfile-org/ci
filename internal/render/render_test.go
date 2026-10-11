@@ -4716,6 +4716,46 @@ const edgeSupplyChainSubtree = `{
   }
 }`
 
+// gateOverNarrowNeedSubtree is an ungated join gate over a node that runs on branch and tag pushes only.
+const gateOverNarrowNeedSubtree = `{
+  "image": "b19/ubuntu",
+  "tools": {"key-probe": {"image": "d9t/go-tools", "run": "auto-cosign preflight"}},
+  "nodes": {
+    "key-is-ready":  {"when": {"events": ["tag", "preview", "primary"]}, "needs": {"key-probe": true}},
+    "inputs-are-ok": {"needs": {"key-is-ready": true}},
+    "published":     {"goal": true, "needs": {"inputs-are-ok": true}}
+  }
+}`
+
+// TestGateToleratesEventSkippedNeed pins that a join gate over a narrower-gated node still runs where that node is skipped.
+func TestGateToleratesEventSkippedNeed(t *testing.T) {
+	st, err := ci.Parse([]byte(gateOverNarrowNeedSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	var gate JobView
+	for _, j := range m.Jobs {
+		if j.Name == "inputs-are-ok" {
+			gate = j
+		}
+	}
+	if _, ok := gate.SkippableNeeds["key-is-ready"]; !ok {
+		t.Fatalf("the gate must tolerate a skipped key-is-ready, got %v", gate.SkippableNeeds)
+	}
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "needs.key-is-ready.result == 'skipped'") {
+		t.Errorf("the rendered gate must accept a skipped key-is-ready, got:\n%s", out)
+	}
+}
+
 // TestFusedPublishKeepsMemberEventGates pins that a push fused into a tag-only sink still runs on every event its own node declares.
 func TestFusedPublishKeepsMemberEventGates(t *testing.T) {
 	const tagOnly = "startsWith(github.ref, 'refs/tags/')"

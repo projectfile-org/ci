@@ -3656,6 +3656,11 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		jobs = append(jobs, job)
 	}
 
+	// Every job, gates included, accepts a skip from a need that runs on fewer events than it does.
+	for i := range jobs {
+		jobs[i] = tolerateNarrowNeeds(jobs[i], whenByNode, goalScope, primaryBranches(b))
+	}
+
 	// One ordering rule for the whole workflow: name-sorted (node-jobs and gates alike).
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
 
@@ -4061,16 +4066,25 @@ func narrowFused(job JobView, when map[string][]string, scope, primary []string)
 	for i := range job.Downloads {
 		job.Downloads[i].EventIf = narrower(job.Downloads[i].Node)
 	}
+	return tolerateNarrowNeeds(job, when, scope, primary)
+}
+
+// tolerateNarrowNeeds lets a job accept a skip from every need that runs on fewer events than the job itself.
+func tolerateNarrowNeeds(job JobView, when map[string][]string, scope, primary []string) JobView {
+	events := job.Events
+	if len(events) == 0 {
+		events = scope
+	}
 	for _, n := range job.Needs {
-		e := narrower(n)
-		if e == "" {
+		w := when[n]
+		if len(w) == 0 || (len(events) > 0 && subsetOf(events, w)) {
 			continue
 		}
 		if job.SkippableNeeds == nil {
 			job.SkippableNeeds = map[string]string{}
 		}
-		job.SkippableNeeds[n] = e
-		genlog.Debug("fused job tolerates an event-skipped need", "job", job.Name, "need", n, "events", when[n])
+		job.SkippableNeeds[n] = jobIf(w, primary)
+		genlog.Debug("job tolerates an event-skipped need", "job", job.Name, "need", n, "events", w)
 	}
 	return job
 }
