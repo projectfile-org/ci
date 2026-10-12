@@ -625,6 +625,14 @@ Analyze Go binary size (go-size-analyzer)
 
 > Image: D9T_GO_TOOLS_IMAGE
 
+### `check-outdated-deps-go`
+
+Check toolbox Go pins for upstream drift
+
+`.makefile/core/scripts/check-outdated.sh ' -> ' .makefile/core/scripts/check-outdated-deps.sh .container/*/deps/go.deps`
+
+> Image: B19_GO_BASE_IMAGE
+
 ### `check-outdated-go`
 
 Check for outdated direct Go modules
@@ -773,7 +781,7 @@ Pre-pull the base, tool and frontend images the projectfile names, so a later bu
 
 ### `usage-check`
 
-Verify the committed --help captures in docs/usage.d match the built image
+Verify the committed --help captures in docs/usage.d match the declared executable, else the built image
 
 ## License
 
@@ -1100,16 +1108,6 @@ Ensure the shared dev Docker network exists (no-op in the CI scenario)
 ### `remove-docker-network`
 
 Remove the Docker network
-
-## Observability
-
-### `gonzo`
-
-Analyze log streams in a terminal UI
-
-`gonzo`
-
-> Image: D9T_GO_TOOLS_IMAGE
 
 ## Projectfile
 
