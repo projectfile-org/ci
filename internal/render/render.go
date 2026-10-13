@@ -726,6 +726,22 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnVi
 	return ov
 }
 
+// skipStable keeps a branch-wide push surface off the stable branch; a named branch list stays as authored.
+func skipStable(ov OnView, stable string) OnView {
+	switch {
+	case stable == "":
+		return ov
+	case ov.PushAny:
+		ov.PushAny, ov.PushBranches, ov.PushTags = false, []string{"**"}, true
+	case !slices.Contains(ov.PushBranches, "**"):
+		genlog.Debug("stable branch left to the named push branches", "stable", stable, "branches", ov.PushBranches)
+		return ov
+	}
+	ov.PushBranches = append(ov.PushBranches, "!"+stable)
+	genlog.Debug("push surface skips the stable branch", "stable", stable, "branches", ov.PushBranches)
+	return ov
+}
+
 // TriggersView is the neutral trigger surface carried on the Model (so `pf-ci resolve`
 // emits it and a Tekton lowering reads the same data). The vendor `on:` spelling is
 // composed per target at Workflow time (buildOn → OnView), never here.
@@ -3702,6 +3718,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// exact bug goalScope fixes). It instead rides whatever events the file already
 	// fires for, gated by its own always()+var `if:`.
 	on := buildOn(jobs, triggers, goalScope, primaryBranches(b))
+	if b != nil {
+		on = skipStable(on, b.StableBranch)
+	}
 	if b != nil && b.Events != nil {
 		// Stamp the goal into every tool-level emission before the notify job joins them:
 		// a fact event and the goal event describe one run and MUST name the same goal,

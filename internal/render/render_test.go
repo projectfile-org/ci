@@ -3552,9 +3552,32 @@ func TestWhenTriggerPredicate(t *testing.T) {
 	if !strings.Contains(s, "\"on\":\n  push: {}\n  pull_request: {}\n") {
 		t.Errorf("with an un-gated job present, on: must stay broad push/pull_request:\n%s", s)
 	}
-	// The un-gated build node must NOT carry an if: line (it runs on every event).
-	if strings.Contains(s, "  image-built:\n    runs-on: ubuntu-latest\n    if:") {
-		t.Errorf("image-built (un-gated) must not get an if: gate:\n%s", s)
+	// The un-gated build node carries only the same-repo pull request gate.
+	if !strings.Contains(s, "      contents: read\n    if: "+foreignPR+"\n    steps:") {
+		t.Errorf("image-built (un-gated) must carry the foreign-PR gate alone:\n%s", s)
+	}
+}
+
+// TestStableBranchSkipsPush pins that a declared stable branch leaves the broad push surface and a named list stays as authored.
+func TestStableBranchSkipsPush(t *testing.T) {
+	st, err := ci.Parse([]byte(whenSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, &ci.Build{StableBranch: "main"}), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "\"on\":\n  push:\n    branches: [\"**\", \"!main\"]\n    tags: [\"**\"]\n  pull_request: {}\n"; !strings.Contains(string(out), want) {
+		t.Errorf("stable branch must leave the broad push surface, want %q:\n%s", want, out)
+	}
+	named := skipStable(OnView{PushBranches: []string{"dev"}}, "main")
+	if !reflect.DeepEqual(named.PushBranches, []string{"dev"}) {
+		t.Errorf("a named push list must stay as authored, got %v", named.PushBranches)
 	}
 }
 

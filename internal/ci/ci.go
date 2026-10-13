@@ -981,6 +981,8 @@ type Build struct {
 	// applies DefaultPrimaryBranches; it is empty far more often than not, because
 	// nothing in the fleet writes that field yet.
 	PrimaryBranches []string
+	// StableBranch is org.projectfile.release.stable-branch: the branch that only fast-forwards to released commits; empty => none.
+	StableBranch string
 	// Naming is the tag rules org.projectfile.image declares (heads, variant); nil => the publish action's own cascade.
 	Naming *ImageNaming
 }
@@ -1342,19 +1344,21 @@ func LoadBuild(pfPath, lowering string) (*Build, error) {
 		return nil, err
 	}
 	primaryBranches := r.primaryBranches()
+	stableBranch := r.stableBranch()
 	naming, err := r.imageNaming(inputs)
 	if err != nil {
 		return nil, err
 	}
 	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
 		len(buildTarget) == 0 && len(publishRefs) == 0 && len(pullRefs) == 0 && len(releaseTargets) == 0 &&
-		len(primaryBranches) == 0 && naming == nil {
+		len(primaryBranches) == 0 && stableBranch == "" && naming == nil {
 		return nil, nil
 	}
 	return &Build{
 		Images: images, ImageHeads: heads, Args: inputs, Events: events, Secrets: secRaw,
 		BuildTarget: buildTarget, PublishRefs: publishRefs, PullRefs: pullRefs,
-		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches, Naming: naming,
+		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches, StableBranch: stableBranch,
+		Naming: naming,
 	}, nil
 }
 
@@ -1753,6 +1757,17 @@ func (r *Reader) primaryBranches() []string {
 	}
 	genlog.Decision("primary_branch", branch, "repositories[role=origin].branch", "")
 	return []string{branch}
+}
+
+// stableBranch reads the branch a push never builds on, because it only fast-forwards to released commits.
+func (r *Reader) stableBranch() string {
+	raw, ok := interp.ExpandIn(r.doc, "${org.projectfile.release.stable-branch}", imageScope)
+	branch := strings.TrimSpace(raw)
+	if !ok || branch == "" {
+		return ""
+	}
+	genlog.Decision("stable_branch", branch, "org.projectfile.release.stable-branch", "")
+	return branch
 }
 
 // Load runs pf-cli against the projectfile at dir (empty => auto-discover the
