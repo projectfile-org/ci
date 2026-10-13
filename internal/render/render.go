@@ -2234,6 +2234,22 @@ func emitIf(webhookVar string) string {
 	return "${{ always() && vars." + webhookVar + " != '' }}"
 }
 
+// foreignPR is true on every event except a pull request whose head lives in this repository.
+const foreignPR = "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)"
+
+// foreignPRIf gates an un-gated job and the notify job so a same-repo PR reuses its push run.
+func foreignPRIf(job JobView, pullRequest bool) string {
+	switch {
+	case !pullRequest || (len(job.Events) > 0 && job.Emit == nil):
+		return job.If
+	case job.Emit != nil:
+		genlog.Debug("notify job skips same-repo pull requests", "job", job.Name)
+		return strings.TrimSuffix(job.If, " }}") + " && " + foreignPR + " }}"
+	}
+	genlog.Debug("job skips same-repo pull requests", "job", job.Name)
+	return foreignPR
+}
+
 // ClassGate is the Class of a materialised node GATE — distinct from the resolve
 // tool classes (source/cell/join) so a consumer of the JSON model can tell a
 // structural vertex from a real tool job.
@@ -3890,6 +3906,7 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		} else {
 			jobs[i].If = jobIf(jobs[i].Events, m.PrimaryBranches)
 		}
+		jobs[i].If = foreignPRIf(jobs[i], m.On.PullRequest)
 		if len(jobs[i].SkippableNeeds) > 0 {
 			jobs[i].If = needsIf(jobs[i].Needs, jobs[i].SkippableNeeds, jobs[i].If)
 		}

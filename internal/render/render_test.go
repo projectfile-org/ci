@@ -269,7 +269,7 @@ func TestMaxParallelRenders(t *testing.T) {
 	}
 	s := string(out)
 	// The throttled node carries the cap directly above its matrix.
-	if !strings.Contains(s, "image-built:\n    runs-on: ubuntu-latest\n    permissions:\n      actions: write\n      contents: read\n    strategy:\n      max-parallel: 1\n      matrix:") {
+	if !strings.Contains(s, "image-built:\n    runs-on: ubuntu-latest\n    permissions:\n      actions: write\n      contents: read\n    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)\n    strategy:\n      max-parallel: 1\n      matrix:") {
 		t.Errorf("image-built strategy missing max-parallel: 1\n---\n%s", s)
 	}
 	// Exactly one cap in the whole file — the un-annotated scanner must NOT inherit it.
@@ -3472,7 +3472,7 @@ func TestNodesMaterialiseAsGates(t *testing.T) {
 	}
 	s := string(gha)
 	// The pure-join goal renders as a bare echo gate, no checkout.
-	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    steps:\n      - run: echo ready-to-publish") {
+	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)\n    steps:\n      - run: echo ready-to-publish") {
 		t.Errorf("pure-join goal must render as an echo gate mirroring its needs:\n%s", s)
 	}
 	// The tool-bearing nodes render as jobs (the tools are inside them as steps).
@@ -4388,7 +4388,7 @@ func TestEmitJobRenders(t *testing.T) {
 	// The job exists, gated on always()+the webhook var, needing the real job.
 	for _, want := range []string{
 		"\n  notify:\n",
-		"if: ${{ always() && vars.EVENTS_WEBHOOK_URL != '' }}",
+		"if: ${{ always() && vars.EVENTS_WEBHOOK_URL != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}",
 		"needs: [\"source-is-valid\"]",
 		"- name: emit lifecycle event",
 		"run: |",
