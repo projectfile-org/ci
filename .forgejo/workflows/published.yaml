@@ -438,7 +438,7 @@ jobs:
           preview: ${{ github.ref_type == 'branch' && github.ref_name || '' }}
           # The trunk branch names, so the action can tell a trunk push (`edge`) from a
           # feature-branch one (`latest-<branch>`) — `preview` above carries both.
-          primary: main
+          primary: dev
           # Head templates per build kind, as org.projectfile.image.heads declares them
           heads: |
             release ${version} ${major}.${minor} ${major} latest
