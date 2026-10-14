@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strconv"
@@ -41,7 +42,18 @@ import (
 // version is stamped at build time (-ldflags "-X main.version=…"); "dev" on a
 // plain `go build`. Surfaced via `pf-ci version` so a committed workflow can be
 // traced to the resolver that produced it.
-var version = "dev"
+var version = devVersion
+
+// devVersion is the unstamped default of version.
+const devVersion = "dev"
+
+// moduleVersion returns the stamped version, else the module version `go install` recorded.
+func moduleVersion(stamped string, info *debug.BuildInfo, ok bool) string {
+	if stamped != devVersion || !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return stamped
+	}
+	return info.Main.Version
+}
 
 // usageError marks a bad invocation, which exits 2 instead of 1.
 type usageError struct{ msg string }
@@ -77,7 +89,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "version", "--version", "-v":
-		_, _ = fmt.Fprintln(stdout, "pf-ci", version)
+		info, ok := debug.ReadBuildInfo()
+		_, _ = fmt.Fprintln(stdout, "pf-ci", moduleVersion(version, info, ok))
 		return 0
 	case "-h", "--help", "help":
 		if len(args) < 2 {

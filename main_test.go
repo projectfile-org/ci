@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -187,5 +188,38 @@ func TestWriteWorkflowDirDryRunAndNoForce(t *testing.T) {
 	}
 	if _, err := os.Stat(stale); err != nil {
 		t.Fatalf("no-force run removed the orphan: %v", err)
+	}
+}
+
+// TestModuleVersion pins the --version fallback to the module version a plain `go install` records.
+func TestModuleVersion(t *testing.T) {
+	const installed = "v3.0.0"
+	cases := []struct {
+		stamped, module string
+		ok              bool
+		want            string
+	}{
+		{"2.5.0", "v0.0.0-x", true, "2.5.0"},
+		{devVersion, installed, true, installed},
+		{devVersion, "(devel)", true, devVersion},
+		{devVersion, "", true, devVersion},
+		{devVersion, installed, false, devVersion},
+	}
+	for _, c := range cases {
+		info := &debug.BuildInfo{Main: debug.Module{Version: c.module}}
+		if got := moduleVersion(c.stamped, info, c.ok); got != c.want {
+			t.Errorf("moduleVersion(%q, %q, %v) = %q, want %q", c.stamped, c.module, c.ok, got, c.want)
+		}
+	}
+}
+
+// TestVersionWithoutLdflags pins a non-empty version from a build that never ran -ldflags.
+func TestVersionWithoutLdflags(t *testing.T) {
+	var out bytes.Buffer
+	if code := run([]string{"--version"}, strings.NewReader(""), &out, io.Discard); code != 0 {
+		t.Fatalf("--version exit=%d", code)
+	}
+	if fields := strings.Fields(out.String()); len(fields) != 2 || fields[1] == "" {
+		t.Fatalf("--version printed %q, want pf-ci <version>", out.String())
 	}
 }
