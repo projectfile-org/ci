@@ -177,6 +177,12 @@ jobs:
           name: gpg-sign-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
           overwrite: true
+  binaries-are-torrented:
+    runs-on: ubuntu-26.04
+    needs: ["binaries-are-signed"]
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - run: echo binaries-are-torrented
   container-is-diagnosed:
     runs-on: ubuntu-26.04
     needs: ["container-ready-to-test"]
@@ -784,7 +790,7 @@ jobs:
       - run: echo ready-to-publish
   release-is-published:
     runs-on: ubuntu-26.04
-    needs: ["binaries-are-signed", "image-is-attested", "image-is-signed"]
+    needs: ["binaries-are-torrented", "image-is-attested", "image-is-signed"]
     permissions:
       contents: write
     if: startsWith(github.ref, 'refs/tags/')

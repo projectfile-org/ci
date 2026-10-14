@@ -26,6 +26,7 @@ includes:
   - .makefile/library/languages/go.yaml
   - .makefile/library/traits/go/binary.yaml
   - .makefile/library/traits/binary/signed.yaml
+  - .makefile/library/traits/binary/torrent.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/codeberg.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/github.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/include.yaml
@@ -157,6 +158,15 @@ org:
             exclude:
               - GOARCH: riscv64
                 GOOS: darwin
+        # One torrent carries every signed cell, so this node runs once with no matrix.
+        binaries-are-torrented:
+          needs:
+            binaries-are-signed: true
+            binaries-are-ok: false
+        # Release restores dist/ from the torrent node, the only one holding both the .asc and the .torrent.
+        release-is-published:
+          needs:
+            binaries-are-signed: false
       status: maintained
     readme:
       usage:

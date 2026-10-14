@@ -154,6 +154,72 @@ jobs:
         with:
           name: gpg-sign-${{ matrix.GOARCH }}-${{ matrix.GOOS }}-${{ github.run_id }}
           path: dist
+  binaries-are-torrented:
+    runs-on: docker
+    needs: ["binaries-are-signed"]
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      M6E_TORRENT_OUT_DIR: dist/torrents
+      M6E_TORRENT_TRACKERS: https://tracker.kiota.ch/announce udp://tracker.kiota.ch:6969 wss://tracker.kiota.ch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        with:
+          name: gpg-sign-amd64-linux-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        with:
+          name: gpg-sign-amd64-darwin-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        with:
+          name: gpg-sign-arm64-linux-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        with:
+          name: gpg-sign-arm64-darwin-${{ github.run_id }}
+          path: dist
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        with:
+          name: gpg-sign-riscv64-linux-${{ github.run_id }}
+          path: dist
+      - name: binaries-torrent-create
+        if: vars.CI_SKIP_BINARIES_ARE_TORRENTED != 'true' && vars.CI_SKIP_BINARIES_TORRENT_CREATE != 'true'
+        uses: projectfile/actions/run-tool@7d06d220fdbc99b3b86c2007e7ca4ea09e59df8a # v1
+        with:
+          image: ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: .makefile/core/scripts/torrent.sh create --bundle dist/pf-ci
+          env: |-
+            M6E_TORRENT_OUT_DIR=dist/torrents
+            M6E_TORRENT_TRACKERS=https://tracker.kiota.ch/announce udp://tracker.kiota.ch:6969 wss://tracker.kiota.ch
+            GITHUB_REF_NAME
+            GITHUB_REPOSITORY
+            GITHUB_SERVER_URL
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
+        if: vars.CI_SKIP_BINARIES_ARE_TORRENTED != 'true' && vars.CI_SKIP_BINARIES_TORRENT_CREATE != 'true'
+        with:
+          name: binaries-torrent-create-${{ github.run_id }}
+          path: dist
+      - name: binaries-torrent-seed
+        if: vars.CI_SKIP_BINARIES_ARE_TORRENTED != 'true' && vars.CI_SKIP_BINARIES_TORRENT_SEED != 'true'
+        uses: projectfile/actions/run-tool@7d06d220fdbc99b3b86c2007e7ca4ea09e59df8a # v1
+        with:
+          image: ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: .makefile/core/scripts/torrent.sh seed --bundle dist/pf-ci
+          env: |-
+            GITHUB_REF_NAME
+            GITHUB_REPOSITORY
+          mounts: /app/data/ci-cache/rqbit-seed:/seed:rw
   container-is-diagnosed:
     runs-on: docker
     needs: ["container-ready-to-test"]
@@ -681,7 +747,7 @@ jobs:
       - run: echo ready-to-publish
   release-is-published:
     runs-on: docker
-    needs: ["binaries-are-signed", "image-is-attested", "image-is-signed"]
+    needs: ["binaries-are-torrented", "image-is-attested", "image-is-signed"]
     if: startsWith(github.ref, 'refs/tags/')
     env:
       FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
@@ -691,29 +757,9 @@ jobs:
           submodules: true
           persist-credentials: false
       - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
-        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
+        if: vars.CI_SKIP_BINARIES_ARE_TORRENTED != 'true' && vars.CI_SKIP_BINARIES_TORRENT_CREATE != 'true'
         with:
-          name: gpg-sign-amd64-linux-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
-        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
-        with:
-          name: gpg-sign-amd64-darwin-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
-        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
-        with:
-          name: gpg-sign-arm64-linux-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
-        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
-        with:
-          name: gpg-sign-arm64-darwin-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
-        if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
-        with:
-          name: gpg-sign-riscv64-linux-${{ github.run_id }}
+          name: binaries-torrent-create-${{ github.run_id }}
           path: dist
       - name: forgejo-release
         if: vars.CI_SKIP_RELEASE_IS_PUBLISHED != 'true' && vars.CI_SKIP_FORGEJO_RELEASE != 'true'
