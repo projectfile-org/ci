@@ -974,8 +974,8 @@ type Build struct {
 	// Actions context and needs no input at all.
 	ReleaseTargets map[string][]ReleaseTarget
 	// PrimaryBranches is the branch set a push must NOT be on to count as a PREVIEW
-	// (EventPreview): the origin repository's recorded default branch. Read from
-	// repositories[role=origin].branch (spec §4.3a) so the fact is DECLARED once and
+	// (EventPreview): the declared trunk. Read from org.projectfile.release.trunk, else
+	// repositories[role=origin].branch (spec §4.3a), so the fact is DECLARED once and
 	// both planes agree on it — the make plane compares the same set in
 	// M6E_GIT_BRANCH_DEFAULT. Empty => the document records none and the lowering
 	// applies DefaultPrimaryBranches; it is empty far more often than not, because
@@ -1750,13 +1750,17 @@ var DefaultPrimaryBranches = []string{"main", "master"}
 // DefaultPrimaryBranches. Same bracket-selector idiom (and same sole-entry-without-role
 // blind spot) as originForgeSlug above, because it reads the same entry.
 func (r *Reader) primaryBranches() []string {
-	raw, ok := interp.ExpandIn(r.doc, "${repositories[role=origin].branch}", imageScope)
-	branch := strings.TrimSpace(raw)
-	if !ok || branch == "" {
-		return nil
+	// The declared trunk wins over the forge's recorded default branch.
+	for _, field := range []string{"org.projectfile.release.trunk", "repositories[role=origin].branch"} {
+		raw, ok := interp.ExpandIn(r.doc, "${"+field+"}", imageScope)
+		branch := strings.TrimSpace(raw)
+		if !ok || branch == "" {
+			continue
+		}
+		genlog.Decision("primary_branch", branch, field, "")
+		return []string{branch}
 	}
-	genlog.Decision("primary_branch", branch, "repositories[role=origin].branch", "")
-	return []string{branch}
+	return nil
 }
 
 // stableBranch reads the branch a push never builds on, because it only fast-forwards to released commits.

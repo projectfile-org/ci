@@ -1162,6 +1162,32 @@ func TestRouteArchitecturesPerLowering(t *testing.T) {
 	}
 }
 
+// TestPrimaryBranchPrefersDeclaredTrunk pins that release.trunk beats the forge's recorded default branch.
+func TestPrimaryBranchPrefersDeclaredTrunk(t *testing.T) {
+	for _, tc := range []struct{ name, trunk, want string }{
+		{"trunk declared", "\n    release:\n      trunk: dev", "dev"},
+		{"forge default only", "", "main"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "projectfile.yaml")
+			body := "$schema: https://projectfile.org/schema/v1.json\nidentity:\n  namespace: org.example\n  name: ubuntu\n" +
+				"repositories:\n  - role: origin\n    branch: main\n    url: ssh://git@kiota.ch/b19/ubuntu.git\n" +
+				"org:\n  projectfile:\n    ci: {}" + tc.trunk + "\n"
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			doc, err := projectfile.Read(path)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			got := (&Reader{doc: doc}).primaryBranches()
+			if !reflect.DeepEqual(got, []string{tc.want}) {
+				t.Fatalf("primaryBranches: got %v, want [%s]", got, tc.want)
+			}
+		})
+	}
+}
+
 // archRouteSubtree fans amd64 and arm64, with one override and one exclude row per arch.
 func archRouteSubtree(route []string) *Subtree {
 	return &Subtree{
