@@ -289,6 +289,22 @@ Lint the Dockerfile for best practices
 
 > Image: HADOLINT_IMAGE
 
+### `pf-bridge-containerignore-check`
+
+Verify .containerignore still matches the projectfile
+
+`pf-bridge ignore .containerignore --check`
+
+> Image: PF_BRIDGE_IMAGE
+
+### `pf-bridge-containerignore-generate`
+
+Generate .containerignore from the projectfile
+
+`pf-bridge ignore .containerignore --force`
+
+> Image: PF_BRIDGE_IMAGE
+
 ### `pf-bridge-dockerignore-check`
 
 Verify .dockerignore still matches the projectfile
