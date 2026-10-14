@@ -1822,7 +1822,7 @@ type StepView struct {
 	// ReleaseAssetPath is the forgejo-release `release-asset-path:` input — the
 	// UNSUFFIXED binary path resolved from org.projectfile.artifacts (the single
 	// kind=binary entry's .path, e.g. dist/pf-cli). The action suffixes it with
-	// the cell axes (→ dist/pf-cli-${GOOS}-${GOARCH}) to find the built binary the
+	// the cell axes (→ dist/pf-cli-<os>-<uname -m>) to find the built binary the
 	// build→consumer download edge restored to the workspace. The release tag rides
 	// PublishVersion (the same ci:version), so this is the only forgejo-release-
 	// specific input. EMPTY when the project declares no kind=binary artifact, which

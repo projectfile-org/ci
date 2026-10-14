@@ -369,7 +369,7 @@ type Manifest struct {
 	// ReleaseAssetPath is the forgejo-release action's resolved binary path — the
 	// unsuffixed org.projectfile.artifacts entry with kind=binary (e.g. dist/pf-cli),
 	// looked up once during Load against the merged doc. The action suffixes it per
-	// cell (→ dist/pf-cli-${GOOS}-${GOARCH}). NOT a JSON field: it is derived, never
+	// cell (→ dist/pf-cli-<os>-<uname -m>). NOT a JSON field: it is derived, never
 	// authored. Empty for non-forgejo-release tools; a forgejo-release tool with zero
 	// or >1 kind=binary artifact errors at Load (fail-closed — ambiguous attach target).
 	ReleaseAssetPath string `json:"-"`

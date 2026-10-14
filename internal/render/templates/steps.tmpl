@@ -401,7 +401,7 @@ byte-identical, so the drift gate stays quiet for projects that do declare a bin
 */ -}}
 {{- with .Step.ReleaseAssetPath }}
           # The unsuffixed binary path resolved from org.projectfile.artifacts (the single
-          # kind=binary entry). The action suffixes it per cell (→ <path>-${GOOS}-${GOARCH})
+          # kind=binary entry). The action suffixes it per cell (→ <path>-<os>-<uname -m>)
           # to find the binary the build→consumer download edge restored to the workspace.
           release-asset-path: {{ . }}
 {{- end }}
