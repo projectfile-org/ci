@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"projectfile.org/projectfile/ci/internal/ci"
-	"projectfile.org/projectfile/ci/internal/resolve"
+	"projectfile.org/projectfile/ci/v2/internal/ci"
+	"projectfile.org/projectfile/ci/v2/internal/resolve"
 )
 
 // variantDoc is b19/php's shape: no ci.image, axes declared sapi-first, variant series-first.

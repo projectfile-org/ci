@@ -34,9 +34,9 @@ import (
 	"strings"
 
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
-	"projectfile.org/projectfile/ci/internal/ci"
-	"projectfile.org/projectfile/ci/internal/render"
-	"projectfile.org/projectfile/ci/internal/resolve"
+	"projectfile.org/projectfile/ci/v2/internal/ci"
+	"projectfile.org/projectfile/ci/v2/internal/render"
+	"projectfile.org/projectfile/ci/v2/internal/resolve"
 )
 
 // version is stamped at build time (-ldflags "-X main.version=…"); "dev" on a

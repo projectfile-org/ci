@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"projectfile.org/projectfile/ci/internal/ci"
-	"projectfile.org/projectfile/ci/internal/render"
+	"projectfile.org/projectfile/ci/v2/internal/ci"
+	"projectfile.org/projectfile/ci/v2/internal/render"
 )
 
 // testGoalReady is the single goal node fixture below (goconst).

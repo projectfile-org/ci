@@ -31,8 +31,8 @@ import (
 	"text/template"
 
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
-	"projectfile.org/projectfile/ci/internal/ci"
-	"projectfile.org/projectfile/ci/internal/resolve"
+	"projectfile.org/projectfile/ci/v2/internal/ci"
+	"projectfile.org/projectfile/ci/v2/internal/resolve"
 )
 
 //go:embed templates/*.tmpl

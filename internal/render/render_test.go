@@ -12,8 +12,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"projectfile.org/projectfile/ci/internal/ci"
-	"projectfile.org/projectfile/ci/internal/resolve"
+	"projectfile.org/projectfile/ci/v2/internal/ci"
+	"projectfile.org/projectfile/ci/v2/internal/resolve"
 )
 
 // Test-local constants for repeated string literals (goconst).
