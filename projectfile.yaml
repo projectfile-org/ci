@@ -145,19 +145,6 @@ org:
             exclude:
               - GOARCH: riscv64
                 GOOS: darwin
-        binaries-are-signed:
-          matrix:
-            axes:
-              GOARCH:
-                - amd64
-                - arm64
-                - riscv64
-              GOOS:
-                - linux
-                - darwin
-            exclude:
-              - GOARCH: riscv64
-                GOOS: darwin
         # One torrent carries every signed cell, so this node runs once with no matrix.
         binaries-are-torrented:
           needs:
