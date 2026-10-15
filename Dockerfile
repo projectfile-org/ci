@@ -13,10 +13,8 @@ ARG B19_FETCH_DOCKER_CACHE
 ARG B19_FETCH_LOCAL_CACHE
 ARG B19_OFFGRID_MODE
 ARG B19_VERBOSITY
-# In-container `go mod download` resolves the pinned kiota.ch/projectfile/core
-# from the Forgejo Go registry; public modules 404 there and fall through to
-# direct. The forge may override via vars.GOPROXY.
-ARG GOPROXY=https://kiota.ch/api/packages/projectfile/go,direct
+# Module proxies in order: projectfile registry, public proxy, origin; vars.GOPROXY overrides.
+ARG GOPROXY=https://kiota.ch/api/packages/projectfile/go,https://proxy.golang.org,direct
 ARG LANG=""
 ARG M6E_AI=N
 ARG M6E_APT_CACHE_HOST=""
