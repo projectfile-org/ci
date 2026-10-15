@@ -155,6 +155,8 @@ org:
           needs:
             binaries-are-signed: false
       status: maintained
+    release:
+      tag-prefix: v
     readme:
       usage:
         - commands:
