@@ -373,7 +373,7 @@ jobs:
           # 0. It rides the ACTION because that decode already lives there, so one code path
           # behaves the same on every forge however each implements the step-level knob.
           advisory: "true"
-          run: .makefile/library/scripts/go-install-is-ok.sh "${{ github.ref_name }}" pf-ci
+          run: .makefile/library/scripts/go-install-is-ok.sh "${{ github.ref_name }}" pf-ci projectfile.org/projectfile/ci/v2/cmd/pf-ci
   gpg-is-ready:
     runs-on: docker
     if: (startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))
@@ -821,6 +821,7 @@ jobs:
     needs: ["binaries-are-torrented", "image-is-signed", "publish-image"]
     if: startsWith(github.ref, 'refs/tags/')
     env:
+      RELEASE_TARGET: main
       FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

@@ -338,7 +338,7 @@ jobs:
           # 0. It rides the ACTION because that decode already lives there, so one code path
           # behaves the same on every forge however each implements the step-level knob.
           advisory: "true"
-          run: .makefile/library/scripts/go-install-is-ok.sh "${{ github.ref_name }}" pf-ci
+          run: .makefile/library/scripts/go-install-is-ok.sh "${{ github.ref_name }}" pf-ci projectfile.org/projectfile/ci/v2/cmd/pf-ci
   gpg-is-ready:
     runs-on: ubuntu-26.04
     if: (startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))
@@ -872,6 +872,7 @@ jobs:
     env:
       RELEASE_PATH: dist/pf-ci
       RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TARGET: main
       RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -886,7 +887,7 @@ jobs:
           path: dist
       - name: gh-release
         if: vars.CI_SKIP_RELEASE_IS_PUBLISHED != 'true' && vars.CI_SKIP_GH_RELEASE != 'true'
-        run: .makefile/core/scripts/gh-release.sh "$RELEASE_TAG"
+        uses: projectfile-org/actions/gh-release@dce815a0d5ead4bbc1047c298252472a65433207 # v1
   release-notes-are-published:
     runs-on: ubuntu-26.04
     needs: ["release-is-published"]
