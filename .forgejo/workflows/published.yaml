@@ -57,7 +57,7 @@ concurrency:
 env:
   M6E_TAG: ${{ vars.BASE_IMAGE_DEFAULT_VERSION || 'latest' }}
   M6E_RUN_SCOPE: ${{ github.run_id }}-${{ github.run_attempt }}
-  GOPROXY: https://kiota.ch/api/packages/projectfile/go,direct
+  GOPROXY: https://kiota.ch/api/packages/projectfile/go,https://proxy.golang.org,direct
   PF_CLI_IMAGE: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli:{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.BASE_IMAGE_DEFAULT_VERSION || 'latest') }}
 jobs:
   artifacts-are-ok:
@@ -209,6 +209,30 @@ jobs:
             GITHUB_REF_NAME
             GITHUB_REPOSITORY
           mounts: /app/data/ci-cache/rqbit-seed:/seed:rw
+  binaries-torrent-is-verified:
+    runs-on: docker
+    needs: ["binaries-are-torrented"]
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        if: vars.CI_SKIP_BINARIES_ARE_TORRENTED != 'true' && vars.CI_SKIP_BINARIES_TORRENT_CREATE != 'true'
+        with:
+          name: binaries-torrent-create-${{ github.run_id }}
+          path: dist
+      - name: binaries-torrent-verify
+        if: vars.CI_SKIP_BINARIES_TORRENT_IS_VERIFIED != 'true' && vars.CI_SKIP_BINARIES_TORRENT_VERIFY != 'true'
+        uses: projectfile/actions/run-tool@5f068461ea1f8deab0551b8b843766d291e0d72c # v1
+        with:
+          image: ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: .makefile/core/scripts/torrent.sh verify --bundle dist/pf-ci
+          env: |-
+            GITHUB_REF_NAME
+            GITHUB_REPOSITORY
   container-is-diagnosed:
     runs-on: docker
     needs: ["container-ready-to-test"]
@@ -718,8 +742,8 @@ jobs:
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
   published:
     runs-on: docker
-    needs: ["image-has-sbom", "image-is-signed", "publish-image", "ready-to-publish", "release-is-published", "release-notes-are-published"]
-    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.image-is-signed.result == 'success' || (needs.image-is-signed.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.publish-image.result == 'success' || (needs.publish-image.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))))) && needs.ready-to-publish.result == 'success' && (needs.release-is-published.result == 'success' || (needs.release-is-published.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.release-notes-are-published.result == 'success' || (needs.release-notes-are-published.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["binaries-torrent-is-verified", "image-has-sbom", "image-is-signed", "publish-image", "ready-to-publish", "release-is-published", "release-notes-are-published"]
+    if: ${{ !cancelled() && (needs.binaries-torrent-is-verified.result == 'success' || (needs.binaries-torrent-is-verified.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.image-is-signed.result == 'success' || (needs.image-is-signed.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.publish-image.result == 'success' || (needs.publish-image.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))))) && needs.ready-to-publish.result == 'success' && (needs.release-is-published.result == 'success' || (needs.release-is-published.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.release-notes-are-published.result == 'success' || (needs.release-notes-are-published.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
       - run: echo published
   ready-to-publish:

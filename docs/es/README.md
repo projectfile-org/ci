@@ -73,6 +73,8 @@ chmod +x ~/.local/bin/pf-ci
 
 Publicado para: `linux/amd64`, `linux/arm64`, `linux/riscv64`, `darwin/amd64`, `darwin/arm64`
 
+Para desinstalarlo, borra ese único archivo: `rm ~/.local/bin/pf-ci`.
+
 ## Uso
 
 Lower the CI DAG to a forge’s workflow files:
