@@ -110,6 +110,9 @@ org:
         command: pf-ci
         kind: binary
         path: dist/pf-ci
+        operating-system: [linux, darwin]
+        exclude:
+          - {os: darwin, arch: riscv64}
     architecture:
       - amd64
       - arm64
@@ -120,31 +123,9 @@ org:
       features-level: 1
       nodes:
         binaries-are-built:
-          matrix:
-            axes:
-              GOARCH:
-                - amd64
-                - arm64
-                - riscv64
-              GOOS:
-                - linux
-                - darwin
-            exclude:
-              - GOARCH: riscv64
-                GOOS: darwin
+          matrix: {artifact: go-binary}
         gsa:
-          matrix:
-            axes:
-              GOARCH:
-                - amd64
-                - arm64
-                - riscv64
-              GOOS:
-                - linux
-                - darwin
-            exclude:
-              - GOARCH: riscv64
-                GOOS: darwin
+          matrix: {artifact: go-binary}
         # One torrent carries every signed cell, so this node runs once with no matrix.
         binaries-are-torrented:
           needs:
