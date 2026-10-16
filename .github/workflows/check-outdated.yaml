@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
       - name: check-outdated-deps-go
         if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_DEPS_GO != 'true'
-        uses: projectfile-org/actions/run-tool@5f068461ea1f8deab0551b8b843766d291e0d72c # v1
+        uses: projectfile-org/actions/run-tool@dce815a0d5ead4bbc1047c298252472a65433207 # v1
         with:
           image: ${{ vars.B19_GO_BASE_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -58,7 +58,7 @@ jobs:
             ci-cache-go-
       - name: check-outdated-go
         if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
-        uses: projectfile-org/actions/run-tool@5f068461ea1f8deab0551b8b843766d291e0d72c # v1
+        uses: projectfile-org/actions/run-tool@dce815a0d5ead4bbc1047c298252472a65433207 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
