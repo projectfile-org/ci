@@ -3960,8 +3960,10 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		"stepfrag": func(tgt Target, s StepView) (string, error) {
 			name := "frag/run"
 			switch {
-			case s.Action != "":
+			case s.Action != "" && root.Lookup("providers/"+s.Action) != nil:
 				name = "providers/" + s.Action
+			case s.Action != "":
+				name = "frag/action" // no dedicated provider: the action reads its inputs from the step env
 			case s.Image != "":
 				name = "frag/run-tool"
 			}

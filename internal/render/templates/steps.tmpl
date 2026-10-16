@@ -451,6 +451,19 @@ step env because toJSON renders multi-line JSON; the run text is built in Go
 {{ indent 10 .Step.Emit.Run }}
 {{- end }}
 
+{{- /*
+frag/action — the generic lowering of an `action:` tool with no providers/<action> fragment: a
+`uses:` of the library ref and nothing else. Its inputs ride the job env (tool `set-env`/`env`),
+so a new action is declared in m6e yaml plus the library, with no renderer change.
+*/ -}}
+{{- define "frag/action" }}
+      - name: {{ .Step.Name }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
+        uses: {{ actionRef .Target .Step.Action }}
+{{- end }}
+
 {{- define "providers/container-exec" }}
       - name: {{ .Step.Name }}
 {{- with .Step.Gate }}

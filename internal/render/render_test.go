@@ -2813,21 +2813,23 @@ func TestOciPushRegistryVar(t *testing.T) {
 	}
 }
 
-// TestUnprovidedActionErrors is the defect guard: an `action:` tool with no
-// registered action-library partial must HARD-FAIL the render, never silently emit `make`.
-func TestUnprovidedActionErrors(t *testing.T) {
-	const deferred = `{
-  "tools": {"dc-up-d": {"action": "service-up"}},
+// TestUnprovidedActionLowersGeneric pins the fallback: an `action:` tool with no dedicated
+// provider renders as a bare `uses:` of its library ref, never a `make` step.
+func TestUnprovidedActionLowersGeneric(t *testing.T) {
+	const declared = `{
+  "tools": {"dc-up-d": {"action": "service-up", "set-env": {"A": "b"}}},
   "nodes": {"up": {"goal": true, "needs": {"dc-up-d": true}}}
 }`
-	st, _ := ci.Parse([]byte(deferred))
+	st, _ := ci.Parse([]byte(declared))
 	rm, _ := resolve.Resolve(st)
-	_, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
-	if err == nil {
-		t.Fatal("an unprovided action tool (service-up) must fail the render, not fall through")
+	out, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatalf("a generic action must render, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "service-up") || !strings.Contains(err.Error(), "no fragment") {
-		t.Errorf("error should name the unprovided action + reason, got: %v", err)
+	for _, line := range []string{"- name: dc-up-d", "/service-up@", "A: b"} {
+		if !strings.Contains(string(out), line) {
+			t.Errorf("generic action missing %q:\n%s", line, out)
+		}
 	}
 }
 
