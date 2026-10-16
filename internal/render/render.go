@@ -726,19 +726,17 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnVi
 	return ov
 }
 
-// skipStable keeps a branch-wide push surface off the stable branch; a named branch list stays as authored.
-func skipStable(ov OnView, stable string) OnView {
-	switch {
-	case stable == "":
-		return ov
-	case ov.PushAny:
-		ov.PushAny, ov.PushBranches, ov.PushTags = false, []string{"**"}, true
-	case !slices.Contains(ov.PushBranches, "**"):
-		genlog.Debug("stable branch left to the named push branches", "stable", stable, "branches", ov.PushBranches)
+// stableReleases drops tag pushes from a dispatchable surface: the stable branch run dispatches its own tag.
+func stableReleases(ov OnView, stable string) OnView {
+	if stable == "" || ov.Dispatch == nil || (!ov.PushAny && !ov.PushTags) {
+		genlog.Debug("tag pushes kept", "stable", stable, "dispatch", ov.Dispatch != nil, "tags", ov.PushAny || ov.PushTags)
 		return ov
 	}
-	ov.PushBranches = append(ov.PushBranches, "!"+stable)
-	genlog.Debug("push surface skips the stable branch", "stable", stable, "branches", ov.PushBranches)
+	if ov.PushAny {
+		ov.PushAny, ov.PushBranches = false, []string{"**"}
+	}
+	ov.PushTags = false
+	genlog.Debug("tag pushes left to the stable branch", "stable", stable, "branches", ov.PushBranches)
 	return ov
 }
 
@@ -3799,7 +3797,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// fires for, gated by its own always()+var `if:`.
 	on := buildOn(jobs, triggers, goalScope, primaryBranches(b))
 	if b != nil {
-		on = skipStable(on, b.StableBranch)
+		on = stableReleases(on, b.StableBranch)
 	}
 	if b != nil && b.Events != nil {
 		// Stamp the goal into every tool-level emission before the notify job joins them:

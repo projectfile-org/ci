@@ -3558,26 +3558,24 @@ func TestWhenTriggerPredicate(t *testing.T) {
 	}
 }
 
-// TestStableBranchSkipsPush pins that a declared stable branch leaves the broad push surface and a named list stays as authored.
-func TestStableBranchSkipsPush(t *testing.T) {
-	st, err := ci.Parse([]byte(whenSubtree))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	rm, err := resolve.Resolve(st)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	out, err := Workflow(Build(rm, st, &ci.Build{StableBranch: "main"}), Targets[TargetGHA], ci.Platform{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "\"on\":\n  push:\n    branches: [\"**\", \"!main\"]\n    tags: [\"**\"]\n  pull_request: {}\n"; !strings.Contains(string(out), want) {
-		t.Errorf("stable branch must leave the broad push surface, want %q:\n%s", want, out)
-	}
-	named := skipStable(OnView{PushBranches: []string{"dev"}}, "main")
-	if !reflect.DeepEqual(named.PushBranches, []string{"dev"}) {
-		t.Errorf("a named push list must stay as authored, got %v", named.PushBranches)
+// TestStableBranchReleases pins that a declared stable branch drops tag pushes from a dispatchable surface only.
+func TestStableBranchReleases(t *testing.T) {
+	const stable = "main"
+	dispatch := &DispatchView{}
+	for _, tc := range []struct {
+		name   string
+		in     OnView
+		stable string
+		want   OnView
+	}{
+		{"broad", OnView{PushAny: true, PullRequest: true, Dispatch: dispatch}, stable, OnView{PushBranches: []string{"**"}, PullRequest: true, Dispatch: dispatch}},
+		{"narrowed", OnView{PushBranches: []string{"dev"}, PushTags: true, Dispatch: dispatch}, stable, OnView{PushBranches: []string{"dev"}, Dispatch: dispatch}},
+		{"no-dispatch", OnView{PushAny: true}, stable, OnView{PushAny: true}},
+		{"no-stable", OnView{PushAny: true, Dispatch: dispatch}, "", OnView{PushAny: true, Dispatch: dispatch}},
+	} {
+		if got := stableReleases(tc.in, tc.stable); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
+		}
 	}
 }
 
