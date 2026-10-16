@@ -4792,6 +4792,9 @@ func TestFusedPublishKeepsMemberEventGates(t *testing.T) {
 	}
 	m := Build(rm, st, nil)
 	sink := jobOf(m, testOCIPush)
+	if sink.Name != "publish-image" {
+		t.Errorf("the fused push job must carry the push node's name, got %q", sink.Name)
+	}
 	gates := map[string]string{}
 	for _, s := range sink.Steps {
 		gates[s.Name] = s.EventIf
@@ -4813,7 +4816,7 @@ func TestFusedPublishKeepsMemberEventGates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		job := "    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(" + tagOnly + "))) && needs.publish-image.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (" + tagOnly + ")) }}\n"
+		job := "    if: ${{ !cancelled() && needs.image-built.result == 'success' && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(" + tagOnly + "))) && ((startsWith(github.ref, 'refs/heads/')) || (" + tagOnly + ")) }}\n"
 		if !strings.Contains(string(out), job) {
 			t.Errorf("%s: the fused push job must tolerate the event-skipped SBOM need, want %q in:\n%s", target, job, out)
 		}
@@ -4829,6 +4832,9 @@ func TestFusedPublishKeepsMemberEventGates(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	ungated := jobOf(Build(prm, plain, nil), testOCIPush)
+	if ungated.Name != "image-is-attested" {
+		t.Errorf("a fused job whose host runs on every event it runs on keeps the host name, got %q", ungated.Name)
+	}
 	if len(ungated.SkippableNeeds) > 0 {
 		t.Errorf("an ungated fuse must tolerate no skipped need, got %v", ungated.SkippableNeeds)
 	}

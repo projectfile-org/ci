@@ -3256,6 +3256,84 @@ func reaches(adj map[string][]string, from, target string) bool {
 	return dfs(from)
 }
 
+// nameFusedAfterSource renames a fused job after the node owning its first member and drops that node's emptied gate.
+func nameFusedAfterSource(jobs []JobView, fusedOrder map[string][]string, toolNode map[string]string, nodeAdj map[string][]string, whenByNode map[string][]string, goals []string) []JobView {
+	index := func(name string) int {
+		for i := range jobs {
+			if jobs[i].Name == name {
+				return i
+			}
+		}
+		return -1
+	}
+	for _, sink := range sortedKeys(firstMembers(fusedOrder)) {
+		host, source := toolNode[sink], toolNode[fusedOrder[sink][0]]
+		hi, si := index(host), index(source)
+		switch {
+		case host == source:
+			continue
+		case hi < 0 || si < 0 || !jobs[si].IsGate || slices.Contains(goals, source) || slices.Contains(goals, host):
+			genlog.Info("fuse: keeping the host name", "host", host, "source", source, "hostJob", hi >= 0, "sourceGate", si >= 0 && jobs[si].IsGate)
+			continue
+		case slices.Equal(whenByNode[host], jobs[hi].Events) || !slices.Equal(whenByNode[source], jobs[hi].Events):
+			genlog.Debug("fuse: keeping the host name, it runs whenever the job runs", "host", host, "source", source, "events", jobs[hi].Events)
+			continue
+		}
+		cyclic := ""
+		for _, n := range jobs[hi].Needs {
+			if n != source && reaches(nodeAdj, n, source) {
+				cyclic = n
+				break
+			}
+		}
+		if cyclic != "" {
+			genlog.Warn("fuse: keeping the host name, the source rename would cycle", "host", host, "source", source, "through", cyclic)
+			continue
+		}
+		genlog.Info("fuse: naming the fused job after its source node", "host", host, "source", source, "tool", fusedOrder[sink][0])
+		merged := append(append([]string(nil), jobs[hi].Needs...), jobs[si].Needs...)
+		jobs[hi].Name, jobs[hi].Needs = source, merged
+		whenByNode[source] = jobs[hi].Events
+		jobs = slices.Delete(jobs, si, si+1)
+		for i := range jobs {
+			jobs[i].Needs = renameNeeds(jobs[i].Needs, host, source, jobs[i].Name)
+		}
+		nodeAdj[source] = append(nodeAdj[source], nodeAdj[host]...)
+		delete(nodeAdj, host)
+		for k, deps := range nodeAdj {
+			nodeAdj[k] = renameNeeds(deps, host, source, k)
+		}
+	}
+	return jobs
+}
+
+// firstMembers maps each fuse sink to its first ordered member.
+func firstMembers(fusedOrder map[string][]string) map[string]string {
+	out := make(map[string]string, len(fusedOrder))
+	for sink, order := range fusedOrder {
+		out[sink] = order[0]
+	}
+	return out
+}
+
+// renameNeeds rewrites `from` to `to`, drops a self-edge on `self` and de-duplicates, keeping the list sorted.
+func renameNeeds(needs []string, from, to, self string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(needs))
+	for _, n := range needs {
+		if n == from {
+			n = to
+		}
+		if n == self || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Build joins the resolved graph model with the subtree's tool manifests into
 // the renderable/serialisable job model. It is render-target-independent; the
 // Target only enters at template time.
@@ -3687,6 +3765,8 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		}
 		jobs = append(jobs, job)
 	}
+
+	jobs = nameFusedAfterSource(jobs, fusedOrder, toolNode, nodeAdj, whenByNode, st.Goals)
 
 	// Every job, gates included, accepts a skip from a need that runs on fewer events than it does.
 	for i := range jobs {
