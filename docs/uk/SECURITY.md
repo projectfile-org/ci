@@ -40,12 +40,6 @@ pf-cli-managed: yes
 gpg --keyserver keys.openpgp.org --recv-keys B64C122EE16C3746
 ```
 
-Або завантажте його безпосередньо й імпортуйте:
-
-```sh
-gpg --import pubkey.asc   # завантажено з https://keys.openpgp.org/vks/v1/by-fingerprint/8F89CBF7C8D51F8BEC7533C00925F8F79EBD3257
-```
-
 Перевірте, що відбиток збігається, перш ніж довіритися йому:
 
 ```sh
@@ -55,7 +49,7 @@ gpg --fingerprint B64C122EE16C3746
 Вивід має показати:
 
 ```text
-8F89 CBF7 C8D5 1F8B EC75  33C0 0925 F8F7 9EBD 3257
+6F19 7084 3C9E 8406 AD70  0467 B64C 122E E16C 3746
 ```
 
 Зашифруйте своє повідомлення для нас:
