@@ -15,7 +15,7 @@
     go mod download
 
   b19-run "CI" "$(_ 'Build pf-ci')" --      \
-    go build -ldflags="${LDFLAGS}" -o pf-ci .
+    go build -ldflags="${LDFLAGS}" -o pf-ci ./cmd/pf-ci
 
   b19-strip "CI" pf-ci
 

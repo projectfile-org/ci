@@ -24,6 +24,6 @@ log "building pf-ci ${version} for ${goos}/${goarch}"
 
 mkdir -p dist
 go build -ldflags="-s -w -X main.version=${version}"      \
-         -o "${out}" .
+         -o "${out}" ./cmd/pf-ci
 
 printf '%s\n' "${out}"

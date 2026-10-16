@@ -12,9 +12,9 @@ VERSION  ?= dev
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-build-local: $(DIST) main.go internal go.mod go.sum ## Build pf-ci host binary into dist/ (requires Go toolchain)
+build-local: $(DIST) cmd internal go.mod go.sum ## Build pf-ci host binary into dist/ (requires Go toolchain)
 	@echo "Build… $(DIST)/$(BIN)"
-	go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BIN) .
+	go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BIN) ./cmd/pf-ci
 
 install-local: build-local ## "local publish": build-local + copy into ~/.local/bin (the binary `make ci-generate` host-detects)
 	@mkdir -p $(INSTALL_DIR)
