@@ -1792,6 +1792,9 @@ func Load(pfPath string) (*Subtree, error) {
 		// emits nothing (graceful degradation).
 		return nil, nil
 	}
+	if raw, err = r.expandArtifactMatrices(raw); err != nil {
+		return nil, err
+	}
 	st, err := Parse(raw)
 	if err != nil || st == nil {
 		return st, err
