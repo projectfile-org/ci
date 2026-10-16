@@ -60,6 +60,16 @@ Si los registros anteriores no están disponibles, descarga desde el origen:
 docker pull kiota.ch/projectfile/ci:latest
 ```
 
+### Herramientas de Go
+
+Instala con las herramientas de Go:
+
+```sh
+go install projectfile.org/projectfile/ci/v2/cmd/pf-ci@latest
+```
+
+Después, ejecuta `pf-ci --help`.
+
 ### Binario precompilado
 
 Descarga el binario precompilado para tu plataforma desde las versiones de GitHub:

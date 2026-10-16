@@ -58,6 +58,16 @@ If the registries above are unreachable, pull from the origin instead:
 docker pull kiota.ch/projectfile/ci:latest
 ```
 
+### Go toolchain
+
+Install with the Go toolchain:
+
+```sh
+go install projectfile.org/projectfile/ci/v2/cmd/pf-ci@latest
+```
+
+Then run `pf-ci --help`.
+
 ### Prebuilt binary
 
 Download the prebuilt binary for your platform from GitHub Releases:

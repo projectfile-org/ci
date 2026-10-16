@@ -60,6 +60,16 @@ docker pull damianbuho/projectfile-ci:latest
 docker pull kiota.ch/projectfile/ci:latest
 ```
 
+### Інструменти Go
+
+Встановіть за допомогою інструментів Go:
+
+```sh
+go install projectfile.org/projectfile/ci/v2/cmd/pf-ci@latest
+```
+
+Потім виконайте `pf-ci --help`.
+
 ### Готовий бінарний файл
 
 Завантажте готовий бінарний файл для своєї платформи з випусків на GitHub:
