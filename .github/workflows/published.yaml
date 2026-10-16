@@ -9,9 +9,7 @@
 ---
 name: published
 "on":
-  push:
-    branches: ["**", "!main"]
-    tags: ["**"]
+  push: {}
   pull_request: {}
   workflow_dispatch:
     inputs:
