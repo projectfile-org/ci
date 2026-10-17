@@ -69,8 +69,8 @@ jobs:
       - run: echo artifacts-are-ok
   binaries-are-built:
     runs-on: ubuntu-26.04
-    needs: ["inputs-are-ok"]
-    if: ${{ !cancelled() && needs.inputs-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["inputs-are-ok", "release-tag"]
+    if: ${{ !cancelled() && needs.inputs-are-ok.result == 'success' && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     strategy:
       matrix:
         TARGET_ARCH: ["amd64", "arm64", "riscv64"]
@@ -79,6 +79,7 @@ jobs:
           - TARGET_ARCH: "riscv64"
             TARGET_OS: "darwin"
     env:
+      M6E_RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}
       TARGET_ARCH: ${{ matrix.TARGET_ARCH }}
       TARGET_OS: ${{ matrix.TARGET_OS }}
     steps:
@@ -107,9 +108,9 @@ jobs:
           version: ${{ env.M6E_TAG }}
           run: .scripts/build-binaries.sh
           env: |-
+            M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
             TARGET_ARCH=${{ matrix.TARGET_ARCH }}
             TARGET_OS=${{ matrix.TARGET_OS }}
-            GITHUB_REF_NAME
             GOARCH
             GOOS
             GOPROXY
@@ -132,10 +133,16 @@ jobs:
     if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.gsa.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
       - run: echo binaries-are-ok
+  binaries-are-ready:
+    runs-on: ubuntu-26.04
+    needs: ["binaries-are-ok", "binaries-are-signed", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-ok.result == 'success' && (needs.binaries-are-signed.result == 'success' || (needs.binaries-are-signed.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - run: echo binaries-are-ready
   binaries-are-signed:
     runs-on: ubuntu-26.04
-    needs: ["binaries-are-ok"]
-    if: ${{ !cancelled() && needs.binaries-are-ok.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    needs: ["binaries-are-ok", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-ok.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       M6E_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       M6E_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -189,14 +196,14 @@ jobs:
           overwrite: true
   binaries-are-torrented:
     runs-on: ubuntu-26.04
-    needs: ["binaries-are-signed"]
-    if: ${{ !cancelled() && needs.binaries-are-signed.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    needs: ["binaries-are-ready", "binaries-are-signed", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-ready.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     steps:
       - run: echo binaries-are-torrented
   binaries-torrent-is-verified:
     runs-on: ubuntu-26.04
-    needs: ["binaries-are-torrented"]
-    if: ${{ !cancelled() && needs.binaries-are-torrented.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    needs: ["binaries-are-torrented", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-torrented.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     steps:
       - run: echo binaries-torrent-is-verified
   container-is-diagnosed:
@@ -321,8 +328,10 @@ jobs:
       - run: echo fetched
   go-install-is-ok:
     runs-on: ubuntu-26.04
-    needs: ["release-is-published"]
-    if: ${{ !cancelled() && needs.release-is-published.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    needs: ["release-is-published", "release-tag"]
+    if: ${{ !cancelled() && needs.release-is-published.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    env:
+      M6E_RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -338,10 +347,13 @@ jobs:
           # 0. It rides the ACTION because that decode already lives there, so one code path
           # behaves the same on every forge however each implements the step-level knob.
           advisory: "true"
-          run: .makefile/library/scripts/go-install-is-ok.sh "${{ github.ref_name }}" pf-ci projectfile.org/projectfile/ci/v2/cmd/pf-ci
+          run: .makefile/library/scripts/go-install-is-ok.sh "${M6E_RELEASE_TAG}" pf-ci projectfile.org/projectfile/ci/v2/cmd/pf-ci
+          env: |-
+            M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
   gpg-is-ready:
     runs-on: ubuntu-26.04
-    if: (startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))
+    needs: ["release-tag"]
+    if: ${{ !cancelled() && needs.release-tag.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
     env:
       M6E_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       M6E_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -400,8 +412,8 @@ jobs:
             GOOS
   image-has-sbom:
     runs-on: ubuntu-26.04
-    needs: ["image-is-built"]
-    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    needs: ["image-is-built", "release-tag"]
+    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     strategy:
       matrix:
         M6E_ARCH: ["amd64", "arm64", "riscv64"]
@@ -435,11 +447,11 @@ jobs:
           overwrite: true
   image-is-built:
     runs-on: ${{ matrix.M6E_RUNNER }}
-    needs: ["fetched", "inputs-are-ok"]
+    needs: ["fetched", "inputs-are-ok", "release-tag"]
     permissions:
       actions: write
       contents: read
-    if: ${{ !cancelled() && needs.fetched.result == 'success' && needs.inputs-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    if: ${{ !cancelled() && needs.fetched.result == 'success' && needs.inputs-are-ok.result == 'success' && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     concurrency:
       group: build-${{ github.repository }}-${{ toJSON(matrix) }}
       cancel-in-progress: false
@@ -475,6 +487,7 @@ jobs:
       M6E_NEAR_CACHE_HOST: ${{ inputs.M6E_NEAR_CACHE_HOST || vars.M6E_NEAR_CACHE_HOST }}
       M6E_NEAR_CACHE_PORT: ${{ inputs.M6E_NEAR_CACHE_PORT || vars.M6E_NEAR_CACHE_PORT }}
       SOURCE_DOCKER_REGISTRY: ${{ inputs.SOURCE_DOCKER_REGISTRY || vars.SOURCE_DOCKER_REGISTRY }}
+      M6E_VERSION: ${{ needs.release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -510,6 +523,7 @@ jobs:
             M6E_NEAR_CACHE_HOST=${{ inputs.M6E_NEAR_CACHE_HOST || vars.M6E_NEAR_CACHE_HOST }}
             M6E_NEAR_CACHE_PORT=${{ inputs.M6E_NEAR_CACHE_PORT || vars.M6E_NEAR_CACHE_PORT }}
             M6E_PROJECT=ci
+            M6E_VERSION=${{ needs.release-tag.outputs.tag }}
             SOURCE_DOCKER_REGISTRY=${{ inputs.SOURCE_DOCKER_REGISTRY || vars.SOURCE_DOCKER_REGISTRY }}
           mounts: fetch=/fetch
           pf-cli-image: ${{ vars.PF_CLI_IMAGE || format('{0}/cli:{1}', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/projectfile-org', env.M6E_TAG) }}
@@ -618,8 +632,8 @@ jobs:
           overwrite: true
   image-is-signed:
     runs-on: ubuntu-26.04
-    needs: ["publish-image"]
-    if: ${{ !cancelled() && needs.publish-image.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    needs: ["publish-image", "release-tag"]
+    if: ${{ !cancelled() && needs.publish-image.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     steps:
       - run: echo image-is-signed
   images-are-ok:
@@ -630,8 +644,8 @@ jobs:
       - run: echo images-are-ok
   inputs-are-ok:
     runs-on: ubuntu-26.04
-    needs: ["documentation-is-ok", "gpg-is-ready", "projectfile-is-ok", "signing-is-ready", "source-is-ok", "tag-is-on-stable"]
-    if: ${{ !cancelled() && needs.documentation-is-ok.result == 'success' && (needs.gpg-is-ready.result == 'success' || (needs.gpg-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))))) && needs.projectfile-is-ok.result == 'success' && (needs.signing-is-ready.result == 'success' || (needs.signing-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))))) && needs.source-is-ok.result == 'success' && (needs.tag-is-on-stable.result == 'success' || (needs.tag-is-on-stable.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["documentation-is-ok", "gpg-is-ready", "projectfile-is-ok", "release-tag", "signing-is-ready", "source-is-ok"]
+    if: ${{ !cancelled() && needs.documentation-is-ok.result == 'success' && (needs.gpg-is-ready.result == 'success' || (needs.gpg-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.projectfile-is-ok.result == 'success' && needs.release-tag.result == 'success' && (needs.signing-is-ready.result == 'success' || (needs.signing-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.source-is-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
       - run: echo inputs-are-ok
   projectfile-is-ok:
@@ -667,11 +681,11 @@ jobs:
           run: pf-cli validate
   publish-image:
     runs-on: ubuntu-26.04
-    needs: ["image-has-sbom", "image-is-built", "ready-to-publish", "signing-is-ready"]
+    needs: ["image-has-sbom", "image-is-built", "ready-to-publish", "release-tag", "signing-is-ready"]
     permissions:
       contents: read
       packages: write
-    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && needs.image-is-built.result == 'success' && needs.ready-to-publish.result == 'success' && needs.signing-is-ready.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))) }}
+    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.image-is-built.result == 'success' && needs.ready-to-publish.result == 'success' && needs.release-tag.result == 'success' && needs.signing-is-ready.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
     strategy:
       matrix:
         M6E_PUBLISH_SINK: ["ghcr"]
@@ -727,17 +741,17 @@ jobs:
         with:
           name: image-riscv64-${{ github.run_id }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: (startsWith(github.ref, 'refs/tags/')) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
+        if: (needs.release-tag.outputs.tag != '') && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
         with:
           name: syft-sbom-tar-amd64-${{ github.run_id }}
           path: reports
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: (startsWith(github.ref, 'refs/tags/')) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
+        if: (needs.release-tag.outputs.tag != '') && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
         with:
           name: syft-sbom-tar-arm64-${{ github.run_id }}
           path: reports
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: (startsWith(github.ref, 'refs/tags/')) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
+        if: (needs.release-tag.outputs.tag != '') && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_HAS_SBOM != 'true' && vars.CI_SKIP_SYFT_SBOM_TAR != 'true'
         with:
           name: syft-sbom-tar-riscv64-${{ github.run_id }}
           path: reports
@@ -756,11 +770,11 @@ jobs:
           # The arches this scope may publish, the same list the per-arch downloads above honour
           only-arches: ${{ vars.CI_ONLY_M6E_ARCH }}
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}
-          version: ${{ github.ref_name }}
+          version: ${{ needs.release-tag.outputs.tag || github.ref_name }}
           # The branch this run is on, empty on a tag. Non-empty collapses the cascade to
           # one `latest-<branch>` tag on the primary sink, so a branch build is testable
           # without a tag and without moving anything a consumer floats on.
-          preview: ${{ github.ref_type == 'branch' && github.ref_name || '' }}
+          preview: ${{ needs.release-tag.outputs.tag == '' && github.ref_type == 'branch' && github.ref_name || '' }}
           # The trunk branch names, so the action can tell a trunk push (`edge`) from a
           # feature-branch one (`latest-<branch>`) — `preview` above carries both.
           primary: dev
@@ -785,13 +799,13 @@ jobs:
           # place the archive goes, so a registry refusing a push fails only its own.
           sink: ${{ matrix.M6E_PUBLISH_SINK }}
       - name: cosign-key-file-attest
-        if: (startsWith(github.ref, 'refs/tags/')) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_KEY_FILE_ATTEST != 'true'
+        if: (needs.release-tag.outputs.tag != '') && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_KEY_FILE_ATTEST != 'true'
         run: .makefile/b19/scripts/cosign-key-file.sh
       - name: cosign-key-file-sign
-        if: (startsWith(github.ref, 'refs/tags/')) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_KEY_FILE_SIGN != 'true'
+        if: (needs.release-tag.outputs.tag != '') && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_KEY_FILE_SIGN != 'true'
         run: .makefile/b19/scripts/cosign-key-file.sh
       - name: cosign-sbom-attest
-        if: (startsWith(github.ref, 'refs/tags/')) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_SBOM_ATTEST != 'true'
+        if: (needs.release-tag.outputs.tag != '') && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_ATTESTED != 'true' && vars.CI_SKIP_COSIGN_SBOM_ATTEST != 'true'
         uses: projectfile-org/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
@@ -800,7 +814,7 @@ jobs:
           env: |-
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
       - name: cosign-sign
-        if: (startsWith(github.ref, 'refs/tags/')) && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_SIGN != 'true'
+        if: (needs.release-tag.outputs.tag != '') && (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_SIGNED != 'true' && vars.CI_SKIP_COSIGN_SIGN != 'true'
         uses: projectfile-org/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
@@ -810,8 +824,8 @@ jobs:
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
   published:
     runs-on: ubuntu-26.04
-    needs: ["binaries-torrent-is-verified", "go-install-is-ok", "image-has-sbom", "image-is-signed", "publish-image", "ready-to-publish", "release-is-dispatched", "release-is-published", "release-notes-are-published"]
-    if: ${{ !cancelled() && (needs.binaries-torrent-is-verified.result == 'success' || (needs.binaries-torrent-is-verified.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.go-install-is-ok.result == 'success' || (needs.go-install-is-ok.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.image-is-signed.result == 'success' || (needs.image-is-signed.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.publish-image.result == 'success' || (needs.publish-image.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))))) && needs.ready-to-publish.result == 'success' && (needs.release-is-dispatched.result == 'success' || (needs.release-is-dispatched.result == 'skipped' && !(startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/dev'))) && (needs.release-is-published.result == 'success' || (needs.release-is-published.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && (needs.release-notes-are-published.result == 'success' || (needs.release-notes-are-published.result == 'skipped' && !(startsWith(github.ref, 'refs/tags/')))) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["binaries-torrent-is-verified", "go-install-is-ok", "image-has-sbom", "image-is-signed", "publish-image", "ready-to-publish", "release-is-published", "release-notes-are-published", "release-tag"]
+    if: ${{ !cancelled() && (needs.binaries-torrent-is-verified.result == 'success' || (needs.binaries-torrent-is-verified.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.go-install-is-ok.result == 'success' || (needs.go-install-is-ok.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-is-signed.result == 'success' || (needs.image-is-signed.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.publish-image.result == 'success' || (needs.publish-image.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.ready-to-publish.result == 'success' && (needs.release-is-published.result == 'success' || (needs.release-is-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.release-notes-are-published.result == 'success' || (needs.release-notes-are-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
       - run: echo published
   ready-to-publish:
@@ -820,60 +834,16 @@ jobs:
     if: ${{ !cancelled() && needs.artifacts-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
       - run: echo ready-to-publish
-  release-is-dispatched:
-    runs-on: ubuntu-26.04
-    needs: ["ready-to-publish"]
-    permissions:
-      actions: write
-    if: ${{ !cancelled() && needs.ready-to-publish.result == 'success' && (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/dev') }}
-    env:
-      M6E_STABLE_BRANCH: main
-      M6E_TAG_PREFIX: v
-      M6E_DISPATCH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: true
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        with:
-          name: build-binaries-amd64-linux-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        with:
-          name: build-binaries-amd64-darwin-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        with:
-          name: build-binaries-arm64-linux-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        with:
-          name: build-binaries-arm64-darwin-${{ github.run_id }}
-          path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        with:
-          name: build-binaries-riscv64-linux-${{ github.run_id }}
-          path: dist
-      - name: release-dispatch
-        if: vars.CI_SKIP_RELEASE_IS_DISPATCHED != 'true' && vars.CI_SKIP_RELEASE_DISPATCH != 'true'
-        run: .makefile/core/scripts/release-dispatch.sh published.yaml
   release-is-published:
     runs-on: ubuntu-26.04
-    needs: ["binaries-are-ok", "binaries-are-torrented", "image-is-signed", "publish-image"]
+    needs: ["binaries-are-ready", "binaries-are-torrented", "image-is-signed", "publish-image", "release-tag"]
     permissions:
       contents: write
-    if: ${{ !cancelled() && needs.binaries-are-ok.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.image-is-signed.result == 'success' && needs.publish-image.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    if: ${{ !cancelled() && needs.binaries-are-ready.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.image-is-signed.result == 'success' && needs.publish-image.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
+      M6E_RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}
       RELEASE_PATH: dist/pf-ci
-      RELEASE_TAG: ${{ github.ref_name }}
       RELEASE_TARGET: main
-      RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -915,11 +885,12 @@ jobs:
         uses: projectfile-org/actions/gh-release@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
   release-notes-are-published:
     runs-on: ubuntu-26.04
-    needs: ["release-is-published"]
+    needs: ["release-is-published", "release-tag"]
     permissions:
       contents: write
-    if: ${{ !cancelled() && needs.release-is-published.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}
+    if: ${{ !cancelled() && needs.release-is-published.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
+      M6E_RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -932,13 +903,31 @@ jobs:
         with:
           image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/bridge', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/projectfile-org') }}
           version: ${{ env.M6E_TAG }}
-          run: pf-bridge release-notes publish
+          run: pf-bridge release-notes publish --tag "${M6E_RELEASE_TAG}"
           env: |-
+            M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }}
             GITHUB_API_URL
-            GITHUB_REF_NAME
             GITHUB_REPOSITORY
             GITHUB_SERVER_URL
+  release-tag:
+    runs-on: ubuntu-26.04
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    outputs:
+      tag: ${{ steps.release-tag-detect.outputs.tag }}
+    env:
+      M6E_STABLE_BRANCH: main
+      M6E_TAG_PREFIX: v
+      M6E_FETCH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: release-tag-detect
+        id: release-tag-detect
+        if: vars.CI_SKIP_RELEASE_TAG != 'true' && vars.CI_SKIP_RELEASE_TAG_DETECT != 'true'
+        run: .makefile/core/scripts/release-tag.sh
   secrets-ready:
     runs-on: ubuntu-26.04
     needs: ["image-is-built"]
@@ -947,7 +936,8 @@ jobs:
       - run: echo secrets-ready
   signing-is-ready:
     runs-on: ubuntu-26.04
-    if: (startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))
+    needs: ["release-tag"]
+    if: ${{ !cancelled() && needs.release-tag.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
     env:
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
       COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -1268,17 +1258,3 @@ jobs:
           image: ${{ vars.IGNORELINT_IMAGE || format('{0}/ignorelint', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
           run: ignorelint
-  tag-is-on-stable:
-    runs-on: ubuntu-26.04
-    if: startsWith(github.ref, 'refs/tags/')
-    env:
-      M6E_STABLE_BRANCH: main
-      M6E_FETCH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: true
-          persist-credentials: false
-      - name: tag-on-stable-check
-        if: vars.CI_SKIP_TAG_IS_ON_STABLE != 'true' && vars.CI_SKIP_TAG_ON_STABLE_CHECK != 'true'
-        run: .makefile/core/scripts/tag-is-on-stable.sh
