@@ -619,9 +619,11 @@ func newFlagSet(name string) (*flag.FlagSet, *opts, bool) {
 }
 
 func subUsage(w io.Writer, name string) {
-	_, _ = fmt.Fprintf(w, "Usage: pf-ci %s [flags]\n", name)
-	// print static flag list
-	_, _ = fmt.Fprint(w, "")
+	purpose := map[string]string{
+		"resolve":  "Emit the vendor-neutral job model as JSON (the template input).",
+		"generate": "Render the job model to a target’s workflow YAML, or (-check) verify the committed workflow still matches the source DAG.",
+	}
+	_, _ = fmt.Fprintf(w, "Usage: pf-ci %s [flags]\n\n%s\n", name, purpose[name])
 }
 
 func usage(w io.Writer) {
@@ -633,15 +635,20 @@ Usage:
   pf-ci help [COMMAND]
   pf-ci version
 
+Try one:
+  pf-ci resolve
+  pf-ci generate -target gha
+  pf-ci generate -target gha -check
+
+Common flags:
+  -q, -quiet           Mute progress lines; warnings, errors and the verdict still print.
+  -verbose             Show operational log lines; also PF_CLI_VERBOSE=1.
+
 resolve   Emit the vendor-neutral job model as JSON (the template input).
 generate  Render the job model to a target’s workflow YAML, or (-check) verify
           the committed workflow still matches the source DAG.
 help      Print this help, or one command’s flags (also: pf-ci COMMAND -h).
 version   Print the resolver version (the codegen provenance stamp).
-
-Flags resolve and generate share:
-  -q, -quiet           Mute progress lines; warnings, errors and the verdict still print.
-  -verbose             Show operational log lines; also PF_CLI_VERBOSE=1.
 
 Environment:
   PF_CI_WORKFLOW_EXT   Committed-workflow file extension, ".yaml" or ".yml"
@@ -649,6 +656,11 @@ Environment:
                        form; m6e’s make act-* derives its default from the same
                        var, so one knob keeps the generator and consumer in sync.
   PF_CLI_VERBOSE        Same effect as -verbose, for a run that cannot pass flags.
+
+Docs:   https://projectfile.org
+Issues: https://github.com/projectfile-org/ci/issues
+
+Run pf-ci --help for every command and flag.
 `)
 }
 
