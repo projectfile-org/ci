@@ -3565,18 +3565,21 @@ func TestStableBranchReleases(t *testing.T) {
 	const stable = "main"
 	dispatch := &DispatchView{}
 	for _, tc := range []struct {
-		name   string
-		in     OnView
-		stable string
-		want   OnView
+		name    string
+		in      OnView
+		stable  string
+		fromRun bool
+		want    OnView
 	}{
-		{"broad", OnView{PushAny: true, PullRequest: true, Dispatch: dispatch}, stable, OnView{PushBranches: []string{"**"}, PullRequest: true, Dispatch: dispatch}},
-		{"narrowed", OnView{PushBranches: []string{"dev"}, PushTags: true, Dispatch: dispatch}, stable, OnView{PushBranches: []string{"dev", stable}, Dispatch: dispatch}},
-		{"tags-only", OnView{PushTags: true}, stable, OnView{PushBranches: []string{stable}}},
-		{"no-dispatch", OnView{PushAny: true}, stable, OnView{PushBranches: []string{"**"}}},
-		{"no-stable", OnView{PushAny: true, Dispatch: dispatch}, "", OnView{PushAny: true, Dispatch: dispatch}},
+		{"broad", OnView{PushAny: true, PullRequest: true, Dispatch: dispatch}, stable, true, OnView{PushBranches: []string{"**"}, PullRequest: true, Dispatch: dispatch}},
+		{"narrowed", OnView{PushBranches: []string{"dev"}, PushTags: true, Dispatch: dispatch}, stable, true, OnView{PushBranches: []string{"dev", stable}, Dispatch: dispatch}},
+		{"tags-only", OnView{PushTags: true}, stable, true, OnView{PushBranches: []string{stable}}},
+		{"no-dispatch", OnView{PushAny: true}, stable, true, OnView{PushBranches: []string{"**"}}},
+		{"dispatched-tag-runs", OnView{PushAny: true, Dispatch: dispatch}, stable, false, OnView{PushBranches: []string{"**"}, Dispatch: dispatch}},
+		{"tag-pushes-kept", OnView{PushAny: true}, stable, false, OnView{PushAny: true}},
+		{"no-stable", OnView{PushAny: true, Dispatch: dispatch}, "", true, OnView{PushAny: true, Dispatch: dispatch}},
 	} {
-		if got := stableReleases(tc.in, tc.stable); !reflect.DeepEqual(got, tc.want) {
+		if got := stableReleases(tc.in, tc.stable, tc.fromRun); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
 		}
 	}
@@ -3626,8 +3629,9 @@ func TestStableBranchReleasesFromItsOwnRun(t *testing.T) {
 	}
 	st2, _ := ci.Parse([]byte(`{"tools": {"publish": {"run": "p"}}, "nodes": {"published": {"goal": true, "when": {"events": ["tag"]}, "needs": {"publish": true}}}}`))
 	rm2, _ := resolve.Resolve(st2)
-	if _, err := Workflow(Build(rm2, st2, &ci.Build{StableBranch: "main"}), Targets[TargetGHA], ci.Platform{}); err == nil {
-		t.Errorf("a stable branch without a %q node must fail the render", ReleaseTagNode)
+	old, err := Workflow(Build(rm2, st2, &ci.Build{StableBranch: "main"}), Targets[TargetGHA], ci.Platform{})
+	if err != nil || !strings.Contains(string(old), "refs/tags/") || strings.Contains(string(old), ReleaseTagEnv) {
+		t.Errorf("a stable branch without a %q node keeps its tag runs: err=%v\n%s", ReleaseTagNode, err, old)
 	}
 }
 

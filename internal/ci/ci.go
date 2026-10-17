@@ -983,6 +983,8 @@ type Build struct {
 	PrimaryBranches []string
 	// StableBranch is org.projectfile.release.stable-branch: the branch whose push releases the tag its commit carries; empty => none.
 	StableBranch string
+	// ReleaseTag is set at render when the stable branch run releases through a release-tag node; false => tag runs.
+	ReleaseTag bool
 	// Naming is the tag rules org.projectfile.image declares (heads, variant); nil => the publish action's own cascade.
 	Naming *ImageNaming
 }

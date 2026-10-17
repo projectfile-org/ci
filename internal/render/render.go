@@ -732,9 +732,9 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnVi
 }
 
 // stableReleases swaps tag pushes for the stable branch push, the run that releases the tag its commit carries.
-func stableReleases(ov OnView, stable string) OnView {
-	if stable == "" || (!ov.PushAny && !ov.PushTags) {
-		genlog.Debug("tag pushes kept", "stable", stable, "tags", ov.PushAny || ov.PushTags)
+func stableReleases(ov OnView, stable string, fromRun bool) OnView {
+	if stable == "" || (!fromRun && ov.Dispatch == nil) || (!ov.PushAny && !ov.PushTags) {
+		genlog.Debug("tag pushes kept", "stable", stable, "from_run", fromRun, "dispatch", ov.Dispatch != nil, "tags", ov.PushAny || ov.PushTags)
 		return ov
 	}
 	if ov.PushAny {
@@ -1307,7 +1307,7 @@ const releaseTagOutput = "needs." + ReleaseTagNode + ".outputs.tag"
 
 // releaseTagValue is the ReleaseTagEnv value: the detected tag on a stable-branch project, else the pushed tag ref.
 func releaseTagValue(b *ci.Build) string {
-	if b != nil && b.StableBranch != "" {
+	if b != nil && b.ReleaseTag {
 		return "${{ " + releaseTagOutput + " }}"
 	}
 	return "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
@@ -1315,7 +1315,7 @@ func releaseTagValue(b *ci.Build) string {
 
 // releaseIf is the run-time test that this run releases.
 func releaseIf(b *ci.Build) string {
-	if b != nil && b.StableBranch != "" {
+	if b != nil && b.ReleaseTag {
 		return releaseTagOutput + " != ''"
 	}
 	return "github.ref_type == 'tag'"
@@ -1323,7 +1323,7 @@ func releaseIf(b *ci.Build) string {
 
 // ciContext is ciContextExpr with a stable-branch project's version and preview read off the detected tag.
 func ciContext(b *ci.Build, key string) string {
-	if b == nil || b.StableBranch == "" {
+	if b == nil || !b.ReleaseTag {
 		return ciContextExpr[key]
 	}
 	switch key {
@@ -3179,7 +3179,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 			}
 		}
 		// a stable-branch build stamps the tag its commit carries, empty leaving the action's own resolver
-		if b != nil && b.StableBranch != "" && !slices.Contains(names, ReleaseVersionArg) {
+		if b != nil && b.ReleaseTag && !slices.Contains(names, ReleaseVersionArg) {
 			step.Env = append(step.Env, EnvVar{Key: ReleaseVersionArg, Value: "${{ " + releaseTagOutput + " }}"})
 			names = append(names, ReleaseVersionArg)
 		}
@@ -3477,7 +3477,14 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		}
 	}
 
-	stable := b != nil && b.StableBranch != ""
+	if _, ok := st.Nodes[ReleaseTagNode]; ok && b != nil && b.StableBranch != "" {
+		rb := *b
+		rb.ReleaseTag, b = true, &rb
+	}
+	stable := b != nil && b.ReleaseTag
+	if b != nil && b.StableBranch != "" {
+		genlog.Decision("release_from_run", fmt.Sprint(stable), "org.projectfile.ci.nodes."+ReleaseTagNode, "stable="+b.StableBranch)
+	}
 	if stable {
 		for i := range nodes.Views {
 			nodes.Views[i].When = releaseTokens(nodes.Views[i].When)
@@ -3879,7 +3886,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// fires for, gated by its own always()+var `if:`.
 	on := buildOn(jobs, triggers, goalScope, primaryBranches(b))
 	if b != nil {
-		on = stableReleases(on, b.StableBranch)
+		on = stableReleases(on, b.StableBranch, b.ReleaseTag)
 	}
 	if b != nil && b.Events != nil {
 		// Stamp the goal into every tool-level emission before the notify job joins them:
