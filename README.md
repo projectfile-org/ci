@@ -63,7 +63,7 @@ docker pull kiota.ch/projectfile/ci:latest
 Install with the Go toolchain:
 
 ```sh
-go install projectfile.org/projectfile/ci/v2/cmd/pf-ci@latest
+go install projectfile.org/projectfile/ci/v3/cmd/pf-ci@latest
 ```
 
 Then run `pf-ci --help`.

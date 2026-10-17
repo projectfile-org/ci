@@ -347,7 +347,7 @@ jobs:
           # 0. It rides the ACTION because that decode already lives there, so one code path
           # behaves the same on every forge however each implements the step-level knob.
           advisory: "true"
-          run: .makefile/library/scripts/go-install-is-ok.sh "${M6E_RELEASE_TAG}" pf-ci projectfile.org/projectfile/ci/v2/cmd/pf-ci
+          run: .makefile/library/scripts/go-install-is-ok.sh "${M6E_RELEASE_TAG}" pf-ci projectfile.org/projectfile/ci/v3/cmd/pf-ci
           env: |-
             M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
   gpg-is-ready:

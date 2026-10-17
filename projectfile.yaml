@@ -109,7 +109,7 @@ org:
     artifacts:
       go-binary:
         command: pf-ci
-        module: projectfile.org/projectfile/ci/v2/cmd/pf-ci
+        module: projectfile.org/projectfile/ci/v3/cmd/pf-ci
         kind: binary
         path: dist/pf-ci
         operating-system: [linux, darwin]

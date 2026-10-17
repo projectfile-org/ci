@@ -13,4 +13,4 @@ Run `pf-ci resolve` to emit the job model, or `pf-ci generate -target gha|forgej
 - `PF_CI_WORKFLOW_EXT` controls `.yaml` vs `.yml`.
 - `docs/how-to/CLI.md` lists every flag and exit code.
 
-Install: `go install projectfile.org/projectfile/ci/v2/cmd/pf-ci@latest`, or `make install-binary` in a checkout.
+Install: `go install projectfile.org/projectfile/ci/v3/cmd/pf-ci@latest`, or `make install-binary` in a checkout.

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-module projectfile.org/projectfile/ci/v2
+module projectfile.org/projectfile/ci/v3
 
 go 1.27.2
 

@@ -22,9 +22,9 @@ import (
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
 	"kiota.ch/projectfile/core/v2/pkg/netfetch"
 	"kiota.ch/projectfile/core/v2/pkg/projectfile"
-	"projectfile.org/projectfile/ci/v2/internal/ci"
-	"projectfile.org/projectfile/ci/v2/internal/render"
-	"projectfile.org/projectfile/ci/v2/internal/resolve"
+	"projectfile.org/projectfile/ci/v3/internal/ci"
+	"projectfile.org/projectfile/ci/v3/internal/render"
+	"projectfile.org/projectfile/ci/v3/internal/resolve"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"

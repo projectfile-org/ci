@@ -20,8 +20,8 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"projectfile.org/projectfile/ci/v2/internal/ci"
-	"projectfile.org/projectfile/ci/v2/internal/render"
+	"projectfile.org/projectfile/ci/v3/internal/ci"
+	"projectfile.org/projectfile/ci/v3/internal/render"
 )
 
 // testGoalReady is the single goal node fixture below (goconst).

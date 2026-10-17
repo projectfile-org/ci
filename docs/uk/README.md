@@ -65,7 +65,7 @@ docker pull kiota.ch/projectfile/ci:latest
 Встановіть за допомогою інструментів Go:
 
 ```sh
-go install projectfile.org/projectfile/ci/v2/cmd/pf-ci@latest
+go install projectfile.org/projectfile/ci/v3/cmd/pf-ci@latest
 ```
 
 Потім виконайте `pf-ci --help`.
