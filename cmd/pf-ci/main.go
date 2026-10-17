@@ -27,6 +27,8 @@ import (
 	"projectfile.org/projectfile/ci/v2/internal/resolve"
 
 	"github.com/spf13/cobra"
+
+	"charm.land/lipgloss/v2"
 )
 
 var version = devVersion
@@ -627,7 +629,9 @@ func subUsage(w io.Writer, name string) {
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `pf-ci — lower org.projectfile.ci to vendor CI workflows
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render("pf-ci")
+	_, _ = fmt.Fprintf(w, "%s — lower org.projectfile.ci to vendor CI workflows", title)
+	_, _ = fmt.Fprint(w, `
 
 Usage:
   pf-ci resolve  [-pf PATH] [-verbose|-q]
