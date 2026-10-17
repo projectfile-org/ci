@@ -981,7 +981,7 @@ type Build struct {
 	// applies DefaultPrimaryBranches; it is empty far more often than not, because
 	// nothing in the fleet writes that field yet.
 	PrimaryBranches []string
-	// StableBranch is org.projectfile.release.stable-branch: the branch whose push releases its tagged head; empty => none.
+	// StableBranch is org.projectfile.release.stable-branch: the branch whose push releases the tag its commit carries; empty => none.
 	StableBranch string
 	// Naming is the tag rules org.projectfile.image declares (heads, variant); nil => the publish action's own cascade.
 	Naming *ImageNaming
@@ -1763,7 +1763,7 @@ func (r *Reader) primaryBranches() []string {
 	return nil
 }
 
-// stableBranch reads the branch whose push releases the tag at its head, once release.stable-dispatch opts in.
+// stableBranch reads the branch whose push releases the tag its commit carries, once release.stable-dispatch opts in.
 func (r *Reader) stableBranch() string {
 	raw, ok := interp.ExpandIn(r.doc, "${org.projectfile.release.stable-branch}", imageScope)
 	branch := strings.TrimSpace(raw)
@@ -1771,7 +1771,7 @@ func (r *Reader) stableBranch() string {
 		return ""
 	}
 	if on, _ := interp.ExpandIn(r.doc, "${org.projectfile.release.stable-dispatch}", imageScope); strings.TrimSpace(on) != "true" {
-		genlog.Decision("stable_branch", "<none>", "org.projectfile.release.stable-dispatch", "stable="+branch+" dispatches no tag runs")
+		genlog.Decision("stable_branch", "<none>", "org.projectfile.release.stable-dispatch", "stable="+branch+" releases from tag pushes")
 		return ""
 	}
 	genlog.Decision("stable_branch", branch, "org.projectfile.release.stable-branch", "")

@@ -498,6 +498,8 @@ func eventExpr(e string, primary []string) string {
 	switch e {
 	case ci.EventTag:
 		return "startsWith(github.ref, 'refs/tags/')"
+	case eventReleaseTag:
+		return releaseTagOutput + " != ''"
 	case eventAnyBranch:
 		return "startsWith(github.ref, 'refs/heads/')"
 	case ci.EventPreview:
@@ -558,6 +560,9 @@ func hasEvent(events []string, want string) bool {
 // outside the closed WhenEvents vocabulary, so validEvent rejects it and no document can
 // reach eventExpr's arm for it by spelling it.
 const eventAnyBranch = "any-branch"
+
+// eventReleaseTag is the INTERNAL token `tag` becomes on a stable-branch project: the commit carries a release tag.
+const eventReleaseTag = "release-tag"
 
 // foldBranchTokens replaces the `preview`+`primary` PAIR with the one predicate they
 // partition: preview is "a branch NOT in the set", primary is "a branch IN the set", so
@@ -662,7 +667,7 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnVi
 	fold := func(events []string) {
 		for _, e := range events {
 			switch e {
-			case ci.EventTag:
+			case ci.EventTag, eventReleaseTag:
 				tags = true
 			case ci.EventPreview:
 				branchesAll = true
@@ -726,14 +731,18 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnVi
 	return ov
 }
 
-// stableReleases drops tag pushes from a dispatchable surface: the stable branch run dispatches its own tag.
+// stableReleases swaps tag pushes for the stable branch push, the run that releases the tag its commit carries.
 func stableReleases(ov OnView, stable string) OnView {
-	if stable == "" || ov.Dispatch == nil || (!ov.PushAny && !ov.PushTags) {
-		genlog.Debug("tag pushes kept", "stable", stable, "dispatch", ov.Dispatch != nil, "tags", ov.PushAny || ov.PushTags)
+	if stable == "" || (!ov.PushAny && !ov.PushTags) {
+		genlog.Debug("tag pushes kept", "stable", stable, "tags", ov.PushAny || ov.PushTags)
 		return ov
 	}
 	if ov.PushAny {
 		ov.PushAny, ov.PushBranches = false, []string{"**"}
+	}
+	if ov.PushTags && !slices.Contains(ov.PushBranches, "**") && !slices.Contains(ov.PushBranches, stable) {
+		ov.PushBranches = append(ov.PushBranches, stable)
+		sort.Strings(ov.PushBranches)
 	}
 	ov.PushTags = false
 	genlog.Debug("tag pushes left to the stable branch", "stable", stable, "branches", ov.PushBranches)
@@ -839,7 +848,7 @@ func formatDefault(typ, def string) string {
 // A `file:` ref or a literal that still carries {<axis>} placeholders lowers each
 // to ${{ matrix.<axis> }} (substAxes) against THIS job's axes so every matrix cell
 // reads its OWN file / names its OWN image (the per-cell pin).
-func lowerBuildArg(ba ci.BuildArg, axes []ci.Axis) (string, *FileRead) {
+func lowerBuildArg(ba ci.BuildArg, axes []ci.Axis, b *ci.Build) (string, *FileRead) {
 	switch ba.Source {
 	case ci.SourceLiteral:
 		// An IN-document `${pf.path}` value, resolved to a literal by ci.Load's
@@ -849,7 +858,7 @@ func lowerBuildArg(ba ci.BuildArg, axes []ci.Axis) (string, *FileRead) {
 	case ci.SourceVar:
 		return VarRef(ba.Ref), nil
 	case ci.SourceCI:
-		return ciContextExpr[ba.Ref], nil
+		return ciContext(b, ba.Ref), nil
 	case ci.SourceFile:
 		return "${{ env." + ba.Name + " }}", &FileRead{Name: ba.Name, Path: substAxes(ba.Ref, axes)}
 	}
@@ -1284,6 +1293,48 @@ const ImageFullnameEnv = "M6E_IMAGE_FULLNAME"
 // M6E_IMAGE_PUBLISHED (container.mk).
 const ImagePublishedEnv = "M6E_IMAGE_PUBLISHED"
 
+// ReleaseTagEnv (M6E_RELEASE_TAG) is the resolver-computed release tag of the run, empty when it releases nothing.
+const ReleaseTagEnv = "M6E_RELEASE_TAG"
+
+// ReleaseVersionArg (M6E_VERSION) is the build arg a container build stamps as its version.
+const ReleaseVersionArg = "M6E_VERSION"
+
+// ReleaseTagNode is the node a stable-branch project declares to output the release tag its commit carries.
+const ReleaseTagNode = "release-tag"
+
+// releaseTagOutput reads the tag ReleaseTagNode found, empty on an untagged commit.
+const releaseTagOutput = "needs." + ReleaseTagNode + ".outputs.tag"
+
+// releaseTagValue is the ReleaseTagEnv value: the detected tag on a stable-branch project, else the pushed tag ref.
+func releaseTagValue(b *ci.Build) string {
+	if b != nil && b.StableBranch != "" {
+		return "${{ " + releaseTagOutput + " }}"
+	}
+	return "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+}
+
+// releaseIf is the run-time test that this run releases.
+func releaseIf(b *ci.Build) string {
+	if b != nil && b.StableBranch != "" {
+		return releaseTagOutput + " != ''"
+	}
+	return "github.ref_type == 'tag'"
+}
+
+// ciContext is ciContextExpr with a stable-branch project's version and preview read off the detected tag.
+func ciContext(b *ci.Build, key string) string {
+	if b == nil || b.StableBranch == "" {
+		return ciContextExpr[key]
+	}
+	switch key {
+	case ci.CIKeyVersion:
+		return "${{ " + releaseTagOutput + " || github.ref_name }}"
+	case ci.CIKeyPreview:
+		return "${{ " + releaseTagOutput + " == '' && github.ref_type == 'branch' && github.ref_name || '' }}"
+	}
+	return ciContextExpr[key]
+}
+
 // ComposeProjectEnv / ContainerInstanceEnv are the live-stack IDENTITY contract
 // variables — DERIVED siblings of ImageFullnameEnv, not authored literals. The
 // fused compose job names its project, container, and network `ci-<basename>`
@@ -1679,6 +1730,8 @@ type EnvVar struct {
 // `guard` predicate is not lowered — see Manifest.)
 type StepView struct {
 	Name string `json:"name"`
+	// ID names the step for a job output to read, empty on every step but ReleaseTagNode's.
+	ID string `json:"id,omitempty"`
 	// If is the step's run guard, rendered verbatim as `if: <If>`. The only producer
 	// today is a tool's `when: always` (a fused-job teardown), lowered to the GHA/Forgejo
 	// `${{ always() }}` expression so a cleanup member runs even after an earlier step
@@ -2101,6 +2154,8 @@ type JobView struct {
 	// node is unconditional (empty) — it is needed on some path regardless of event.
 	Events []string `json:"when,omitempty"`
 	If     string   `json:"-"` // target `if:` expression composed from Events at render time (empty => no gate)
+	// Outputs are the job outputs its steps write, set on ReleaseTagNode only.
+	Outputs []KV `json:"outputs,omitempty"`
 	// Emit marks the SYNTHETIC lifecycle-notify job (the forge half of the events model):
 	// a webhook POST of the neutral envelope after every real job. Non-nil => this job
 	// renders via steps/emit (no checkout) and its `if:` is the always()+var gate, NOT the
@@ -2172,6 +2227,8 @@ type StepEmitView struct {
 	// step, so the goal-level "published succeeded" notification still fires — the human
 	// signal survives and only the machine-readable rebuild trigger is withheld.
 	ReleaseOnly bool
+	// ReleaseIf is the release test ReleaseOnly conjoins.
+	ReleaseIf string
 }
 
 // If gates the step on the webhook var AND on everything before it having succeeded —
@@ -2185,7 +2242,7 @@ func (e StepEmitView) If(gate string) string {
 		gate = " && (" + gate + ")"
 	}
 	if e.ReleaseOnly {
-		gate += " && github.ref_type == 'tag'"
+		gate += " && " + e.ReleaseIf
 	}
 	return "${{ success() && vars." + e.WebhookVar + " != ''" + gate + " }}"
 }
@@ -2912,6 +2969,10 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 				wantsPublishedImage = true
 				continue
 			}
+			if n == ReleaseTagEnv {
+				step.Env = append(step.Env, EnvVar{Key: ReleaseTagEnv, Value: releaseTagValue(b)})
+				continue
+			}
 			names = append(names, n)
 		}
 		sort.Strings(names)
@@ -3018,8 +3079,8 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// every tag the per-arch images took, or `latest` stays a single-arch image. Same
 	// expr as the M6E_VERSION build-arg — the version lives in ONE place (ciContextExpr).
 	if publishes {
-		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
-		step.PublishPreview = ciContextExpr[ci.CIKeyPreview]
+		step.PublishVersion = ciContext(b, ci.CIKeyVersion)
+		step.PublishPreview = ciContext(b, ci.CIKeyPreview)
 		// Per-cell: a composed ref carries `{AXIS}` verbatim, because composition
 		// never touches a token with no `$`. The same substitution the basename
 		// above gets, so a matrix cell publishes its own series to every sink.
@@ -3038,14 +3099,14 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// one absent renders no step at all — the same secure default the notify job keeps.
 	// Goal is stamped later, in Build, where the workflow's goal name is known.
 	if man.Emit != "" && b != nil && b.Events != nil {
-		step.Emit = &StepEmitView{Event: man.Emit, WebhookVar: b.Events.WebhookVar, ReleaseOnly: publishes}
+		step.Emit = &StepEmitView{Event: man.Emit, WebhookVar: b.Events.WebhookVar, ReleaseOnly: publishes, ReleaseIf: releaseIf(b)}
 	}
 	// forgejo-release gets the SAME git tag (ci:version) as oci-push, PLUS the
 	// resolved binary path (Manifest.ReleaseAssetPath, looked up Load-side from
 	// org.projectfile.artifacts). The action suffixes the path per cell and
 	// attaches it; the tag is the release title + tag. Both ride `with:` inputs.
 	if man.Action == ActionForgejoRelease {
-		step.PublishVersion = ciContextExpr[ci.CIKeyVersion]
+		step.PublishVersion = ciContext(b, ci.CIKeyVersion)
 		step.ReleaseAssetPath = man.ReleaseAssetPath
 		// No axis substitution, unlike a sink ref: a forge URL and a repository path
 		// are properties of the DESTINATION, not of the build cell.
@@ -3081,11 +3142,11 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 			}
 			seen[ba.Name] = true
 			if ba.Source == ci.SourceFile {
-				_, fr := lowerBuildArg(ba, subst)
+				_, fr := lowerBuildArg(ba, subst, b)
 				fileArgs = append(fileArgs, fr.Name+"="+fr.Path)
 				continue
 			}
-			value, _ := lowerBuildArg(ba, subst)
+			value, _ := lowerBuildArg(ba, subst, b)
 			step.Env = append(step.Env, EnvVar{Key: ba.Name, Value: value})
 			names = append(names, ba.Name)
 		}
@@ -3116,6 +3177,11 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 				step.Env = append(step.Env, EnvVar{Key: bi.Name, Value: buildInputValue(bi, b, argDefaults, matrixSet, partial, dispatchArgs)})
 				names = append(names, bi.Name)
 			}
+		}
+		// a stable-branch build stamps the tag its commit carries, empty leaving the action's own resolver
+		if b != nil && b.StableBranch != "" && !slices.Contains(names, ReleaseVersionArg) {
+			step.Env = append(step.Env, EnvVar{Key: ReleaseVersionArg, Value: "${{ " + releaseTagOutput + " }}"})
+			names = append(names, ReleaseVersionArg)
 		}
 		sort.Strings(names)
 		step.BuildArgNames = strings.Join(names, " ")
@@ -3411,6 +3477,12 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		}
 	}
 
+	stable := b != nil && b.StableBranch != ""
+	if stable {
+		for i := range nodes.Views {
+			nodes.Views[i].When = releaseTokens(nodes.Views[i].When)
+		}
+	}
 	whenByNode := map[string][]string{}
 	for _, nv := range nodes.Views {
 		whenByNode[nv.Name] = nv.When
@@ -3447,6 +3519,9 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	var goalScope []string
 	if st.GoalsExplicit && len(st.Goals) == 1 {
 		goalScope = st.Nodes[st.Goals[0]].When
+		if stable {
+			goalScope = releaseTokens(goalScope)
+		}
 	}
 	jobs := make([]JobView, 0, len(nodes.Views))
 	for _, nv := range nodes.Views {
@@ -3770,6 +3845,13 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	for i := range jobs {
 		jobs[i] = tolerateNarrowNeeds(jobs[i], whenByNode, goalScope, primaryBranches(b))
 	}
+	if stable {
+		var wired bool
+		jobs, wired = wireReleaseTag(jobs, primaryBranches(b))
+		if !wired && buildErr == nil {
+			buildErr = fmt.Errorf("org.projectfile.ci: release.stable-branch %q gates a release on a %q node this workflow does not reach", b.StableBranch, ReleaseTagNode)
+		}
+	}
 
 	// One ordering rule for the whole workflow: name-sorted (node-jobs and gates alike).
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
@@ -4006,7 +4088,8 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 			jobs[i].If = jobIf(jobs[i].Events, m.PrimaryBranches)
 		}
 		jobs[i].If = foreignPRIf(jobs[i], m.On.PullRequest)
-		if len(jobs[i].SkippableNeeds) > 0 {
+		// explicit, so GHA tests the direct needs as Forgejo does, not every ancestor
+		if len(jobs[i].Needs) > 0 && jobs[i].Emit == nil {
 			jobs[i].If = needsIf(jobs[i].Needs, jobs[i].SkippableNeeds, jobs[i].If)
 		}
 		// Fan the publish job over its destinations, per lowering. Before the env
@@ -4203,6 +4286,70 @@ func tolerateNarrowNeeds(job JobView, when map[string][]string, scope, primary [
 		genlog.Debug("job tolerates an event-skipped need", "job", job.Name, "need", n, "events", w)
 	}
 	return job
+}
+
+// releaseTokens swaps `tag` for eventReleaseTag in a copy of a stable-branch event set.
+func releaseTokens(events []string) []string {
+	out := make([]string, len(events))
+	for i, e := range events {
+		if e == ci.EventTag {
+			e = eventReleaseTag
+		}
+		out[i] = e
+	}
+	return out
+}
+
+// wireReleaseTag gives ReleaseTagNode its `tag` output and makes every job reading it need it; false when a reader has no node to need.
+func wireReleaseTag(jobs []JobView, primary []string) ([]JobView, bool) {
+	found := slices.ContainsFunc(jobs, func(j JobView) bool { return j.Name == ReleaseTagNode })
+	readers := 0
+	for i := range jobs {
+		j := &jobs[i]
+		if j.Name == ReleaseTagNode {
+			for s := range j.Steps {
+				j.Steps[s].ID = j.Steps[s].Name
+				j.Outputs = []KV{{Key: "tag", Value: "${{ steps." + j.Steps[s].Name + ".outputs.tag }}"}}
+			}
+			genlog.Debug("release tag output", "job", j.Name, "outputs", j.Outputs)
+			continue
+		}
+		if !readsReleaseTag(*j, primary) || slices.Contains(j.Needs, ReleaseTagNode) {
+			continue
+		}
+		readers++
+		j.Needs = append(j.Needs, ReleaseTagNode)
+		sort.Strings(j.Needs)
+		genlog.Debug("job needs the release tag", "job", j.Name, "needs", j.Needs)
+	}
+	genlog.Decision("release_tag", ReleaseTagNode, "org.projectfile.release.stable-branch", fmt.Sprintf("readers=%d found=%t", readers, found))
+	return jobs, found || readers == 0
+}
+
+// readsReleaseTag reports whether any expression a job renders reads releaseTagOutput.
+func readsReleaseTag(j JobView, primary []string) bool {
+	exprs := []string{jobIf(j.Events, primary)}
+	for _, e := range j.SkippableNeeds {
+		exprs = append(exprs, e)
+	}
+	for _, e := range j.Env {
+		exprs = append(exprs, e.Value)
+	}
+	for _, d := range j.Downloads {
+		exprs = append(exprs, d.EventIf)
+	}
+	for _, s := range j.Steps {
+		exprs = append(exprs, s.EventIf, s.PublishVersion, s.PublishPreview)
+		if s.Emit != nil {
+			exprs = append(exprs, s.Emit.ReleaseIf)
+		}
+	}
+	for _, e := range exprs {
+		if strings.Contains(e, releaseTagOutput) {
+			return true
+		}
+	}
+	return false
 }
 
 // subsetOf reports whether every token of a is in b.

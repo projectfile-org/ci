@@ -134,6 +134,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
 {{- define "frag/run" }}
       - name: {{ .Step.Name }}
+{{- with .Step.ID }}
+        id: {{ . }}
+{{- end }}
 {{- with .Step.Gate }}
         if: {{ . }}
 {{- end }}

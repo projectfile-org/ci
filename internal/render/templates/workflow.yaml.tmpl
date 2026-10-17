@@ -95,6 +95,12 @@ jobs:
 {{- if .If }}
     if: {{ .If }}
 {{- end }}
+{{- with .Outputs }}
+    outputs:
+{{- range . }}
+      {{ .Key }}: {{ .Value }}
+{{- end }}
+{{- end }}
 {{- with .Concurrency }}
     concurrency:
       group: {{ .Group }}

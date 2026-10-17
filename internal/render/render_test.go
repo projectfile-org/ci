@@ -3474,7 +3474,7 @@ func TestNodesMaterialiseAsGates(t *testing.T) {
 	}
 	s := string(gha)
 	// The pure-join goal renders as a bare echo gate, no checkout.
-	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)\n    steps:\n      - run: echo ready-to-publish") {
+	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    if: ${{ !cancelled() && needs.image-built.result == 'success' && needs.linted.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}\n    steps:\n      - run: echo ready-to-publish") {
 		t.Errorf("pure-join goal must render as an echo gate mirroring its needs:\n%s", s)
 	}
 	// The tool-bearing nodes render as jobs (the tools are inside them as steps).
@@ -3542,8 +3542,8 @@ func TestWhenTriggerPredicate(t *testing.T) {
 	// (a) per-job if: the tag publish node and the main release node each carry it.
 	for _, want := range []string{
 		"  publish-image:\n",
-		"    if: startsWith(github.ref, 'refs/tags/')",
-		"    if: github.ref == 'refs/heads/main'",
+		"    if: ${{ !cancelled() && needs.image-built.result == 'success' && (startsWith(github.ref, 'refs/tags/')) }}",
+		"    if: ${{ !cancelled() && needs.image-built.result == 'success' && (github.ref == 'refs/heads/main') }}",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("when workflow missing %q\n---\n%s", want, s)
@@ -3560,7 +3560,7 @@ func TestWhenTriggerPredicate(t *testing.T) {
 	}
 }
 
-// TestStableBranchReleases pins that a declared stable branch drops tag pushes from a dispatchable surface only.
+// TestStableBranchReleases pins that a declared stable branch swaps tag pushes for its own push.
 func TestStableBranchReleases(t *testing.T) {
 	const stable = "main"
 	dispatch := &DispatchView{}
@@ -3571,13 +3571,63 @@ func TestStableBranchReleases(t *testing.T) {
 		want   OnView
 	}{
 		{"broad", OnView{PushAny: true, PullRequest: true, Dispatch: dispatch}, stable, OnView{PushBranches: []string{"**"}, PullRequest: true, Dispatch: dispatch}},
-		{"narrowed", OnView{PushBranches: []string{"dev"}, PushTags: true, Dispatch: dispatch}, stable, OnView{PushBranches: []string{"dev"}, Dispatch: dispatch}},
-		{"no-dispatch", OnView{PushAny: true}, stable, OnView{PushAny: true}},
+		{"narrowed", OnView{PushBranches: []string{"dev"}, PushTags: true, Dispatch: dispatch}, stable, OnView{PushBranches: []string{"dev", stable}, Dispatch: dispatch}},
+		{"tags-only", OnView{PushTags: true}, stable, OnView{PushBranches: []string{stable}}},
+		{"no-dispatch", OnView{PushAny: true}, stable, OnView{PushBranches: []string{"**"}}},
 		{"no-stable", OnView{PushAny: true, Dispatch: dispatch}, "", OnView{PushAny: true, Dispatch: dispatch}},
 	} {
 		if got := stableReleases(tc.in, tc.stable); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestStableBranchReleasesFromItsOwnRun pins that a stable-branch project gates and names its release by the detected tag.
+func TestStableBranchReleasesFromItsOwnRun(t *testing.T) {
+	const doc = `{
+  "tools": {
+    "detect": {"run": "detect.sh"},
+    "publish": {"run": "publish.sh", "env": ["M6E_RELEASE_TAG"]},
+    "lint": {"run": "lint.sh"}
+  },
+  "nodes": {
+    "release-tag": {"needs": {"detect": true}},
+    "linted": {"needs": {"lint": true}},
+    "published": {"goal": true, "when": {"events": ["tag"]}, "needs": {"publish": true, "linted": true, "release-tag": true}}
+  }
+}`
+	st, err := ci.Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, st, &ci.Build{StableBranch: "main"}), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"    outputs:\n      tag: ${{ steps.detect.outputs.tag }}",
+		"        id: detect",
+		"    needs: [\"linted\", \"release-tag\"]",
+		"  push:\n    branches: [\"main\"]\n",
+		"&& (needs.release-tag.outputs.tag != '') }}",
+		"      M6E_RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("stable release missing %q\n---\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "refs/tags/") {
+		t.Errorf("a stable-branch project must not gate on a tag ref:\n%s", s)
+	}
+	st2, _ := ci.Parse([]byte(`{"tools": {"publish": {"run": "p"}}, "nodes": {"published": {"goal": true, "when": {"events": ["tag"]}, "needs": {"publish": true}}}}`))
+	rm2, _ := resolve.Resolve(st2)
+	if _, err := Workflow(Build(rm2, st2, &ci.Build{StableBranch: "main"}), Targets[TargetGHA], ci.Platform{}); err == nil {
+		t.Errorf("a stable branch without a %q node must fail the render", ReleaseTagNode)
 	}
 }
 
@@ -3669,8 +3719,8 @@ func TestPreviewGateAndInput(t *testing.T) {
 		// operands read the `github` context alone, which is what keeps it legal on a
 		// JOB `if:` — see TestJobIfNeverReadsTheMatrixContext.
 		// Token order is decodeWhen's sort, which is what keeps the render byte-stable.
-		"if: (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' && " +
-			"github.ref != 'refs/heads/master') || (startsWith(github.ref, 'refs/tags/'))",
+		"((startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' && " +
+			"github.ref != 'refs/heads/master') || (startsWith(github.ref, 'refs/tags/')))",
 		// The FACT: which branch, empty on a tag. What it makes of it (one
 		// `latest-<branch>` tag, primary sink only) is the action's rule, not ours.
 		"preview: ${{ github.ref_type == 'branch' && github.ref_name || '' }}",
@@ -3787,8 +3837,8 @@ func TestPrimaryGateAndInput(t *testing.T) {
 
 	for _, want := range []string{
 		// The trunk arm: an allow-list over the branch set, OR-ed with the release arm.
-		"if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') || " +
-			"(startsWith(github.ref, 'refs/tags/'))",
+		"((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') || " +
+			"(startsWith(github.ref, 'refs/tags/')))",
 		// The FACT: which names count as trunk. The action compares `preview` against it.
 		"primary: main master",
 		// Still handed the branch too — one input answers "which branch", the other
@@ -3897,7 +3947,7 @@ func TestBranchTokenPairFolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(out)
-	if !strings.Contains(s, "if: (startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/'))") {
+	if !strings.Contains(s, "((startsWith(github.ref, 'refs/heads/')) || (startsWith(github.ref, 'refs/tags/')))") {
 		t.Errorf("preview+primary must fold to one branch predicate:\n%s", s)
 	}
 	// The tautology must be GONE, not merely reordered.
