@@ -15,7 +15,7 @@ Emit the vendor-neutral job model as JSON (the template input).
 
 ```text
 pf-ci resolve [-pf PATH] [-verbose|-q]
-```text
+```
 
 - `-pf PATH` — projectfile path, or `-` for a YAML/JSON document on stdin (default: auto-discover).
 - `-verbose` — show operational log lines.
@@ -27,7 +27,7 @@ Render the job model to a target’s workflow YAML, or (`-check`) verify the com
 
 ```text
 pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check|-n] [-force=false] [-verbose|-q]
-```text
+```
 
 - `-target` — render target: `gha`, `forgejo`, or `lefthook`.
 - `-o PATH` — output directory for per-goal workflow files (default: the target’s vendor dir); a single path for lefthook.
@@ -35,6 +35,16 @@ pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check|-n] [-f
 - `-n`, `-dry-run` — print the write/remove plan and change nothing.
 - `-f`, `-force` — remove orphaned generated workflows (default true).
 - `-pf PATH` — projectfile path, or `-` for stdin.
+
+### Shared flags
+
+Every command also takes these:
+
+- `-offline` — refuse network; use cache and embedded data.
+- `-timeout DURATION` — per-attempt network timeout (default `10s`).
+- `-timing` — print elapsed time, request count and exit code at the end of the run.
+
+Each flag also accepts its double-dash spelling (`--quiet`, `--out PATH`).
 
 ### `pf-ci version`
 
@@ -48,6 +58,14 @@ Print top-level help, or one command’s flags.
 
 - `PF_CI_WORKFLOW_EXT` — committed-workflow file extension, `.yaml` or `.yml` (default `.yaml`).
 - `PF_CLI_VERBOSE` — same effect as `-verbose`.
+
+## Exit codes
+
+- `0` — success.
+- `1` — any other failure.
+- `2` — bad invocation (unknown command, flag or target).
+- `3` — `-check` found a stale, missing or orphaned workflow.
+- `4` — the projectfile is absent, unreadable or invalid.
 
 ## Common errors
 
