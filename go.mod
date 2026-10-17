@@ -7,13 +7,13 @@ module projectfile.org/projectfile/ci/v2
 go 1.27.2
 
 require (
+	charm.land/lipgloss/v2 v2.0.6
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.5
-	kiota.ch/projectfile/core/v2 v2.18.2
+	kiota.ch/projectfile/core/v2 v2.19.0
 )
 
 require (
-	charm.land/lipgloss/v2 v2.0.6 // indirect
 	charm.land/log/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4 // indirect

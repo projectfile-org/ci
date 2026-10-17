@@ -133,6 +133,7 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	start := time.Now()
+	netfetch.ResetRequests()
 	root := newRootCmd()
 	root.SetIn(stdin)
 	root.SetOut(stdout)
@@ -164,7 +165,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return code
 	}
 	if timingFlag {
-		_, _ = fmt.Fprintf(stderr, "pf-ci: elapsed %s\n", time.Since(start))
+		_, _ = fmt.Fprintf(stderr, "pf-ci: elapsed %s, requests %d\n", time.Since(start), netfetch.Requests())
 	}
 	genlog.FlushDebug()
 	return 0
