@@ -6,12 +6,19 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/spf13/pflag"
 
 	"projectfile.org/projectfile/ci/v2/internal/ci"
 	"projectfile.org/projectfile/ci/v2/internal/render"
@@ -19,6 +26,14 @@ import (
 
 // testGoalReady is the single goal node fixture below (goconst).
 const testGoalReady = "ready"
+
+// Subcommand and flag spellings the tests share (goconst).
+const (
+	subResolve  = "resolve"
+	subGenerate = "generate"
+	flagTarget  = "-target"
+	flagPf      = "-pf"
+)
 
 // TestWorkflowFilesUndeclaredTargetRendersNothing pins §3.7: a target absent from
 // org.projectfile.ci.targets renders no files and errors on neither Load nor Parse.
@@ -82,14 +97,14 @@ func TestCheckFreshDirReportsOrphan(t *testing.T) {
 
 // TestSubcommandHelp pins that every help spelling prints that subcommand’s help to stdout and exits 0.
 func TestSubcommandHelp(t *testing.T) {
-	const help, gen, res = "--help", "generate", "resolve"
+	const help, gen, res = "--help", subGenerate, subResolve
 	for _, tc := range []struct {
 		sub  string
 		args []string
 	}{
 		{res, []string{res, help}},
 		{res, []string{res, "-h"}},
-		{gen, []string{gen, "-target", "gha", "-check", help}},
+		{gen, []string{gen, flagTarget, "gha", "-check", help}},
 		{gen, []string{"help", gen}},
 		{gen, []string{help, gen}},
 	} {
@@ -109,7 +124,7 @@ func TestSubcommandHelp(t *testing.T) {
 // TestUnknownFlagIsUsageError pins that a bad flag exits 2 with the subcommand’s help on stderr.
 func TestUnknownFlagIsUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"resolve", "-nope"}, nil, &stdout, &stderr); code != 2 {
+	if code := run([]string{subResolve, "-nope"}, nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
 	if !strings.Contains(stderr.String(), "pf-ci resolve ") {
@@ -117,15 +132,132 @@ func TestUnknownFlagIsUsageError(t *testing.T) {
 	}
 }
 
-// TestQuietFlag pins -q and -quiet on every subcommand.
-func TestQuietFlag(t *testing.T) {
-	for name := range commands {
-		for _, flagName := range []string{"-q", "-quiet"} {
-			fs, o, _ := newFlagSet(name)
-			if err := fs.Parse([]string{flagName}); err != nil || !o.quiet {
-				t.Fatalf("%s %s: quiet=%v err=%v, want quiet", name, flagName, o.quiet, err)
-			}
+// demoDoc writes a minimal projectfile and returns its path.
+func demoDoc(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed projectfile: %v", err)
+	}
+	return path
+}
+
+// TestEveryFlagParses pins that every registered flag parses as -long, --long, -x and --x (the v2.9 Go-flag spellings).
+func TestEveryFlagParses(t *testing.T) {
+	pf := demoDoc(t, "name: demo\n")
+	values := map[string]string{"pf": pf, "target": render.TargetLefthook, "out": filepath.Join(t.TempDir(), "lefthook.yml"), "timeout": "5s"}
+	root := newRootCmd()
+	for _, sub := range root.Commands() {
+		if sub.Name() == "version" {
+			continue
 		}
+		flags := sub.LocalFlags()
+		flags.AddFlagSet(sub.InheritedFlags())
+		flags.VisitAll(func(f *pflag.Flag) {
+			spellings := []string{"-" + f.Name, "--" + f.Name}
+			if f.Shorthand != "" {
+				spellings = append(spellings, "-"+f.Shorthand, "--"+f.Shorthand)
+			}
+			for _, spelling := range spellings {
+				args := []string{sub.Name(), spelling}
+				if v, ok := values[f.Name]; ok {
+					args = append(args, v)
+				}
+				args = append(args, flagPf, pf)
+				if sub.Name() == subGenerate {
+					args = append(args, flagTarget, render.TargetLefthook, "-n")
+				}
+				var stdout, stderr bytes.Buffer
+				if code := run(args, nil, &stdout, &stderr); code == 2 {
+					t.Errorf("%v: usage error (stderr=%q)", args, stderr.String())
+				}
+			}
+		})
+	}
+}
+
+// TestShortFlagsBind pins that -q, -n, -f=false and -o reach the options they name.
+func TestShortFlagsBind(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "lefthook.yml")
+	args := []string{subGenerate, flagTarget, render.TargetLefthook, flagPf, demoDoc(t, "name: demo\n"), "-q", "-n", "-f=false", "-o", out}
+	var stdout, stderr bytes.Buffer
+	if code := run(args, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if !o.quiet || !o.dryRun || o.force || o.out != out {
+		t.Fatalf("quiet=%v dryRun=%v force=%v out=%q, want true true false %q", o.quiet, o.dryRun, o.force, o.out, out)
+	}
+	if !strings.Contains(stdout.String(), "write "+out) {
+		t.Fatalf("stdout %q lacks the dry-run plan for %s", stdout.String(), out)
+	}
+}
+
+// TestUsageIsPlainOffTerminal pins that the overview carries no ANSI escape when written to a pipe.
+func TestUsageIsPlainOffTerminal(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"help"}, {"bogus"}} {
+		var stdout, stderr bytes.Buffer
+		run(args, nil, &stdout, &stderr)
+		got := stdout.String() + stderr.String()
+		if !strings.Contains(got, "Try one:") {
+			t.Fatalf("%v: output %q lacks the root overview", args, got)
+		}
+		if strings.Contains(got, "\x1b[") {
+			t.Fatalf("%v: output carries ANSI escapes: %q", args, got)
+		}
+	}
+}
+
+// TestBareInvocationIsUsageOnStderr pins the v2.9 contract: no arguments prints the overview on stderr and exits 2.
+func TestBareInvocationIsUsageOnStderr(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, nil, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "pf-ci — ") {
+		t.Fatalf("stdout %q, stderr %q; want the overview on stderr only", stdout.String(), stderr.String())
+	}
+}
+
+// TestTimingReportsFailedRun pins that -timing reports on a failing run too, with its exit code.
+func TestTimingReportsFailedRun(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	missing := filepath.Join(t.TempDir(), "absent.yaml")
+	if code := run([]string{subResolve, "-timing", flagPf, missing}, nil, &stdout, &stderr); code != 4 {
+		t.Fatalf("exit %d, want 4 (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "elapsed") || !strings.Contains(stderr.String(), "exit 4") {
+		t.Fatalf("stderr %q lacks the timing line", stderr.String())
+	}
+}
+
+// TestOfflineReachesEveryRead pins that -offline keeps both the subtree read and the build-input read off the network.
+func TestOfflineReachesEveryRead(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/yaml")
+		_, _ = io.WriteString(w, "description: included\n")
+	}))
+	t.Cleanup(srv.Close)
+	pf := demoDoc(t, "name: demo\nincludes:\n  - "+srv.URL+"/include.yaml\n")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{subResolve, "-offline", flagPf, pf}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("offline: exit %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("offline: %d request(s) reached the include server, want 0", n)
+	}
+	if code := run([]string{subResolve, flagPf, pf}, nil, &stdout, &stderr); code != 0 || hits.Load() == 0 {
+		t.Fatalf("online: exit %d, %d request(s); the fixture must reach the server", code, hits.Load())
+	}
+}
+
+// TestClassifyLoadErrorUnwraps pins that an input error keeps its cause reachable through errors.Is.
+func TestClassifyLoadErrorUnwraps(t *testing.T) {
+	err := classifyLoadError("projectfile.yaml", fmt.Errorf("read: %w", os.ErrNotExist))
+	if !errors.Is(err, os.ErrNotExist) || exitCodeFor(err) != 4 {
+		t.Fatalf("got %v (exit %d), want an exit-4 error wrapping os.ErrNotExist", err, exitCodeFor(err))
 	}
 }
 
@@ -138,7 +270,7 @@ func TestDashProjectfileReadsStdin(t *testing.T) {
 		code int
 	}{{"name: demo\n", 0}, {"name: [unclosed\n", 4}} {
 		var stdout, stderr bytes.Buffer
-		if code := run([]string{"resolve", "-pf", "-"}, strings.NewReader(tc.doc), &stdout, &stderr); code != tc.code {
+		if code := run([]string{subResolve, flagPf, "-"}, strings.NewReader(tc.doc), &stdout, &stderr); code != tc.code {
 			t.Fatalf("doc %q: exit %d, want %d (stderr=%q)", tc.doc, code, tc.code, stderr.String())
 		}
 		if left, _ := os.ReadDir(dir); len(left) != 0 {
@@ -152,8 +284,8 @@ func TestDashOutputRefused(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"generate", "-target", "gha", "-o", "-"}, nil, &stdout, &stderr); code != 2 {
-		t.Fatalf("exit %d, want 2 (stderr=%q)", code, stderr.String())
+	if code := run([]string{subGenerate, flagTarget, "gha", "-o", "-"}, nil, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "not a stream") {
+		t.Fatalf("exit %d, want 2 refusing -o - (stderr=%q)", code, stderr.String())
 	}
 	if err := writeWorkflow(filepath.Join("-", "build.yaml"), []byte("x")); err == nil {
 		t.Fatal("writeWorkflow: got nil error for a - path element")

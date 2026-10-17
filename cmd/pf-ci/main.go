@@ -5,12 +5,9 @@
 // Command pf-ci lowers an org.projectfile.ci signal DAG into vendor CI workflows.
 package main
 
-//nolint:goconst
-
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -30,14 +27,18 @@ import (
 	"projectfile.org/projectfile/ci/v2/internal/resolve"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"charm.land/lipgloss/v2"
 )
 
+// version is stamped at build time (-ldflags "-X main.version=…"); "dev" on a plain go build.
 var version = devVersion
 
+// devVersion is the unstamped default of version.
 const devVersion = "dev"
 
+// moduleVersion returns the stamped version, else the module version go install recorded.
 func moduleVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 	if stamped != devVersion || !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
 		return stamped
@@ -45,22 +46,32 @@ func moduleVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 	return info.Main.Version
 }
 
+// usageError marks a bad invocation, which exits 2.
 type usageError struct{ msg string }
 
 func (e usageError) Error() string { return e.msg }
 
+// driftError marks a -check that found a stale or missing generated file, which exits 3.
 type driftError struct{ msg string }
 
 func (e driftError) Error() string { return e.msg }
 
-type inputError struct{ msg string }
+// inputError marks an unreadable, absent or invalid projectfile, which exits 4.
+type inputError struct {
+	msg string
+	err error
+}
 
 func (e inputError) Error() string { return e.msg }
+
+// Unwrap exposes the read failure behind the message to errors.Is.
+func (e inputError) Unwrap() error { return e.err }
 
 func errUsage(msg string) error { return usageError{msg: msg} }
 func errDrift(msg string) error { return driftError{msg: msg} }
 func errInput(msg string) error { return inputError{msg: msg} }
 
+// exitCodeFor maps a returned error onto its exit class.
 func exitCodeFor(err error) int {
 	var ue usageError
 	var de driftError
@@ -76,6 +87,7 @@ func exitCodeFor(err error) int {
 	return 1
 }
 
+// classifyDispatchError turns cobra’s own parse failures into usage errors.
 func classifyDispatchError(err error) error {
 	msg := err.Error()
 	if strings.HasPrefix(msg, "unknown command") ||
@@ -94,24 +106,17 @@ type opts struct {
 	dryRun, force   bool
 }
 
+// o is the flag state of the current run, rebound by newRootCmd.
 var o opts
 
+// offlineFlag, timeoutFlag and timingFlag back the network and timing flags every subcommand shares.
 var (
 	offlineFlag bool
 	timeoutFlag = netfetch.DefaultTimeout
 	timingFlag  bool
 )
 
-var commands = map[string]struct {
-	summary string
-	run     func(o *opts, stdout io.Writer) error
-}{
-	//nolint:goconst
-	"resolve": {"Emit...", nil},
-	//nolint:goconst
-	"generate": {"Render...", nil},
-}
-
+// lastTarget and lastPfPath name the inputs of the current run for a panic report.
 var lastTarget, lastPfPath string
 
 func main() {
@@ -137,63 +142,65 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root := newRootCmd()
 	root.SetIn(stdin)
 	root.SetOut(stdout)
-	root.SetArgs(normalizeArgs(args))
+	root.SetArgs(normalizeArgs(root, args))
 	root.SetErr(stderr)
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 	cmd, err := root.ExecuteC()
-	_ = cmd
+	code := 0
 	if err != nil {
 		err = classifyDispatchError(err)
-		// cobra may have already printed; ensure our voice.
-		code := exitCodeFor(err)
-		// Only print if not already? We'll print once.
-		_, _ = fmt.Fprintf(stderr, "pf-ci: %v\n", err)
-		if code == 2 {
-			// print usage for the relevant subcommand
-			name := ""
-			if len(args) > 0 {
-				name = args[0]
-			}
-			if name == "resolve" || name == "generate" {
-				subUsage(stderr, name)
-			} else {
-				usage(stderr)
-			}
+		code = exitCodeFor(err)
+		if err.Error() != "" {
+			_, _ = fmt.Fprintf(stderr, "pf-ci: %v\n", err)
 		}
-		genlog.FlushDebug()
-		return code
+		if code == 2 {
+			printUsage(root, cmd, stderr)
+		}
 	}
 	if timingFlag {
-		_, _ = fmt.Fprintf(stderr, "pf-ci: elapsed %s, requests %d\n", time.Since(start), netfetch.Requests())
+		_, _ = fmt.Fprintf(stderr, "pf-ci: elapsed %s, requests %d, exit %d\n", time.Since(start), netfetch.Requests(), code)
 	}
 	genlog.FlushDebug()
-	return 0
+	return code
 }
 
+// printUsage writes the root overview for a root-level failure, else the failing subcommand’s flags.
+func printUsage(root, cmd *cobra.Command, w io.Writer) {
+	if cmd == nil || cmd == root {
+		usage(w)
+		return
+	}
+	_, _ = fmt.Fprint(w, cmd.UsageString())
+}
+
+// readOptions is the projectfile read policy the network flags select.
+func readOptions() projectfile.ReadOptions {
+	return projectfile.ReadOptions{Offline: offlineFlag}
+}
+
+// newRootCmd builds the command tree and rebinds every flag to its default.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "pf-ci [command]",
 		Short: "lower org.projectfile.ci to vendor CI workflows",
 		Long:  "pf-ci — lower org.projectfile.ci to vendor CI workflows",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				return errUsage(fmt.Sprintf("unknown command %q", args[0]))
 			}
-			usage(cmd.OutOrStdout())
-			return nil
+			return errUsage("")
 		},
 		Version: versionTemplate(),
 	}
 	root.SetVersionTemplate("pf-ci {{.Version}}\n")
 	root.Flags().BoolP("version", "v", false, "print the version")
 	root.PersistentFlags().BoolVar(&o.verbose, "verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
-	root.PersistentFlags().BoolVar(&o.quiet, "quiet", false, "mute progress lines; warnings, errors and the verdict still print")
-	root.PersistentFlags().BoolVar(&o.quiet, "q", false, "shorthand for -quiet")
+	root.PersistentFlags().BoolVarP(&o.quiet, "quiet", "q", false, "mute progress lines; warnings, errors and the verdict still print")
+	root.PersistentFlags().StringVar(&o.pf, "pf", "", "projectfile path, or - for a YAML/JSON document on stdin (default: auto-discover)")
 	root.PersistentFlags().BoolVar(&offlineFlag, "offline", false, "refuse network; use cache and embedded data")
 	root.PersistentFlags().DurationVar(&timeoutFlag, "timeout", netfetch.DefaultTimeout, "per-attempt network timeout")
-	root.PersistentFlags().BoolVar(&timingFlag, "timing", false, "print elapsed time at the end of the run")
-	// resolve
+	root.PersistentFlags().BoolVar(&timingFlag, "timing", false, "print elapsed time, request count and exit code at the end of the run")
 	resolveCmd := &cobra.Command{
 		Use:   "resolve",
 		Short: "Emit the vendor-neutral job model as JSON (the template input).",
@@ -207,7 +214,7 @@ func newRootCmd() *cobra.Command {
 			}
 			defer cleanup()
 			lastPfPath = o.pf
-			st, err := ci.LoadWithOptions(o.pf, projectfile.ReadOptions{Offline: offlineFlag})
+			st, err := ci.LoadWithOptions(o.pf, readOptions())
 			if err != nil {
 				return classifyLoadError(o.pf, err)
 			}
@@ -223,20 +230,16 @@ func newRootCmd() *cobra.Command {
 			return err
 		},
 	}
-	// generate
 	generateCmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Render the job model to a target’s workflow YAML, or (-check) verify the committed workflow still matches the source DAG.",
 		RunE:  runGenerate,
 	}
 	generateCmd.Flags().StringVar(&o.target, "target", "", "render target: "+fmt.Sprint(render.TargetKeys()))
-	generateCmd.Flags().StringVar(&o.out, "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook; - is refused, as generate writes files")
+	generateCmd.Flags().StringVarP(&o.out, "out", "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook; - is refused, as generate writes files")
 	generateCmd.Flags().BoolVar(&o.check, "check", false, "freshness gate: exit non-zero if the committed workflow drifted")
-	generateCmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "print the write/remove plan on stdout and change nothing")
-	generateCmd.Flags().BoolVar(&o.dryRun, "n", false, "shorthand for -dry-run")
-	generateCmd.Flags().BoolVar(&o.force, "force", true, "remove orphaned generated workflows; -force=false reports them and exits non-zero instead")
-	generateCmd.Flags().BoolVar(&o.force, "f", true, "shorthand for -force")
-	// version
+	generateCmd.Flags().BoolVarP(&o.dryRun, "dry-run", "n", false, "print the write/remove plan on stdout and change nothing")
+	generateCmd.Flags().BoolVarP(&o.force, "force", "f", true, "remove orphaned generated workflows; -force=false reports them and exits non-zero instead")
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the resolver version.",
@@ -245,21 +248,25 @@ func newRootCmd() *cobra.Command {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "pf-ci", moduleVersion(version, info, ok))
 		},
 	}
-	// help
-	helpCmd := &cobra.Command{Use: "help", Short: "Print help."}
-	_ = helpCmd
-
 	root.AddCommand(resolveCmd, generateCmd, versionCmd)
-	// pf flag on root persistent? ci.Load uses o.pf; make -pf available to both
-	root.PersistentFlags().StringVar(&o.pf, "pf", "", "projectfile path, or - for a YAML/JSON document on stdin (default: auto-discover)")
+	subHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if c == root {
+			usage(c.OutOrStdout())
+			return
+		}
+		subHelp(c, args)
+	})
 	return root
 }
 
+// versionTemplate is the version cobra prints for --version.
 func versionTemplate() string {
 	info, ok := debug.ReadBuildInfo()
 	return moduleVersion(version, info, ok)
 }
 
+// runGenerate renders, checks or dry-runs the workflows of one target.
 func runGenerate(cmd *cobra.Command, _ []string) error {
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	genlog.SetQuiet(o.quiet)
@@ -278,7 +285,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	if !ok {
 		return errUsage(unknownTargetMessage(o.target))
 	}
-	st, err := ci.LoadWithOptions(o.pf, projectfile.ReadOptions{Offline: offlineFlag})
+	st, err := ci.LoadWithOptions(o.pf, readOptions())
 	if err != nil {
 		return classifyLoadError(o.pf, err)
 	}
@@ -314,16 +321,16 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	return writeWorkflowDir(dir, target.Ext, files, o.dryRun, o.force, cmd.OutOrStdout())
 }
 
-// stdinProjectfile unchanged? handle -pf - in cmd? Need implement. We'll wrap ci.Load? Simpler: if o.pf == "-", stage before ci.Load. But runGenerate/cobra RunE doesn't have stdin easily except cmd.InOrStdin. Let's handle in a PersistentPreRun? Too complex. Keep stdinProjectfile call by detecting "-" in RunE and stage. Implement staging inside RunE before ci.Load. We'll add to runGenerate and resolve RunE.
-
+// generatedMarker is the banner every rendered workflow carries, which tells an orphan from a hand-written file.
 const generatedMarker = "Generated by pf-ci"
 
+// lower resolves the graph and joins the tool manifests into the vendor-neutral model.
 func lower(st *ci.Subtree, pfPath string) (render.Model, error) {
 	rm, err := resolve.Resolve(st)
 	if err != nil {
 		return render.Model{}, err
 	}
-	b, err := ci.LoadBuild(pfPath, "")
+	b, err := ci.LoadBuildWithOptions(pfPath, "", readOptions())
 	if err != nil {
 		return render.Model{}, fmt.Errorf("ci: reading build inputs: %w", err)
 	}
@@ -331,6 +338,7 @@ func lower(st *ci.Subtree, pfPath string) (render.Model, error) {
 	return m, m.Err
 }
 
+// platformOf returns the deployment overlay for a target, zero when none is declared.
 func platformOf(st *ci.Subtree, key string) ci.Platform {
 	if st == nil {
 		return ci.Platform{}
@@ -338,6 +346,7 @@ func platformOf(st *ci.Subtree, key string) ci.Platform {
 	return st.Platforms[key]
 }
 
+// workflowFiles renders every goal to its own workflow path and returns them with the output directory.
 func workflowFiles(st *ci.Subtree, target render.Target, outDir, pfPath string) (map[string][]byte, string, error) {
 	if st == nil || !st.GoalsExplicit {
 		return nil, "", fmt.Errorf("generate %s: no goal:true nodes declared — "+
@@ -351,7 +360,7 @@ func workflowFiles(st *ci.Subtree, target render.Target, outDir, pfPath string) 
 		genlog.Debug("ci.targets: target not declared, rendering nothing", "target", target.Key, "declared", st.Targets)
 		return nil, dir, nil
 	}
-	b, err := ci.LoadBuild(pfPath, target.Key)
+	b, err := ci.LoadBuildWithOptions(pfPath, target.Key, readOptions())
 	if err != nil {
 		return nil, "", fmt.Errorf("ci: reading build inputs: %w", err)
 	}
@@ -377,6 +386,7 @@ func workflowFiles(st *ci.Subtree, target render.Target, outDir, pfPath string) 
 	return files, dir, nil
 }
 
+// sortedPaths returns a map’s keys sorted, so writes and their log lines are deterministic.
 func sortedPaths(files map[string][]byte) []string {
 	paths := make([]string, 0, len(files))
 	for p := range files {
@@ -386,6 +396,7 @@ func sortedPaths(files map[string][]byte) []string {
 	return paths
 }
 
+// checkFresh fails when the committed file at path differs from want or is missing.
 func checkFresh(path string, want []byte) error {
 	got, err := os.ReadFile(path) // #nosec G304 G703 — operator-chosen output path
 	if err != nil {
@@ -404,6 +415,7 @@ func checkFresh(path string, want []byte) error {
 	return nil
 }
 
+// checkFreshDir checks every expected file and fails on any orphaned generated one.
 func checkFreshDir(dir, ext string, want map[string][]byte) error {
 	for _, path := range sortedPaths(want) {
 		if err := checkFresh(path, want[path]); err != nil {
@@ -421,6 +433,7 @@ func checkFreshDir(dir, ext string, want map[string][]byte) error {
 	return nil
 }
 
+// orphanWorkflows lists the generated ext files in dir that no goal produces, sorted by path.
 func orphanWorkflows(dir, ext string, want map[string][]byte) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -450,6 +463,7 @@ func orphanWorkflows(dir, ext string, want map[string][]byte) ([]string, error) 
 	return stale, nil
 }
 
+// writeWorkflowDir writes files and removes the orphans in dir (reports them unless force); dryRun prints the plan instead.
 func writeWorkflowDir(dir, ext string, files map[string][]byte, dryRun, force bool, stdout io.Writer) error {
 	stale, err := orphanWorkflows(dir, ext, files)
 	if err != nil {
@@ -486,6 +500,7 @@ func writeWorkflowDir(dir, ext string, files map[string][]byte, dryRun, force bo
 	return nil
 }
 
+// writeWorkflow writes one rendered file, creating its directory.
 func writeWorkflow(path string, data []byte) error {
 	if slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "-") {
 		return fmt.Errorf("refusing to write %s: a path element named - is the stdin/stdout marker, not a directory", path)
@@ -501,6 +516,7 @@ func writeWorkflow(path string, data []byte) error {
 	return nil
 }
 
+// dirOf returns the directory portion of a slash path, or "" when there is none.
 func dirOf(path string) string {
 	for i := len(path) - 1; i >= 0; i-- {
 		if path[i] == '/' {
@@ -510,23 +526,25 @@ func dirOf(path string) string {
 	return ""
 }
 
+// classifyLoadError turns a projectfile read failure into an input error naming the flag, the path and the likely cause.
 func classifyLoadError(pf string, err error) error {
 	cwd, _ := os.Getwd()
 	if pf == "" {
 		if errors.Is(err, os.ErrNotExist) {
-			return errInput(fmt.Sprintf("no projectfile found in %s; pass -pf PATH to name one explicitly", cwd))
+			return inputError{fmt.Sprintf("no projectfile found in %s; pass -pf PATH to name one explicitly", cwd), err}
 		}
-		return errInput(fmt.Sprintf("cannot read a projectfile in %s: %v; pass -pf PATH to name one explicitly", cwd, err))
+		return inputError{fmt.Sprintf("cannot read a projectfile in %s: %v; pass -pf PATH to name one explicitly", cwd, err), err}
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return errInput(fmt.Sprintf("-pf %s: file not found; check the path exists and is a projectfile", pf))
+		return inputError{fmt.Sprintf("-pf %s: file not found; check the path exists and is a projectfile", pf), err}
 	}
 	if errors.Is(err, os.ErrPermission) {
-		return errInput(fmt.Sprintf("-pf %s: permission denied; check the file permissions", pf))
+		return inputError{fmt.Sprintf("-pf %s: permission denied; check the file permissions", pf), err}
 	}
-	return errInput(fmt.Sprintf("-pf %s: cannot read projectfile: %v; check the path exists and is a projectfile", pf, err))
+	return inputError{fmt.Sprintf("-pf %s: cannot read projectfile: %v; check the path exists and is a projectfile", pf, err), err}
 }
 
+// unknownTargetMessage lists the valid targets and suggests the closest one.
 func unknownTargetMessage(got string) string {
 	keys := render.TargetKeys()
 	msg := fmt.Sprintf("unknown -target %q; valid targets: %s", got, strings.Join(keys, ", "))
@@ -539,6 +557,7 @@ func unknownTargetMessage(got string) string {
 	return msg
 }
 
+// closestMatch returns the key within Levenshtein distance 2 of got, or "".
 func closestMatch(got string, keys []string) string {
 	best := ""
 	bestDist := 3
@@ -552,6 +571,7 @@ func closestMatch(got string, keys []string) string {
 	return best
 }
 
+// levenshtein returns the byte-wise edit distance between a and b.
 func levenshtein(a, b string) int {
 	if a == b {
 		return 0
@@ -574,26 +594,14 @@ func levenshtein(a, b string) int {
 			if a[i-1] == b[j-1] {
 				cost = 0
 			}
-			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
 		}
 		prev = cur
 	}
 	return prev[len(b)]
 }
 
-func min3(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
-}
-
+// stdinProjectfile copies a `-pf -` document to a temp file in the working directory and repoints o.pf at it.
 func stdinProjectfile(o *opts, stdin io.Reader) (func(), error) {
 	if o.pf != "-" {
 		return func() {}, nil
@@ -616,40 +624,10 @@ func stdinProjectfile(o *opts, stdin io.Reader) (func(), error) {
 	return cleanup, nil
 }
 
-func newFlagSet(name string) (*flag.FlagSet, *opts, bool) {
-	if name != "resolve" && name != "generate" {
-		return nil, nil, false
-	}
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.Usage = func() {}
-	o := &opts{}
-	fs.StringVar(&o.pf, "pf", "", "projectfile path, or - for a YAML/JSON document on stdin (default: auto-discover)")
-	fs.BoolVar(&o.verbose, "verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
-	fs.BoolVar(&o.quiet, "quiet", false, "mute progress lines; warnings, errors and the verdict still print")
-	fs.BoolVar(&o.quiet, "q", false, "shorthand for -quiet")
-	if name == "generate" {
-		fs.StringVar(&o.target, "target", "", "render target: "+fmt.Sprint(render.TargetKeys()))
-		fs.StringVar(&o.out, "o", "", "output directory for the per-goal workflow files (default: the target’s vendor dir); a single path for lefthook; - is refused, as generate writes files")
-		fs.BoolVar(&o.check, "check", false, "freshness gate: exit non-zero if the committed workflow drifted")
-		fs.BoolVar(&o.dryRun, "dry-run", false, "print the write/remove plan on stdout and change nothing")
-		fs.BoolVar(&o.dryRun, "n", false, "shorthand for -dry-run")
-		fs.BoolVar(&o.force, "force", true, "remove orphaned generated workflows; -force=false reports them and exits non-zero instead")
-		fs.BoolVar(&o.force, "f", true, "shorthand for -force")
-	}
-	return fs, o, true
-}
-
-func subUsage(w io.Writer, name string) {
-	purpose := map[string]string{
-		"resolve":  "Emit the vendor-neutral job model as JSON (the template input).",
-		"generate": "Render the job model to a target’s workflow YAML, or (-check) verify the committed workflow still matches the source DAG.",
-	}
-	_, _ = fmt.Fprintf(w, "Usage: pf-ci %s [flags]\n\n%s\n", name, purpose[name])
-}
-
+// usage prints the root overview, styled only when w is a colour terminal.
 func usage(w io.Writer) {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render("pf-ci")
-	_, _ = fmt.Fprintf(w, "%s — lower org.projectfile.ci to vendor CI workflows", title)
+	_, _ = fmt.Fprintf(genlog.Styled(w), "%s — lower org.projectfile.ci to vendor CI workflows", title)
 	_, _ = fmt.Fprint(w, `
 
 Usage:
@@ -666,6 +644,9 @@ Try one:
 Common flags:
   -q, -quiet           Mute progress lines; warnings, errors and the verdict still print.
   -verbose             Show operational log lines; also PF_CLI_VERBOSE=1.
+  -offline             Refuse network; use cache and embedded data.
+  -timeout DURATION    Per-attempt network timeout (default 10s).
+  -timing              Print elapsed time, request count and exit code at the end.
 
 resolve   Emit the vendor-neutral job model as JSON (the template input).
 generate  Render the job model to a target’s workflow YAML, or (-check) verify
@@ -683,10 +664,11 @@ Environment:
 Docs:   https://projectfile.org
 Issues: https://github.com/projectfile-org/ci/issues
 
-Run pf-ci --help for every command and flag.
+Run pf-ci help COMMAND for its flags.
 `)
 }
 
+// verboseFromFlagOrEnv is the -verbose flag, or PF_CLI_VERBOSE when the flag is unset.
 func verboseFromFlagOrEnv(flagVal bool) bool {
 	if flagVal {
 		return true
@@ -695,17 +677,26 @@ func verboseFromFlagOrEnv(flagVal bool) bool {
 	return v
 }
 
-func normalizeArgs(args []string) []string {
+// normalizeArgs maps -long to --long and --x to -x for every registered flag, so every v2.9 Go-flag spelling still parses.
+func normalizeArgs(root *cobra.Command, args []string) []string {
 	if len(args) >= 2 && (args[0] == "-h" || args[0] == "--help") {
-		// `pf-ci --help <sub>` is the same as `pf-ci help <sub>`.
 		return append([]string{"help", args[1]}, args[2:]...)
 	}
-	long := map[string]bool{
-		"verbose": true, "quiet": true, "pf": true, "target": true,
-		"check": true, "dry-run": true, "force": true, "offline": true,
+	long, short := map[string]bool{"help": true}, map[string]bool{"h": true}
+	for _, c := range append([]*cobra.Command{root}, root.Commands()...) {
+		for _, fs := range []*pflag.FlagSet{c.Flags(), c.PersistentFlags()} {
+			fs.VisitAll(func(f *pflag.Flag) { long[f.Name], short[f.Shorthand] = true, f.Shorthand != "" })
+		}
 	}
 	out := make([]string, len(args))
 	for i, a := range args {
+		if a == "--" {
+			copy(out[i:], args[i:])
+			return out
+		}
+		if name, _, _ := strings.Cut(strings.TrimPrefix(a, "--"), "="); strings.HasPrefix(a, "--") && short[name] {
+			a = a[1:]
+		}
 		if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") {
 			name := a[1:]
 			val := ""

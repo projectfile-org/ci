@@ -1250,7 +1250,12 @@ var lowerRefRe = regexp.MustCompile(`\$\{[a-z]`)
 // forgejo file pulls from the origin forge's route, a gha file from github's).
 // "" composes no route — entries keep their own `ref` (the vendor-neutral model).
 func LoadBuild(pfPath, lowering string) (*Build, error) {
-	r, err := newReader(pfPath, projectfile.ReadOptions{})
+	return LoadBuildWithOptions(pfPath, lowering, projectfile.ReadOptions{})
+}
+
+// LoadBuildWithOptions is LoadBuild under an explicit read policy (offline, include failure level).
+func LoadBuildWithOptions(pfPath, lowering string, opts projectfile.ReadOptions) (*Build, error) {
+	r, err := newReader(pfPath, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -1789,6 +1794,7 @@ func Load(pfPath string) (*Subtree, error) {
 	return LoadWithOptions(pfPath, projectfile.ReadOptions{})
 }
 
+// LoadWithOptions is Load under an explicit read policy (offline, include failure level).
 func LoadWithOptions(pfPath string, opts projectfile.ReadOptions) (*Subtree, error) {
 	r, err := newReader(pfPath, opts)
 	if err != nil {
