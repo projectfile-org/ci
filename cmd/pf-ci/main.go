@@ -60,6 +60,16 @@ type usageError struct{ msg string }
 
 func (e usageError) Error() string { return e.msg }
 
+// driftError marks a -check that found a stale or missing generated file, which exits 3.
+type driftError struct{ msg string }
+
+func (e driftError) Error() string { return e.msg }
+
+// inputError marks an unreadable, absent or invalid projectfile, which exits 4.
+type inputError struct{ msg string }
+
+func (e inputError) Error() string { return e.msg }
+
 // opts holds every subcommand flag; a subcommand defines only the ones it reads.
 type opts struct {
 	pf, target, out string
@@ -77,8 +87,48 @@ var commands = map[string]struct {
 	"generate": {"Render the job model to a target’s workflow YAML, or (-check) verify the committed workflow still matches the source DAG.", cmdGenerate},
 }
 
+// lastDebugState records the resolved inputs of the most recent run so an
+// unexpected panic can report them.
+var (
+	lastTarget string
+	lastPfPath string
+)
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	code := 0
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "pf-ci: unexpected error: %v\n", rec)
+				debug.PrintStack()
+				_, _ = fmt.Fprintf(os.Stderr, "debug state: version=%s target=%s projectfile=%s args=%v\n", version, lastTarget, lastPfPath, os.Args[1:])
+				_, _ = fmt.Fprintf(os.Stderr, "report bugs at the project's issue tracker\n")
+				code = 1
+			}
+		}()
+		code = run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+	}()
+	os.Exit(code)
+}
+
+// exitCodeFor maps a returned error onto its exit class.
+func errUsage(msg string) error  { return usageError{msg: msg} }
+func errDrift(msg string) error  { return driftError{msg: msg} }
+func errInput(msg string) error  { return inputError{msg: msg} }
+
+func exitCodeFor(err error) int {
+	var ue usageError
+	var de driftError
+	var ie inputError
+	switch {
+	case errors.As(err, &ue):
+		return 2
+	case errors.As(err, &de):
+		return 3
+	case errors.As(err, &ie):
+		return 4
+	}
+	return 1
 }
 
 // run dispatches one invocation and returns its exit code.
@@ -131,11 +181,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stderr, "pf-ci: %v\n", err)
 	genlog.FlushDebug()
-	var ue usageError
-	if errors.As(err, &ue) {
-		return 2
-	}
-	return 1
+	return exitCodeFor(err)
 }
 
 // stdinProjectfile copies a `-pf -` document to a unique temp file in the working directory and repoints o.pf at it.
@@ -145,7 +191,7 @@ func stdinProjectfile(o *opts, stdin io.Reader) (func(), error) {
 	}
 	f, err := os.CreateTemp(".", ".pf-ci-stdin-*.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("-pf -: staging stdin: %w", err)
+		return nil, inputError{fmt.Sprintf("-pf -: staging stdin: %v", err)}
 	}
 	cleanup := func() { _ = os.Remove(f.Name()) }
 	n, err := io.Copy(f, stdin)
@@ -154,7 +200,7 @@ func stdinProjectfile(o *opts, stdin io.Reader) (func(), error) {
 	}
 	if err != nil {
 		cleanup()
-		return nil, fmt.Errorf("-pf -: reading stdin into %s: %w", f.Name(), err)
+		return nil, inputError{fmt.Sprintf("-pf -: reading stdin into %s: %v", f.Name(), err)}
 	}
 	genlog.Debug("projectfile read from stdin", "path", f.Name(), "bytes", n)
 	o.pf = f.Name()
@@ -265,11 +311,12 @@ func cmdResolve(o *opts, stdout io.Writer) error {
 	pf := &o.pf
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	genlog.SetQuiet(o.quiet)
+	lastPfPath = *pf
 	// resolve emits the VENDOR-NEUTRAL model: no target, so no membership prune —
 	// every declared tool appears (it is the shared contract, not one vendor's view).
 	st, err := ci.Load(*pf)
 	if err != nil {
-		return err
+		return classifyLoadError(*pf, err)
 	}
 	model, err := lower(st, *pf)
 	if err != nil {
@@ -287,16 +334,18 @@ func cmdGenerate(o *opts, stdout io.Writer) error {
 	targetKey, pf, out, check := &o.target, &o.pf, &o.out, &o.check
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	genlog.SetQuiet(o.quiet)
+	lastTarget = *targetKey
+	lastPfPath = *pf
 	if *out == "-" {
 		return usageError{fmt.Sprintf("-o %s: generate writes one file per goal, not a stream; name a directory (or a file for lefthook)", *out)}
 	}
 	target, ok := render.Targets[*targetKey]
 	if !ok {
-		return fmt.Errorf("unknown -target %q (have %v)", *targetKey, render.TargetKeys())
+		return usageError{unknownTargetMessage(*targetKey)}
 	}
 	st, err := ci.Load(*pf)
 	if err != nil {
-		return err
+		return classifyLoadError(*pf, err)
 	}
 	// The git-hook lowering is a NODE-level projection (the hook nodes are non-goals
 	// that never become cloud jobs), so it bypasses the per-goal job pipeline entirely
@@ -398,10 +447,16 @@ func sortedPaths(files map[string][]byte) []string {
 func checkFresh(path string, want []byte) error {
 	got, err := os.ReadFile(path) // #nosec G304 G703 — operator-chosen output path
 	if err != nil {
-		return fmt.Errorf("freshness check: cannot read %s (run `pf-ci generate`): %w", path, err)
+		if os.IsNotExist(err) {
+			return driftError{fmt.Sprintf("freshness check: %s is missing — regenerate with `pf-ci generate`", path)}
+		}
+		if os.IsPermission(err) {
+			return inputError{fmt.Sprintf("freshness check: cannot read %s: permission denied", path)}
+		}
+		return fmt.Errorf("freshness check: cannot read %s: %w", path, err)
 	}
 	if !bytes.Equal(bytes.TrimRight(got, "\n"), bytes.TrimRight(want, "\n")) {
-		return fmt.Errorf("freshness check: %s is stale — regenerate with `pf-ci generate`", path)
+		return driftError{fmt.Sprintf("freshness check: %s is stale — regenerate with `pf-ci generate`", path)}
 	}
 	genlog.Success(fmt.Sprintf("pf-ci: %s is up to date", path))
 	return nil
@@ -429,8 +484,8 @@ func checkFreshDir(dir, ext string, want map[string][]byte) error {
 		return err
 	}
 	if len(stale) > 0 {
-		return fmt.Errorf("freshness check: %s is an orphan — no goal produces it; "+
-			"remove the file or restore the goal", stale[0])
+		return driftError{fmt.Sprintf("freshness check: %s is an orphan — no goal produces it; "+
+			"remove the file or restore the goal", stale[0])}
 	}
 	return nil
 }
@@ -443,7 +498,7 @@ func orphanWorkflows(dir, ext string, want map[string][]byte) ([]string, error) 
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("cannot read directory %s: %w", dir, err)
 	}
 	var stale []string
 	for _, e := range entries {
@@ -457,7 +512,7 @@ func orphanWorkflows(dir, ext string, want map[string][]byte) ([]string, error) 
 		// #nosec G304 — path is inside the resolver's own output dir, not untrusted input.
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("cannot read %s: %w", path, err)
 		}
 		if bytes.Contains(data, []byte(generatedMarker)) {
 			stale = append(stale, path)
@@ -509,10 +564,13 @@ func writeWorkflow(path string, data []byte) error {
 	}
 	if dir := dirOf(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o750); err != nil { // #nosec G703 — operator-chosen output dir
-			return err
+			return fmt.Errorf("cannot create directory %s: %w", dir, err)
 		}
 	}
-	return os.WriteFile(path, data, 0o644) // #nosec G306 G703 — an operator-chosen committed workflow file
+	if err := os.WriteFile(path, data, 0o644); err != nil { // #nosec G306 G703 — an operator-chosen committed workflow file
+		return fmt.Errorf("cannot write %s: %w", path, err)
+	}
+	return nil
 }
 
 // dirOf returns the directory portion of a slash path, or "" when there is none.
@@ -523,4 +581,94 @@ func dirOf(path string) string {
 		}
 	}
 	return ""
+}
+
+// classifyLoadError turns a projectfile read failure into an input error with a
+// human-facing message naming the flag, the path and the likely cause.
+func classifyLoadError(pf string, err error) error {
+	cwd, _ := os.Getwd()
+	if pf == "" {
+		if errors.Is(err, os.ErrNotExist) {
+			return inputError{fmt.Sprintf("no projectfile found in %s; pass -pf PATH to name one explicitly", cwd)}
+		}
+		return inputError{fmt.Sprintf("cannot read a projectfile in %s: %v; pass -pf PATH to name one explicitly", cwd, err)}
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return inputError{fmt.Sprintf("-pf %s: file not found; check the path exists and is a projectfile", pf)}
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return inputError{fmt.Sprintf("-pf %s: permission denied; check the file permissions", pf)}
+	}
+	return inputError{fmt.Sprintf("-pf %s: cannot read projectfile: %v; check the path exists and is a projectfile", pf, err)}
+}
+
+// unknownTargetMessage formats the valid targets as a copy-pasteable invocation
+// and suggests the closest match when one is near.
+func unknownTargetMessage(got string) string {
+	keys := render.TargetKeys()
+	msg := fmt.Sprintf("unknown -target %q; valid targets: %s", got, strings.Join(keys, ", "))
+	if sug := closestMatch(got, keys); sug != "" {
+		msg += fmt.Sprintf(" (did you mean %q?)", sug)
+	}
+	if len(keys) > 0 {
+		msg += fmt.Sprintf("; try: pf-ci generate -target %s", keys[0])
+	}
+	return msg
+}
+
+// closestMatch returns the key nearest to got by Levenshtein distance, or "" when
+// nothing is within a small threshold.
+func closestMatch(got string, keys []string) string {
+	best := ""
+	bestDist := 3
+	for _, k := range keys {
+		d := levenshtein(strings.ToLower(got), strings.ToLower(k))
+		if d < bestDist {
+			bestDist = d
+			best = k
+		}
+	}
+	return best
+}
+
+func levenshtein(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
+
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
 }

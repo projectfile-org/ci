@@ -136,7 +136,7 @@ func TestDashProjectfileReadsStdin(t *testing.T) {
 	for _, tc := range []struct {
 		doc  string
 		code int
-	}{{"name: demo\n", 0}, {"name: [unclosed\n", 1}} {
+	}{{"name: demo\n", 0}, {"name: [unclosed\n", 4}} {
 		var stdout, stderr bytes.Buffer
 		if code := run([]string{"resolve", "-pf", "-"}, strings.NewReader(tc.doc), &stdout, &stderr); code != tc.code {
 			t.Fatalf("doc %q: exit %d, want %d (stderr=%q)", tc.doc, code, tc.code, stderr.String())
