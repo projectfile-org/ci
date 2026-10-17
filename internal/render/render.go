@@ -1663,6 +1663,9 @@ var HookStages = []string{"pre-commit", "pre-push"}
 // render and main's "(N hooks)" summary.
 func HookNodes(st *ci.Subtree) []string {
 	var out []string
+	if st == nil {
+		return out
+	}
 	for _, stage := range HookStages {
 		if _, ok := st.Nodes[stage]; ok {
 			out = append(out, stage)

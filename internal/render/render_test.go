@@ -6520,3 +6520,14 @@ func TestPinnedCellRefusesAWithheldValue(t *testing.T) {
 		}
 	}
 }
+
+// TestLefthookWithoutSubtreeIsNoOp pins graceful degradation: a project with no org.projectfile.ci renders a hook-free config.
+func TestLefthookWithoutSubtreeIsNoOp(t *testing.T) {
+	out, err := Lefthook(nil, Targets[TargetLefthook])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "commands:") {
+		t.Fatalf("Lefthook(nil) rendered hooks:\n%s", out)
+	}
+}
