@@ -2065,13 +2065,13 @@ func TestNewReaderRejectsNewerFeaturesLevel(t *testing.T) {
 		return path
 	}
 	newer := writeLevelDoc(t, "$schema: https://projectfile.org/schema/v1.json\nidentity:\n  name: demo\norg:\n  projectfile:\n    ci:\n      features-level: 2\n")
-	if _, err := newReader(newer); err == nil || !strings.Contains(err.Error(), "features-level") {
+	if _, err := newReader(newer, projectfile.ReadOptions{}); err == nil || !strings.Contains(err.Error(), "features-level") {
 		t.Fatalf("newReader level 2: got %v, want a features-level error", err)
 	} else if !strings.Contains(err.Error(), "install-binary") {
 		t.Fatalf("newReader level 2: got %v, want the install-binary hint", err)
 	}
 	current := writeLevelDoc(t, "$schema: https://projectfile.org/schema/v1.json\nidentity:\n  name: demo\norg:\n  projectfile:\n    ci:\n      features-level: 1\n")
-	if _, err := newReader(current); err != nil {
+	if _, err := newReader(current, projectfile.ReadOptions{}); err != nil {
 		t.Fatalf("newReader level 1: got %v, want nil", err)
 	}
 }

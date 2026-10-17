@@ -34,13 +34,13 @@ type Reader struct{ doc *projectfile.Document }
 // sibling in cwd (core's production auto-discovery). A read error propagates — a
 // project driving pf-ci is expected to have a projectfile; an ABSENT SUBTREE is
 // the graceful "no CI" case and is handled per-lookup by subtree.
-func newReader(pfPath string) (*Reader, error) {
+func newReader(pfPath string, opts projectfile.ReadOptions) (*Reader, error) {
 	var doc *projectfile.Document
 	var err error
 	if pfPath != "" {
-		doc, err = projectfile.Read(pfPath)
+		doc, err = projectfile.ReadFromPathWithOptions(pfPath, opts)
 	} else {
-		doc, _, err = projectfile.ReadWithOptions(".", projectfile.ReadOptions{})
+		doc, _, err = projectfile.ReadWithOptions(".", opts)
 	}
 	if err != nil {
 		return nil, err

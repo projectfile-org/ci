@@ -13,9 +13,9 @@ SPDX-License-Identifier: MIT
 
 Emit the vendor-neutral job model as JSON (the template input).
 
-```
+```text
 pf-ci resolve [-pf PATH] [-verbose|-q]
-```
+```text
 
 - `-pf PATH` — projectfile path, or `-` for a YAML/JSON document on stdin (default: auto-discover).
 - `-verbose` — show operational log lines.
@@ -25,9 +25,9 @@ pf-ci resolve [-pf PATH] [-verbose|-q]
 
 Render the job model to a target’s workflow YAML, or (`-check`) verify the committed workflow still matches the source DAG.
 
-```
+```text
 pf-ci generate -target gha|forgejo|lefthook [-pf PATH] [-o PATH] [-check|-n] [-force=false] [-verbose|-q]
-```
+```text
 
 - `-target` — render target: `gha`, `forgejo`, or `lefthook`.
 - `-o PATH` — output directory for per-goal workflow files (default: the target’s vendor dir); a single path for lefthook.

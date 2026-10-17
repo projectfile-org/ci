@@ -20,8 +20,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
+	"kiota.ch/projectfile/core/v2/pkg/netfetch"
+	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 	"projectfile.org/projectfile/ci/v2/internal/ci"
 	"projectfile.org/projectfile/ci/v2/internal/render"
 	"projectfile.org/projectfile/ci/v2/internal/resolve"
@@ -93,6 +96,12 @@ type opts struct {
 
 var o opts
 
+var (
+	offlineFlag bool
+	timeoutFlag = netfetch.DefaultTimeout
+	timingFlag  bool
+)
+
 var commands = map[string]struct {
 	summary string
 	run     func(o *opts, stdout io.Writer) error
@@ -123,6 +132,7 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	start := time.Now()
 	root := newRootCmd()
 	root.SetIn(stdin)
 	root.SetOut(stdout)
@@ -153,6 +163,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		genlog.FlushDebug()
 		return code
 	}
+	if timingFlag {
+		_, _ = fmt.Fprintf(stderr, "pf-ci: elapsed %s\n", time.Since(start))
+	}
 	genlog.FlushDebug()
 	return 0
 }
@@ -176,6 +189,9 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVar(&o.verbose, "verbose", false, "show operational log lines (e.g. interpolation lookups); also PF_CLI_VERBOSE=1")
 	root.PersistentFlags().BoolVar(&o.quiet, "quiet", false, "mute progress lines; warnings, errors and the verdict still print")
 	root.PersistentFlags().BoolVar(&o.quiet, "q", false, "shorthand for -quiet")
+	root.PersistentFlags().BoolVar(&offlineFlag, "offline", false, "refuse network; use cache and embedded data")
+	root.PersistentFlags().DurationVar(&timeoutFlag, "timeout", netfetch.DefaultTimeout, "per-attempt network timeout")
+	root.PersistentFlags().BoolVar(&timingFlag, "timing", false, "print elapsed time at the end of the run")
 	// resolve
 	resolveCmd := &cobra.Command{
 		Use:   "resolve",
@@ -183,13 +199,14 @@ func newRootCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 			genlog.SetQuiet(o.quiet)
+			netfetch.SetTimeout(timeoutFlag)
 			cleanup, err := stdinProjectfile(&o, cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 			lastPfPath = o.pf
-			st, err := ci.Load(o.pf)
+			st, err := ci.LoadWithOptions(o.pf, projectfile.ReadOptions{Offline: offlineFlag})
 			if err != nil {
 				return classifyLoadError(o.pf, err)
 			}
@@ -245,6 +262,7 @@ func versionTemplate() string {
 func runGenerate(cmd *cobra.Command, _ []string) error {
 	genlog.SetVerbose(verboseFromFlagOrEnv(o.verbose))
 	genlog.SetQuiet(o.quiet)
+	netfetch.SetTimeout(timeoutFlag)
 	cleanup, err := stdinProjectfile(&o, cmd.InOrStdin())
 	if err != nil {
 		return err
@@ -259,7 +277,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	if !ok {
 		return errUsage(unknownTargetMessage(o.target))
 	}
-	st, err := ci.Load(o.pf)
+	st, err := ci.LoadWithOptions(o.pf, projectfile.ReadOptions{Offline: offlineFlag})
 	if err != nil {
 		return classifyLoadError(o.pf, err)
 	}
@@ -683,7 +701,7 @@ func normalizeArgs(args []string) []string {
 	}
 	long := map[string]bool{
 		"verbose": true, "quiet": true, "pf": true, "target": true,
-		"check": true, "dry-run": true, "force": true,
+		"check": true, "dry-run": true, "force": true, "offline": true,
 	}
 	out := make([]string, len(args))
 	for i, a := range args {

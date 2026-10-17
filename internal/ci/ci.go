@@ -23,6 +23,7 @@ import (
 
 	"kiota.ch/projectfile/core/v2/pkg/genlog"
 	"kiota.ch/projectfile/core/v2/pkg/interp"
+	"kiota.ch/projectfile/core/v2/pkg/projectfile"
 )
 
 // Need is one enabled `needs` entry — a Make-target name plus optional args.
@@ -1249,7 +1250,7 @@ var lowerRefRe = regexp.MustCompile(`\$\{[a-z]`)
 // forgejo file pulls from the origin forge's route, a gha file from github's).
 // "" composes no route — entries keep their own `ref` (the vendor-neutral model).
 func LoadBuild(pfPath, lowering string) (*Build, error) {
-	r, err := newReader(pfPath)
+	r, err := newReader(pfPath, projectfile.ReadOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -1785,7 +1786,11 @@ func (r *Reader) stableBranch() string {
 // A project that declares no org.projectfile.ci subtree yields (nil, nil): no CI
 // is not an error (graceful degradation), the caller emits nothing.
 func Load(pfPath string) (*Subtree, error) {
-	r, err := newReader(pfPath)
+	return LoadWithOptions(pfPath, projectfile.ReadOptions{})
+}
+
+func LoadWithOptions(pfPath string, opts projectfile.ReadOptions) (*Subtree, error) {
+	r, err := newReader(pfPath, opts)
 	if err != nil {
 		return nil, err
 	}
