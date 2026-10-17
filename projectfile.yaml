@@ -17,6 +17,7 @@ identity:
     uk: pf-ci перетворює незалежний від постачальників сигнальний DAG org.projectfile.ci на конкретні файли CI-робочих процесів для Forgejo Actions і GitHub Actions, диспетчеризуючи кожен лист провайдера до його рецепту в projectfile/actions. Бінарник-компаньйон pf-cli в інструментарії projectfile.org.
   version: 2.8.0
   released: "2026-10-16"
+  visibility: public
 includes:
   - .makefile/b19/ci.yaml
   - .makefile/b19/images/go.yaml
