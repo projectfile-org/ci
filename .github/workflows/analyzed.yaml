@@ -24,7 +24,7 @@ jobs:
   analyzed:
     runs-on: ubuntu-26.04
     needs: ["image-is-analyzed"]
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ !cancelled() && needs.image-is-analyzed.result == 'success' && (github.event_name == 'workflow_dispatch') }}
     steps:
       - run: echo analyzed
   image-is-analyzed:
@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       - name: dive-scan-registry
         if: vars.CI_SKIP_IMAGE_IS_ANALYZED != 'true' && vars.CI_SKIP_DIVE_SCAN_REGISTRY != 'true'
-        uses: projectfile-org/actions/run-tool@dce815a0d5ead4bbc1047c298252472a65433207 # v1
+        uses: projectfile-org/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
