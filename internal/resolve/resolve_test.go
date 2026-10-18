@@ -10,8 +10,16 @@ import (
 	"projectfile.org/projectfile/ci/v3/internal/ci"
 )
 
-// axisSeries is the global axis the matrix tests fan over (goconst).
-const axisSeries = "SERIES"
+// axisSeries / axisArch are the axis keys the matrix tests fan over; archAMD64 the
+// one arch value they narrow to (goconst).
+const (
+	axisSeries     = "SERIES"
+	axisArch       = "M6E_ARCH"
+	archAMD64      = "amd64"
+	seriesNoble    = "noble"
+	seriesResolute = "resolute"
+	nodeSource     = "source-is-valid"
+)
 
 // TestPerNodeMatrixIsolatesFanOut proves a per-node matrix fans a CELL job over the
 // NODE's own axes, independent of the global subtree matrix: in one pipeline the
@@ -147,7 +155,7 @@ func TestNodeModelMaterialisesReachableNodes(t *testing.T) {
 	if len(ib.Tools) != 1 || ib.Tools[0] != "container-build" {
 		t.Errorf("image-built tools = %v, want [container-build]", ib.Tools)
 	}
-	if len(ib.NodeDeps) != 1 || ib.NodeDeps[0] != "source-is-valid" {
+	if len(ib.NodeDeps) != 1 || ib.NodeDeps[0] != nodeSource {
 		t.Errorf("image-built node-deps = %v, want [source-is-valid]", ib.NodeDeps)
 	}
 	// The goal node mixes a tool member (grype-scan-tar) and a node-dep (image-built).

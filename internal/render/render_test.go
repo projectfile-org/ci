@@ -33,6 +33,7 @@ const (
 	testUbuntuHash      = "B19_UBUNTU_HASH"
 	testUbuntuBaseImage = "B19_UBUNTU_BASE_IMAGE"
 	testResolute        = "resolute"
+	testNoble           = "noble"
 	testJsToolsImage    = "D9T_JS_TOOLS_IMAGE"
 	testKiotaHead       = "kiota.ch"
 	testNodeToolImage   = "NODE_TOOL_IMAGE"
@@ -50,7 +51,7 @@ const (
 
 // series and goAxes are the matrix axes the fixtures fan over, keyed as the override gate names them.
 var (
-	series = AxisMap{{Key: testUbuntuSeries, Values: []string{testResolute, "noble"}}}
+	series = AxisMap{{Key: testUbuntuSeries, Values: []string{testResolute, testNoble}}}
 	goAxes = AxisMap{{Key: "GOARCH", Values: []string{testAmd64}}, {Key: "GOOS", Values: []string{testLinux}}}
 )
 
