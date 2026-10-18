@@ -115,7 +115,7 @@ func TestBuildInputsDecode(t *testing.T) {
 		{Name: "B19_DEBUG", Default: BoolTrue},
 		{Name: "B19_FD_IMAGE"},
 		{Name: "B19_GCC_SERIES", Default: "16"},
-		{Name: "B19_NODE_FLOAT", Default: "3.14"},
+		{Name: "B19_NODE_FLOAT", Default: testFloatLiteral},
 		{Name: "B19_UBUNTU_HASH", File: ".container/{B19_UBUNTU_SERIES}/hash"},
 		{Name: "B19_UBUNTU_SERIES", Default: "24"},
 		{Name: "B19_UBUNTU_VERSION", Default: testSeriesResolute},
@@ -163,7 +163,7 @@ func TestMatrixAxisScalarValues(t *testing.T) {
 	for key, want := range map[string][]string{
 		"INT":   {"24", "26"},
 		"FLOAT": {"3.14"},
-		"MIXED": {"1", "fpm", "true"},
+		"MIXED": {"1", "fpm", BoolTrue},
 	} {
 		if len(got[key]) != len(want) {
 			t.Fatalf("axis %s: want %v got %v", key, want, got[key])
@@ -1422,6 +1422,9 @@ const (
 	testLLVMExtraVar       = "LLVM"
 	testNightlyCron        = "0 3 * * *"
 	testMountFrom          = "/app/cache"
+	testFloatLiteral       = "3.14"
+	testNeedAlpha          = "alpha"
+	testCaseEmpty          = "empty"
 	// refGHCR is what publishDoc's ghcr template composes to: a NESTED path with the
 	// axis left verbatim for the cell to fill. Both route planes expect this one value,
 	// which is the point — push and pull compose a sink identically.

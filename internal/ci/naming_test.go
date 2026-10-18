@@ -94,10 +94,10 @@ func TestImageNamingIgnoresEmptyAndUnknownHeads(t *testing.T) {
 // keeps LoadBuild returning nil for a document with nothing to publish.
 func TestImageNamingAbsentIsNoOp(t *testing.T) {
 	for name, body := range map[string]string{
-		"no-image-subtree": "org:\n  projectfile:\n    architecture: [amd64]\n",
-		"empty-subtree":    "org:\n  projectfile:\n    image: {}\n",
-		"scalar-subtree":   "org:\n  projectfile:\n    image: \"demo/app\"\n",
-		"unrelated-keys":   "org:\n  projectfile:\n    image:\n      path: demo/app\n      name: app\n",
+		"no-image-subtree":    "org:\n  projectfile:\n    architecture: [amd64]\n",
+		"empty-image-subtree": "org:\n  projectfile:\n    image: {}\n",
+		"scalar-subtree":      "org:\n  projectfile:\n    image: \"demo/app\"\n",
+		"unrelated-keys":      "org:\n  projectfile:\n    image:\n      path: demo/app\n      name: app\n",
 	} {
 		n, err := loadNaming(t, body)
 		if err != nil {
