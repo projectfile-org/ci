@@ -33,6 +33,9 @@ const (
 	subGenerate = "generate"
 	flagTarget  = "-target"
 	flagPf      = "-pf"
+	flagCheck   = "-check"
+	targetGHA   = "gha"
+	targetForge = "forgejo"
 )
 
 // TestWorkflowFilesUndeclaredTargetRendersNothing pins §3.7: a target absent from
@@ -104,7 +107,7 @@ func TestSubcommandHelp(t *testing.T) {
 	}{
 		{res, []string{res, help}},
 		{res, []string{res, "-h"}},
-		{gen, []string{gen, flagTarget, "gha", "-check", help}},
+		{gen, []string{gen, flagTarget, targetGHA, flagCheck, help}},
 		{gen, []string{"help", gen}},
 		{gen, []string{help, gen}},
 	} {
@@ -284,7 +287,7 @@ func TestDashOutputRefused(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{subGenerate, flagTarget, "gha", "-o", "-"}, nil, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "not a stream") {
+	if code := run([]string{subGenerate, flagTarget, targetGHA, "-o", "-"}, nil, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "not a stream") {
 		t.Fatalf("exit %d, want 2 refusing -o - (stderr=%q)", code, stderr.String())
 	}
 	if err := writeWorkflow(filepath.Join("-", "build.yaml"), []byte("x")); err == nil {
