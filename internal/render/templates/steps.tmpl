@@ -4,12 +4,11 @@ SPDX-License-Identifier: MIT
 
 Step partials selected by the `stepbody` / `stepfrag` dispatchers (render.go).
 Decision 2 — node = job, tool = step: every reachable DAG node renders as ONE job
-whose member tools are sequential steps; a pure-join node (no tools) is an `echo`
-GATE. Each define emits its lines with a LEADING newline and 6-space indent and NO
+whose member tools are sequential steps; a pure join is contracted away, a goal is a verdict. Each define emits its lines with a LEADING newline and 6-space indent and NO
 trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
-  steps/gate                 a pure-join node (no tools): `echo <node>`. It links the
-                             graph and nothing more — no checkout, no work.
+  steps/gate                 a tool-less sink nothing needs: `echo <node>`.
+  steps/verdict              a goal: one step judging every job of the run (VerdictView.Run).
   steps/node                 a node WITH tools: ONE `actions/checkout` (WITH submodules —
                              a project pins its m6e library there, and the projectfile
                              `includes:` reach INTO it, so a submodule-less checkout
@@ -422,18 +421,10 @@ byte-identical, so the drift gate stays quiet for projects that do declare a bin
 {{- end }}
 {{- end }}
 
-{{- /*
-steps/emit — the synthetic notify job (events model, forge half). One shell step, NO
-checkout: it computes success/failure from needs.*.result, builds the neutral envelope
-(field-identical to m6e's emit script), and POSTs it with timeout+retry+backoff. The
-job-level `if:` (always()+webhook-var gate) and `needs:` (every real job) are rendered
-by the workflow template; here we only place the run body under a block scalar. The run
-text is built in Go (EmitView.Run) because every `${{ }}` would collide with `{{ }}`.
-*/ -}}
-{{- define "steps/emit" }}
-      - name: emit lifecycle event
+{{- define "steps/verdict" }}
+      - name: {{ .Job.Name }} verdict
         run: |
-{{ indent 10 .Job.Emit.Run }}
+{{ indent 10 .Job.Verdict.Run }}
 {{- end }}
 
 {{- /*
@@ -465,6 +456,28 @@ so a new action is declared in m6e yaml plus the library, with no renderer chang
         if: {{ . }}
 {{- end }}
         uses: {{ actionRef .Target .Step.Action }}
+{{- end }}
+
+{{- define "providers/preflight" }}
+      - name: {{ .Step.Name }}
+{{- with .Step.Gate }}
+        if: {{ . }}
+{{- end }}
+        uses: {{ actionRef .Target .Step.Action }}
+        with:
+          check: {{ .Step.Command }}
+{{- with .Step.Preflight }}
+          images: |-
+{{- range . }}
+            {{ .Line }}
+{{- end }}
+{{- end }}
+{{- with .Step.EnvForward }}
+          env: |-
+{{- range . }}
+            {{ .Key }}={{ .Value }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{- define "providers/container-exec" }}

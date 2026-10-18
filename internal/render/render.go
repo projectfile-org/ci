@@ -196,6 +196,12 @@ const ActionContainerBuild = ci.ActionContainerBuild
 // credentials map binds those NAMES to secret refs (Task-1 surface, no new design).
 const ActionOciPush = ci.ActionOciPush
 
+// ActionPreflight is the action path whose `images` check receives every image this workflow pulls, with the commands it runs there.
+const ActionPreflight = "preflight"
+
+// preflightImagesCheck is the preflight `run:` that takes the image inventory.
+const preflightImagesCheck = "images"
+
 // ActionContainerExec is the action path that execs a tool's `run` command INSIDE
 // an already-running compose container — the fused live job's test step. It does
 // NOT start a container (run-tool's `docker run`) nor consume a tar: it `docker
@@ -1748,6 +1754,10 @@ type StepView struct {
 	Run      string `json:"run"`
 	Args     string `json:"args,omitempty"`
 	Image    string `json:"image,omitempty"` // AGNOSTIC image PATH; RunTool* split it for the action
+	// ImageVar is the images var NAME the tool runs in, the key of its `requires` range.
+	ImageVar string `json:"-"`
+	// Preflight is the image inventory an `images` preflight step proves, set on that step alone.
+	Preflight []PreflightImage `json:"preflight,omitempty"`
 	// KeepGoing carries Manifest.KeepGoing: the step runs after an earlier step failed, and the job still fails.
 	KeepGoing bool `json:"keep-going,omitempty"`
 	// PinnedTag is a tool image's HARD-pinned tag (an external vendor release like
@@ -2159,11 +2169,8 @@ type JobView struct {
 	If     string   `json:"-"` // target `if:` expression composed from Events at render time (empty => no gate)
 	// Outputs are the job outputs its steps write, set on ReleaseTagNode only.
 	Outputs []KV `json:"outputs,omitempty"`
-	// Emit marks the SYNTHETIC lifecycle-notify job (the forge half of the events model):
-	// a webhook POST of the neutral envelope after every real job. Non-nil => this job
-	// renders via steps/emit (no checkout) and its `if:` is the always()+var gate, NOT the
-	// event-derived jobIf. nil on every real node-job. See EmitView.
-	Emit *EmitView `json:"emit,omitempty"`
+	// Verdict marks a GOAL job: it needs every job of the run, always runs, and states the run's outcome.
+	Verdict *VerdictView `json:"verdict,omitempty"`
 	// Concurrency is a JOB-level concurrency block (nil => omit), carried verbatim from
 	// the owning node's manifest `concurrency:` — the resolver does not synthesise it. Its
 	// use is serialising the publish job so two releases of one image cannot race the
@@ -2179,37 +2186,48 @@ type JobConcurrencyView struct {
 	CancelInProgress bool
 }
 
-// EmitView carries the data the synthetic notify job stamps into the lifecycle
-// envelope: the GOAL name (this workflow's goal) and the forge VAR whose presence
-// gates the whole job. The envelope's project/url come from the forge context
-// (github.repository / the run URL), status/event are computed from needs.*.result —
-// so only these two values are render-time. Field-for-field identical to the m6e-emit
-// envelope (the shared contract; a test pins byte parity of the field set).
-type EmitView struct {
+// VerdictView is a goal job's one step: the goal name, the jobs it judges, and the events webhook var (empty => no POST).
+type VerdictView struct {
 	Goal       string
+	Needs      []string
 	WebhookVar string
 }
 
-// Run is the emit job's single shell step: it computes success/failure from the
-// aggregated needs results, builds the neutral envelope, and POSTs it with timeout +
-// retry + backoff. Built in Go (not the template) because every `${{ }}` expression
-// would otherwise collide with Go's own `{{` delimiter. Fail-soft (`|| true`): a
-// broken sink never reds the workflow, mirroring the m6e emit script.
-func (e EmitView) Run() string {
-	// needs.*.result aggregates every needed job; a failure OR a cancellation is a
-	// failed run. GHA evaluates the ${{ }} to true/false BEFORE the shell sees it.
-	failExpr := "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}"
-	return "" +
+// Run tallies each need's result, emits goal.succeeded|failed|skipped when events are declared, and fails on any failure.
+func (v VerdictView) Run() string {
+	var b strings.Builder
+	b.WriteString("passed=0 skipped=0 failed=0\n")
+	b.WriteString("for pair in")
+	for _, n := range v.Needs {
+		b.WriteString(" \\\n  \"" + n + "=${{ needs." + n + ".result }}\"")
+	}
+	b.WriteString("; do\n" +
+		"  echo \"verdict need=${pair%%=*} result=${pair#*=}\"\n" +
+		"  case \"${pair#*=}\" in\n" +
+		"    success) passed=$((passed + 1)) ;;\n" +
+		"    skipped) skipped=$((skipped + 1)) ;;\n" +
+		"    *) failed=$((failed + 1)) ;;\n" +
+		"  esac\n" +
+		"done\n" +
 		"status=success; event=goal.succeeded\n" +
-		"if [ \"" + failExpr + "\" = true ]; then\n" +
+		"if [ \"${failed}\" -gt 0 ]; then\n" +
 		"  status=failure; event=goal.failed\n" +
+		"elif [ \"${passed}\" -eq 0 ]; then\n" +
+		"  status=skipped; event=goal.skipped\n" +
 		"fi\n" +
-		emitGuard("$event") +
-		"payload=$(printf '{\"event\":\"%s\",\"project\":\"%s\",\"goal\":\"%s\",\"status\":\"%s\",\"url\":\"%s\",\"ts\":\"%s\",\"payload\":{}}' \\\n" +
-		"  \"$event\" \"${{ github.repository }}\" \"" + e.Goal + "\" \"$status\" \\\n" +
-		"  \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\" \\\n" +
-		"  \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\")\n" +
-		emitCurl(e.WebhookVar)
+		"echo \"verdict goal=" + v.Goal + " status=${status} passed=${passed} skipped=${skipped} failed=${failed}\"\n")
+	if v.WebhookVar != "" {
+		b.WriteString("if [ -n \"${{ vars." + v.WebhookVar + " }}\" ]; then (\n" +
+			emitGuard("$event") +
+			"payload=$(printf '{\"event\":\"%s\",\"project\":\"%s\",\"goal\":\"%s\",\"status\":\"%s\",\"url\":\"%s\",\"ts\":\"%s\",\"payload\":{}}' \\\n" +
+			"  \"$event\" \"${{ github.repository }}\" \"" + v.Goal + "\" \"$status\" \\\n" +
+			"  \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\" \\\n" +
+			"  \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\")\n" +
+			emitCurl(v.WebhookVar) + "\n" +
+			")\nfi\n")
+	}
+	b.WriteString("[ \"${failed}\" -eq 0 ]")
+	return b.String()
 }
 
 // StepEmitView is the TOOL-level emission (ci.Manifest.Emit): the FACT that a publish
@@ -2301,23 +2319,24 @@ func emitCurl(webhookVar string) string {
 		"  \"${{ vars." + webhookVar + " }}\" || true"
 }
 
-// emitIf gates the notify job: it runs after every needed job regardless of their
-// result (always()), but ONLY when the webhook var is configured — so an opted-in
-// repo with no var set (the secure default) emits nothing.
-func emitIf(webhookVar string) string {
-	return "${{ always() && vars." + webhookVar + " != '' }}"
+// verdictIf runs a goal job whatever its needs did, on the goal's own events only.
+func verdictIf(events []string, primary []string) string {
+	if gate := jobIf(events, primary); gate != "" {
+		return "${{ always() && (" + gate + ") }}"
+	}
+	return "${{ always() }}"
 }
 
 // foreignPR is true on every event except a pull request whose head lives in this repository.
 const foreignPR = "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)"
 
-// foreignPRIf gates an un-gated job and the notify job so a same-repo PR reuses its push run.
+// foreignPRIf gates an un-gated job and a goal job so a same-repo PR reuses its push run.
 func foreignPRIf(job JobView, pullRequest bool) string {
 	switch {
-	case !pullRequest || (len(job.Events) > 0 && job.Emit == nil):
+	case !pullRequest || len(job.Events) > 0:
 		return job.If
-	case job.Emit != nil:
-		genlog.Debug("notify job skips same-repo pull requests", "job", job.Name)
+	case job.Verdict != nil:
+		genlog.Debug("goal job skips same-repo pull requests", "job", job.Name)
 		return strings.TrimSuffix(job.If, " }}") + " && " + foreignPR + " }}"
 	}
 	genlog.Debug("job skips same-repo pull requests", "job", job.Name)
@@ -2944,6 +2963,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		Run:       run,
 		Args:      j.Args,
 		Image:     img,
+		ImageVar:  imageVarOf(man.Image),
 		PinnedTag: pin,
 		SelfImage: self,
 		Action:    man.Action,
@@ -3034,7 +3054,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			step.Env = append(step.Env, EnvVar{Key: k, Value: substAxes(man.EnvSet[k], subst)})
+			step.Env = append(step.Env, EnvVar{Key: k, Value: lowerEnvSet(substAxes(man.EnvSet[k], subst), buildArgDefaults(b))})
 		}
 	}
 	// Inject the resolver-computed published-image ref for a scanner that requested it
@@ -3850,6 +3870,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	}
 
 	jobs = nameFusedAfterSource(jobs, fusedOrder, toolNode, nodeAdj, whenByNode, st.Goals)
+	jobs, contracted := contractGates(jobs, st.Goals)
 
 	// Every job, gates included, accepts a skip from a need that runs on fewer events than it does.
 	for i := range jobs {
@@ -3862,6 +3883,13 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			buildErr = fmt.Errorf("org.projectfile.ci: release.stable-branch %q gates a release on a %q node this workflow does not reach", b.StableBranch, ReleaseTagNode)
 		}
 	}
+
+	webhookVar := ""
+	if b != nil && b.Events != nil {
+		webhookVar = b.Events.WebhookVar
+	}
+	jobs = goalVerdicts(jobs, st.Goals, webhookVar)
+	jobs = preflightImages(jobs, b)
 
 	// One ordering rule for the whole workflow: name-sorted (node-jobs and gates alike).
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
@@ -3887,22 +3915,17 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// force the broad push/PR surface back on and re-break a schedule-only goal (the
 	// exact bug goalScope fixes). It instead rides whatever events the file already
 	// fires for, gated by its own always()+var `if:`.
-	on := buildOn(jobs, triggers, goalScope, primaryBranches(b))
+	on := buildOn(append(slices.Clone(jobs), contracted...), triggers, goalScope, primaryBranches(b))
 	if b != nil {
 		on = stableReleases(on, b.StableBranch, b.ReleaseTag)
 	}
-	if b != nil && b.Events != nil {
-		// Stamp the goal into every tool-level emission before the notify job joins them:
-		// a fact event and the goal event describe one run and MUST name the same goal,
-		// and the goal name is only resolved here (toolStep runs before it is known).
-		for ji := range jobs {
-			for si := range jobs[ji].Steps {
-				if e := jobs[ji].Steps[si].Emit; e != nil {
-					e.Goal = name
-				}
+	// A fact event names the same goal as the verdict, and the goal name is only resolved here.
+	for ji := range jobs {
+		for si := range jobs[ji].Steps {
+			if e := jobs[ji].Steps[si].Emit; e != nil {
+				e.Goal = name
 			}
 		}
-		jobs = append(jobs, emitJob(jobs, name, b.Events.WebhookVar))
 	}
 	// Workflow-level env: lower each neutral value the SAME way job env is lowered
 	// (a ${REGISTRY} ref -> ${{ vars.· }}), key-sorted for byte-stable output. The tag
@@ -3930,22 +3953,215 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	}
 }
 
-// emitJob synthesises the lifecycle-notify job (the forge half of the events model):
-// it `needs` every real job so it runs last, and carries the EmitView the steps/emit
-// partial + emitIf gate read. reserved name "notify" — a project MUST NOT declare a CI
-// node by that name (phase 1 keeps it a fixed reserved token, KISS).
-func emitJob(realJobs []JobView, goal, webhookVar string) JobView {
-	needs := make([]string, 0, len(realJobs))
-	for _, j := range realJobs {
-		needs = append(needs, j.Name)
+// PreflightImage is one image a run pulls: its path and tag (Version "-" when Image is a full ref), the commands run in it, its range.
+type PreflightImage struct {
+	Image    string `json:"image"`
+	Version  string `json:"version"`
+	Commands string `json:"commands,omitempty"`
+	Requires string `json:"requires,omitempty"`
+}
+
+// Line is the one input line the preflight action reads, `-` standing for an empty field.
+func (p PreflightImage) Line() string {
+	field := func(v string) string {
+		if v == "" {
+			return "-"
+		}
+		return v
 	}
-	sort.Strings(needs)
-	return JobView{
-		Name:  "notify",
-		Needs: needs,
-		Class: ClassGate,
-		Emit:  &EmitView{Goal: goal, WebhookVar: webhookVar},
+	return strings.Join([]string{p.Image, field(p.Version), field(p.Commands), field(p.Requires)}, " ")
+}
+
+// imageVarOf is the images var NAME a manifest `image:` names, empty for a literal ref or the project's own image.
+func imageVarOf(image string) string {
+	if image != ImageFullnameEnv && imageVarName.MatchString(image) {
+		return image
 	}
+	return ""
+}
+
+// lowerEnvSet lowers each upper-case `${NAME}` in a set-env value to the forge variable store, leaving any other text as written.
+func lowerEnvSet(v string, defaults map[string]string) string {
+	return imageVarRefRe.ReplaceAllStringFunc(v, func(m string) string {
+		name := imageVarRefRe.FindStringSubmatch(m)[1]
+		if !imageVarName.MatchString(name) {
+			return m
+		}
+		return "${{ " + refExprInner(name, defaults, nil, nil) + " }}"
+	})
+}
+
+// preflightImages hands every `images` preflight step the tool images of this workflow and, when it builds, its declared base images.
+func preflightImages(jobs []JobView, b *ci.Build) []JobView {
+	var probes []*StepView
+	commands := map[string]map[string]bool{}
+	entries := map[string]PreflightImage{}
+	builds := false
+	for ji := range jobs {
+		for si := range jobs[ji].Steps {
+			s := &jobs[ji].Steps[si]
+			switch {
+			case s.Action == ActionPreflight && s.Run == preflightImagesCheck:
+				probes = append(probes, s)
+				continue
+			case s.Action == ActionContainerBuild:
+				builds = true
+				continue
+			case s.Image == "" || s.SelfImage || s.Action != "":
+				continue
+			}
+			e := PreflightImage{Image: s.RunToolImage(), Version: s.RunToolVersion()}
+			if strings.Contains(e.Image+e.Version, "matrix.") {
+				genlog.Debug("preflight skips a cell-bound image", "step", s.Name, "image", e.Image)
+				continue
+			}
+			key := e.Image + ":" + e.Version
+			if b != nil {
+				e.Requires = b.ImageRequires[s.ImageVar]
+			}
+			entries[key] = e
+			if commands[key] == nil {
+				commands[key] = map[string]bool{}
+			}
+			if cmd := firstWord(s.Run); cmd != "" && !strings.ContainsAny(cmd, "/=$") {
+				commands[key][cmd] = true
+			}
+		}
+	}
+	if len(probes) == 0 {
+		return jobs
+	}
+	if builds && b != nil {
+		for _, a := range b.Args {
+			if ref, ok := declaredImageRef(a.Name, b); ok && !strings.Contains(ref, "matrix.") {
+				entries[ref] = PreflightImage{Image: ref, Requires: b.ImageRequires[a.Name]}
+			}
+		}
+	}
+	inventory := make([]PreflightImage, 0, len(entries))
+	for _, key := range sortedKeysOf(entries) {
+		e := entries[key]
+		names := make([]string, 0, len(commands[key]))
+		for c := range commands[key] {
+			names = append(names, c)
+		}
+		sort.Strings(names)
+		e.Commands = strings.Join(names, ",")
+		inventory = append(inventory, e)
+	}
+	for _, p := range probes {
+		p.Preflight = inventory
+	}
+	genlog.Info("preflight image inventory", "images", len(inventory), "steps", len(probes), "builds", builds)
+	return jobs
+}
+
+// firstWord is the command a run string executes, empty when it has none.
+func firstWord(run string) string {
+	if f := strings.Fields(run); len(f) > 0 {
+		return f[0]
+	}
+	return ""
+}
+
+// sortedKeysOf is the sorted key set of any string-keyed map.
+func sortedKeysOf[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// contractGates drops every tool-less job that is neither a goal nor a sink, wiring its consumers to the jobs behind it.
+func contractGates(jobs []JobView, goals []string) (kept, dropped []JobView) {
+	needed := map[string]bool{}
+	for _, j := range jobs {
+		for _, n := range j.Needs {
+			needed[n] = true
+		}
+	}
+	gates := map[string][]string{}
+	for _, j := range jobs {
+		if j.IsGate && len(j.Steps) == 0 && needed[j.Name] && !slices.Contains(goals, j.Name) {
+			gates[j.Name] = j.Needs
+		}
+	}
+	memo := map[string][]string{}
+	var expand func(string) []string
+	expand = func(n string) []string {
+		up, gate := gates[n]
+		if !gate {
+			return []string{n}
+		}
+		if r, ok := memo[n]; ok {
+			return r
+		}
+		var r []string
+		for _, u := range up {
+			r = append(r, expand(u)...)
+		}
+		memo[n] = r
+		return r
+	}
+	for _, j := range jobs {
+		if _, gate := gates[j.Name]; gate {
+			genlog.Debug("pure join contracted", "job", j.Name, "needs", j.Needs, "becomes", expand(j.Name))
+			dropped = append(dropped, j)
+			continue
+		}
+		var needs []string
+		for _, n := range j.Needs {
+			needs = append(needs, expand(n)...)
+		}
+		if len(j.Needs) > 0 {
+			sort.Strings(needs)
+			j.Needs = dedupe(needs)
+		}
+		kept = append(kept, j)
+	}
+	genlog.Info("pure joins contracted out of the forge graph", "dropped", len(dropped), "kept", len(kept))
+	return kept, dropped
+}
+
+// goalVerdicts makes every tool-less goal job need its whole closure and judge it in one verdict step.
+func goalVerdicts(jobs []JobView, goals []string, webhookVar string) []JobView {
+	index := map[string]int{}
+	for i, j := range jobs {
+		index[j.Name] = i
+	}
+	for i := range jobs {
+		j := &jobs[i]
+		if !j.IsGate || len(j.Steps) > 0 || !slices.Contains(goals, j.Name) {
+			continue
+		}
+		seen := map[string]bool{}
+		var walk func(string)
+		walk = func(n string) {
+			if seen[n] {
+				return
+			}
+			seen[n] = true
+			if k, ok := index[n]; ok {
+				for _, u := range jobs[k].Needs {
+					walk(u)
+				}
+			}
+		}
+		for _, n := range j.Needs {
+			walk(n)
+		}
+		closure := make([]string, 0, len(seen))
+		for n := range seen {
+			closure = append(closure, n)
+		}
+		sort.Strings(closure)
+		j.Needs, j.SkippableNeeds = closure, nil
+		j.Verdict = &VerdictView{Goal: j.Name, Needs: closure, WebhookVar: webhookVar}
+		genlog.Info("goal judges its closure", "goal", j.Name, "needs", len(closure), "webhook", webhookVar)
+	}
+	return jobs
 }
 
 // JSON serialises the job model (the resolver's `resolve` output, and the
@@ -4028,14 +4244,12 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 	}
 	var root *template.Template
 	root = template.New("root").Funcs(funcs).Funcs(template.FuncMap{
-		// stepbody paints a whole job: a pure-join node is an `echo` GATE; every other
-		// node is `steps/node` — one checkout, the shared downloads/`docker load`, then
-		// each member tool as a step fragment.
+		// stepbody paints a whole job: a goal is its verdict, a kept sink gate an echo, any other node `steps/node`.
 		"stepbody": func(tgt Target, j JobView) (string, error) {
 			name := "steps/node"
 			switch {
-			case j.Emit != nil:
-				name = "steps/emit" // the synthetic notify job: one webhook step, no checkout
+			case j.Verdict != nil:
+				name = "steps/verdict"
 			case j.IsGate:
 				name = "steps/gate"
 			}
@@ -4088,18 +4302,15 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 	copy(jobs, m.Jobs)
 	for i := range jobs {
 		jobs[i].Env = bindEnv(jobs[i], plat.Credentials)
-		// Compose the per-job `if:` from the neutral event set (the GHA/Forgejo
-		// spelling stays out of the model — same boundary as bindEnv/composeImage).
-		// The synthetic notify job is the exception: its gate is always()+webhook-var,
-		// not the event-derived jobIf (which would be empty for an un-gated job).
-		if jobs[i].Emit != nil {
-			jobs[i].If = emitIf(jobs[i].Emit.WebhookVar)
+		// Compose the per-job `if:` from the neutral event set; a goal job runs always() to judge its needs itself.
+		if jobs[i].Verdict != nil {
+			jobs[i].If = verdictIf(jobs[i].Events, m.PrimaryBranches)
 		} else {
 			jobs[i].If = jobIf(jobs[i].Events, m.PrimaryBranches)
 		}
 		jobs[i].If = foreignPRIf(jobs[i], m.On.PullRequest)
 		// explicit, so GHA tests the direct needs as Forgejo does, not every ancestor
-		if len(jobs[i].Needs) > 0 && jobs[i].Emit == nil {
+		if len(jobs[i].Needs) > 0 && jobs[i].Verdict == nil {
 			jobs[i].If = needsIf(jobs[i].Needs, jobs[i].SkippableNeeds, jobs[i].If)
 		}
 		// Fan the publish job over its destinations, per lowering. Before the env

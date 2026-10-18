@@ -7,6 +7,7 @@ package render
 import (
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -339,21 +340,12 @@ func TestSerialiseChainsCells(t *testing.T) {
 	if got := byName["image-built-26"].Needs; len(got) != 1 {
 		t.Errorf("the tail link should wait on its predecessor alone, got needs %v", got)
 	}
-	// The join carries the AUTHORED name and waits on every link, so the consumer edge
-	// below is a real all-cells barrier.
-	join, ok := byName["image-built"]
-	if !ok {
-		t.Fatalf("the join must keep the authored node name; jobs: %v", names(m.Jobs))
+	// The join is contracted: no job keeps the authored name, and the consumer waits on every link instead.
+	if _, ok := byName["image-built"]; ok {
+		t.Errorf("the tool-less join must not render as a job; jobs: %v", names(m.Jobs))
 	}
-	if !join.IsGate || len(join.Steps) != 0 {
-		t.Errorf("the join must be a pure gate, got %+v", join)
-	}
-	if !contains(join.Needs, "image-built-24") || !contains(join.Needs, "image-built-26") {
-		t.Errorf("the join must wait on every link, needs: %v", join.Needs)
-	}
-	// The whole point of the join: the consumer is UNTOUCHED by the split.
-	if got := byName["image-scanned"].Needs; !contains(got, "image-built") {
-		t.Errorf("consumer edge should still name the authored node, got %v", got)
+	if got := byName["image-scanned"].Needs; !contains(got, "image-built-24") || !contains(got, "image-built-26") {
+		t.Errorf("consumer must wait on every link, got %v", got)
 	}
 }
 
@@ -3125,15 +3117,13 @@ func TestLiveLeavesFuse(t *testing.T) {
 	if jobOf(m, testDCUp).Name != "container-tested" {
 		t.Errorf("dc-up-d must be ABSORBED into the fused live node-job, got host %q", jobOf(m, testDCUp).Name)
 	}
-	// The fused job is named for the sink's NODE (container-tested), hosts the ordered
-	// member steps, and is a CELL (per series). A gate stands for the absorbed member's
-	// node (container-ready).
+	// The fused job is named for the sink's NODE (container-tested); the absorbed member's emptied node is contracted away.
 	sink, ok := by["container-tested"]
 	if !ok {
 		t.Fatalf("the fused job must be the sink's node container-tested; jobs: %+v", m.Jobs)
 	}
-	if cr := by["container-ready"]; !cr.IsGate {
-		t.Errorf("the absorbed member's node (container-ready) must become an echo gate: %+v", cr)
+	if cr, ok := by["container-ready"]; ok {
+		t.Errorf("the absorbed member's emptied node (container-ready) must not render as a job: %+v", cr)
 	}
 	// The fused job runs its members as ordered run-steps: dc-up-d (dependency) first,
 	// then container-test (the sink). No `action`, no `make` — just the run commands.
@@ -3198,11 +3188,9 @@ func TestLiveLeavesFuse(t *testing.T) {
 	if sink.Class != testCell || len(sink.Matrix) != 1 {
 		t.Errorf("fused job must remain a CELL with the build's axis: %+v", sink)
 	}
-	// Node needs: the authored node edge container-tested → container-ready. image-built
-	// is reached TRANSITIVELY (container-ready → image-built), which orders the build it
-	// loads — no extra edge needed in the node model.
-	if len(sink.Needs) != 1 || sink.Needs[0] != "container-ready" {
-		t.Errorf("fused node needs must be its authored node-dep [container-ready], got %v", sink.Needs)
+	// Node needs: the contracted container-ready hands its own need (image-built) straight to the fused job.
+	if len(sink.Needs) != 1 || sink.Needs[0] != "image-built" {
+		t.Errorf("fused node needs must be the build behind the contracted join [image-built], got %v", sink.Needs)
 	}
 	// The build→live tar hand-off is DERIVED from a member's build edge: the node pulls
 	// the cell-keyed tar ONCE and `docker load`s it into the daemon for compose.
@@ -3292,9 +3280,9 @@ func TestFusedGroupSpanningGateIsAcyclic(t *testing.T) {
 	if contains(adj["container-ready"], "container-tested") {
 		t.Errorf("container-ready must not need the fused node container-tested (the cycle back-edge): %v", adj["container-ready"])
 	}
-	// The forward ordering survives: the fused node still waits on the gate.
-	if !contains(adj["container-tested"], "container-ready") {
-		t.Errorf("fused node container-tested must still wait on the container-ready gate, got %v", adj["container-tested"])
+	// The forward ordering survives: the fused node waits on the build behind the contracted gate.
+	if !contains(adj["container-tested"], "image-built") {
+		t.Errorf("fused node container-tested must still wait on image-built, got %v", adj["container-tested"])
 	}
 	// Whole graph must topologically sort — the property `act` needs to build its
 	// stage list. Three-colour DFS: a back-edge to a node still on the stack = cycle.
@@ -3454,10 +3442,10 @@ func TestNodesMaterialiseAsGates(t *testing.T) {
 			t.Errorf("node %q must host exactly the %q step, got %+v", node, tool, j.Steps)
 		}
 	}
-	// The pure-join goal is a gate mirroring its node-deps.
+	// The pure-join goal is a verdict job over its closure.
 	g, ok := by["ready-to-publish"]
-	if !ok || !g.IsGate || g.Class != ClassGate {
-		t.Errorf("pure-join ready-to-publish must be a gate (IsGate + ClassGate), got %+v", g)
+	if !ok || !g.IsGate || g.Class != ClassGate || g.Verdict == nil {
+		t.Errorf("pure-join ready-to-publish must be a verdict gate, got %+v", g)
 	}
 	if !reflect.DeepEqual(g.Needs, []string{testImageBuilt, "linted"}) {
 		t.Errorf("gate ready-to-publish needs = %v, want [image-built linted]", g.Needs)
@@ -3473,9 +3461,14 @@ func TestNodesMaterialiseAsGates(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(gha)
-	// The pure-join goal renders as a bare echo gate, no checkout.
-	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    if: ${{ !cancelled() && needs.image-built.result == 'success' && needs.linted.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}\n    steps:\n      - run: echo ready-to-publish") {
-		t.Errorf("pure-join goal must render as an echo gate mirroring its needs:\n%s", s)
+	// The pure-join goal renders as one verdict step that always runs, no checkout.
+	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}\n    steps:\n      - name: ready-to-publish verdict\n        run: |\n") {
+		t.Errorf("pure-join goal must render as a verdict over its needs:\n%s", s)
+	}
+	for _, want := range []string{"image-built=${{ needs.image-built.result }}", "linted=${{ needs.linted.result }}", `[ "${failed}" -eq 0 ]`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("verdict step missing %q:\n%s", want, s)
+		}
 	}
 	// The tool-bearing nodes render as jobs (the tools are inside them as steps).
 	for _, node := range []string{"linted:", "image-built:"} {
@@ -4419,20 +4412,18 @@ func didPanic(fn func()) (panicked bool) {
 	return
 }
 
-// eventsSubtree is a minimal opted-in project: one goal node, one tool. The events
-// wiring is orthogonal to the DAG shape, so a tiny graph exercises the notify job.
+// eventsSubtree is a minimal project: a tool-less goal over one tool node, so the goal renders as a verdict.
 const eventsSubtree = `{
   "tools": {
     "shellcheck": {}
   },
   "nodes": {
-    "source-is-valid": {"goal": true, "needs": {"shellcheck": true}}
+    "source-is-linted": {"needs": {"shellcheck": true}},
+    "source-is-valid":  {"goal": true, "needs": {"source-is-linted": true}}
   }
 }`
 
-// TestEmitJobRenders proves the events model's forge half: an opted-in project grows a
-// `notify` job that POSTs the neutral envelope, gated on the webhook var, needing every
-// real job; a project that did NOT opt in grows nothing (secure/quiet default).
+// TestEmitJobRenders pins the goal verdict: it needs its closure, runs always(), tallies each need, fails on a failure, and POSTs only when events are declared.
 func TestEmitJobRenders(t *testing.T) {
 	st, err := ci.Parse([]byte(eventsSubtree))
 	if err != nil {
@@ -4443,59 +4434,46 @@ func TestEmitJobRenders(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	// Opted OUT (nil Build, or a Build with no Events): no notify job at all.
 	outOff, err := Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(outOff), "notify:") || strings.Contains(string(outOff), "emit lifecycle event") {
-		t.Errorf("no events declared must render NO notify job:\n%s", outOff)
+	off := string(outOff)
+	if strings.Contains(off, "notify:") || strings.Contains(off, "curl") {
+		t.Errorf("no events declared must render NO webhook:\n%s", off)
+	}
+	if !strings.Contains(off, "- name: source-is-valid verdict") {
+		t.Errorf("a tool-less goal must render its verdict without events too:\n%s", off)
 	}
 
-	// Opted IN: events subtree present -> a notify job.
-	b := &ci.Build{Events: &ci.Events{WebhookVar: ci.DefaultWebhookVar}}
-	m := Build(rm, st, b)
-	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	out, err := Workflow(Build(rm, st, &ci.Build{Events: &ci.Events{WebhookVar: ci.DefaultWebhookVar}}), Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
-	t.Logf("rendered workflow:\n%s", s)
-
-	// The job exists, gated on always()+the webhook var, needing the real job.
 	for _, want := range []string{
-		"\n  notify:\n",
-		"if: ${{ always() && vars.EVENTS_WEBHOOK_URL != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}",
-		"needs: [\"source-is-valid\"]",
-		"- name: emit lifecycle event",
-		"run: |",
+		"\n  source-is-valid:\n",
+		"if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}",
+		"needs: [\"source-is-linted\"]",
+		"- name: source-is-valid verdict",
+		`"source-is-linted=${{ needs.source-is-linted.result }}"`,
+		"status=failure; event=goal.failed",
+		"status=skipped; event=goal.skipped",
+		"event=goal.succeeded",
+		`if [ -n "${{ vars.EVENTS_WEBHOOK_URL }}" ]; then (`,
+		`|| true`,
+		`[ "${failed}" -eq 0 ]`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("notify job missing %q\ngot:\n%s", want, s)
+			t.Errorf("verdict job missing %q\ngot:\n%s", want, s)
 		}
 	}
-
-	// The envelope is field-identical to the m6e emit script's contract, in order.
+	if strings.Contains(s, "notify:") {
+		t.Errorf("the verdict replaces the notify job:\n%s", s)
+	}
 	env := `printf '{"event":"%s","project":"%s","goal":"%s","status":"%s","url":"%s","ts":"%s","payload":{}}'`
 	if !strings.Contains(s, env) {
 		t.Errorf("envelope shape/order must match the m6e contract\nwant substring: %s\ngot:\n%s", env, s)
-	}
-	// Success/failure is computed from the aggregated needs results, and the run is
-	// fail-soft so a broken sink never reds the workflow.
-	for _, want := range []string{
-		"contains(needs.*.result, 'failure')",
-		"event=goal.succeeded",
-		"status=failure; event=goal.failed",
-		`|| true`,
-	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("emit run missing %q\ngot:\n%s", want, s)
-		}
-	}
-
-	// The goal name is stamped into the envelope (the workflow is named for its goal).
-	if !strings.Contains(s, `"source-is-valid"`) {
-		t.Errorf("envelope should stamp the goal name source-is-valid\ngot:\n%s", s)
 	}
 }
 
@@ -4607,8 +4585,7 @@ func TestToolEmitFollowsItsTool(t *testing.T) {
 	}
 }
 
-// TestEmitJobIsTargetAgnostic proves the webhook curl is universal — GHA and Forgejo
-// render the SAME notify step (the whole point of choosing a generic webhook).
+// TestEmitJobIsTargetAgnostic proves GHA and Forgejo render the SAME verdict step.
 func TestEmitJobIsTargetAgnostic(t *testing.T) {
 	st, _ := ci.Parse([]byte(eventsSubtree))
 	rm, _ := resolve.Resolve(st)
@@ -4624,9 +4601,9 @@ func TestEmitJobIsTargetAgnostic(t *testing.T) {
 	}
 	emitBlock := func(b []byte) string {
 		s := string(b)
-		i := strings.Index(s, "- name: emit lifecycle event")
+		i := strings.Index(s, "- name: source-is-valid verdict")
 		if i < 0 {
-			t.Fatalf("no emit step:\n%s", s)
+			t.Fatalf("no verdict step:\n%s", s)
 		}
 		return s[i:]
 	}
@@ -4680,14 +4657,13 @@ func TestSupplyChainPublishFuse(t *testing.T) {
 		by[j.Name] = j
 	}
 
-	// The three `publish`-fuse leaves collapse to the sink's node-job; the intermediate
-	// spine node (image-is-signed) becomes a gate.
+	// The three `publish`-fuse leaves collapse to the sink's node-job; the absorbed spine node is contracted out.
 	sink, ok := by["image-is-attested"]
 	if !ok {
 		t.Fatalf("the fused publish job must be the sink node image-is-attested; jobs: %+v", m.Jobs)
 	}
-	if !by["image-is-signed"].IsGate {
-		t.Errorf("the absorbed sign node (image-is-signed) must become an echo gate: %+v", by["image-is-signed"])
+	if j, ok := by["image-is-signed"]; ok {
+		t.Errorf("the absorbed sign node (image-is-signed) must be contracted out of the forge graph: %+v", j)
 	}
 
 	// Ordered steps: oci-push (the push), then cosign-sign, then cosign-attest (sink).
@@ -4793,18 +4769,22 @@ const edgeSupplyChainSubtree = `{
   }
 }`
 
-// gateOverNarrowNeedSubtree is an ungated join gate over a node that runs on branch and tag pushes only.
+// gateOverNarrowNeedSubtree is an ungated join over a node that runs on branch and tag pushes only, consumed by a tool node.
 const gateOverNarrowNeedSubtree = `{
   "image": "b19/ubuntu",
-  "tools": {"key-probe": {"image": "d9t/go-tools", "run": "auto-cosign preflight"}},
+  "tools": {
+    "key-probe": {"image": "d9t/go-tools", "run": "auto-cosign preflight"},
+    "build":     {"image": "d9t/go-tools", "run": "auto-go-build"}
+  },
   "nodes": {
-    "key-is-ready":  {"when": {"events": ["tag", "preview", "primary"]}, "needs": {"key-probe": true}},
-    "inputs-are-ok": {"needs": {"key-is-ready": true}},
-    "published":     {"goal": true, "needs": {"inputs-are-ok": true}}
+    "key-is-ready":   {"when": {"events": ["tag", "preview", "primary"]}, "needs": {"key-probe": true}},
+    "inputs-are-ok":  {"needs": {"key-is-ready": true}},
+    "image-is-built": {"needs": {"inputs-are-ok": true, "build": true}},
+    "published":      {"goal": true, "needs": {"image-is-built": true}}
   }
 }`
 
-// TestGateToleratesEventSkippedNeed pins that a join gate over a narrower-gated node still runs where that node is skipped.
+// TestGateToleratesEventSkippedNeed pins that the consumer of a contracted join still runs where the join's narrower need is skipped.
 func TestGateToleratesEventSkippedNeed(t *testing.T) {
 	st, err := ci.Parse([]byte(gateOverNarrowNeedSubtree))
 	if err != nil {
@@ -4815,21 +4795,26 @@ func TestGateToleratesEventSkippedNeed(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	m := Build(rm, st, nil)
-	var gate JobView
+	by := map[string]JobView{}
 	for _, j := range m.Jobs {
-		if j.Name == "inputs-are-ok" {
-			gate = j
-		}
+		by[j.Name] = j
 	}
-	if _, ok := gate.SkippableNeeds["key-is-ready"]; !ok {
-		t.Fatalf("the gate must tolerate a skipped key-is-ready, got %v", gate.SkippableNeeds)
+	if _, ok := by["inputs-are-ok"]; ok {
+		t.Fatalf("the tool-less join inputs-are-ok must be contracted out, jobs: %+v", m.Jobs)
+	}
+	consumer := by["image-is-built"]
+	if !slices.Contains(consumer.Needs, "key-is-ready") {
+		t.Fatalf("the consumer must need the join's upstream key-is-ready directly, got %v", consumer.Needs)
+	}
+	if _, ok := consumer.SkippableNeeds["key-is-ready"]; !ok {
+		t.Fatalf("the consumer must tolerate a skipped key-is-ready, got %v", consumer.SkippableNeeds)
 	}
 	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(out), "needs.key-is-ready.result == 'skipped'") {
-		t.Errorf("the rendered gate must accept a skipped key-is-ready, got:\n%s", out)
+		t.Errorf("the rendered consumer must accept a skipped key-is-ready, got:\n%s", out)
 	}
 }
 
@@ -6529,5 +6514,163 @@ func TestLefthookWithoutSubtreeIsNoOp(t *testing.T) {
 	}
 	if strings.Contains(string(out), "commands:") {
 		t.Fatalf("Lefthook(nil) rendered hooks:\n%s", out)
+	}
+}
+
+// preflightSubtree is a preflight join over an images and a hosts probe, ahead of two go-tools steps.
+const preflightSubtree = `{
+  "tools": {
+    "images-preflight": {"action": "preflight", "run": "images"},
+    "hosts-preflight":  {"action": "preflight", "run": "hosts", "set-env": {"PREFLIGHT_HOSTS": "${M6E_APT_CACHE_HOST}:${M6E_APT_CACHE_PORT} ${lower}"}},
+    "go-test":          {"image": "D9T_GO_TOOLS_IMAGE", "run": "auto-go-test ./..."},
+    "go-lint":          {"image": "D9T_GO_TOOLS_IMAGE", "run": "auto-go-lint"}
+  },
+  "nodes": {
+    "preflight-passed": {"needs": {"images-preflight": true, "hosts-preflight": true}},
+    "source-is-tested": {"needs": {"preflight-passed": true, "go-test": true, "go-lint": true}},
+    "published":        {"goal": true, "needs": {"source-is-tested": true}}
+  }
+}`
+
+// TestPreflightImagesInventory pins that the images probe lists every tool image once, with its sorted commands and declared range.
+func TestPreflightImagesInventory(t *testing.T) {
+	st, err := ci.Parse([]byte(preflightSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	b := &ci.Build{
+		Images:        map[string]string{"D9T_GO_TOOLS_IMAGE": "${D9T_DOCKER_REGISTRY}/d9t/go-tools:${M6E_BASE_IMAGE_DEFAULT_VERSION}"},
+		ImageRequires: map[string]string{"D9T_GO_TOOLS_IMAGE": ">=1.4.0,<2.0.0"},
+	}
+	m := Build(rm, st, b)
+	probe := steps(m)["images-preflight"]
+	if len(probe.Preflight) != 1 {
+		t.Fatalf("want one inventory entry, got %+v", probe.Preflight)
+	}
+	got := probe.Preflight[0]
+	if got.Commands != "auto-go-lint,auto-go-test" || got.Requires != ">=1.4.0,<2.0.0" {
+		t.Errorf("inventory entry: got %+v", got)
+	}
+	if hosts := steps(m)["hosts-preflight"]; hosts.Preflight != nil {
+		t.Errorf("only the images check takes the inventory, hosts got %+v", hosts.Preflight)
+	}
+	out, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"check: images",
+		"images: |-\n            " + got.Line(),
+		"check: hosts",
+		"PREFLIGHT_HOSTS=${{ vars.M6E_APT_CACHE_HOST }}:${{ vars.M6E_APT_CACHE_PORT }} ${lower}",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("rendered preflight missing %q\ngot:\n%s", want, s)
+		}
+	}
+}
+
+// TestPreflightLineMarksEmptyFields pins the `-` placeholder for an empty field of an inventory line.
+func TestPreflightLineMarksEmptyFields(t *testing.T) {
+	if got := (PreflightImage{Image: "kiota.ch/b19/ubuntu:resolute"}).Line(); got != "kiota.ch/b19/ubuntu:resolute - - -" {
+		t.Errorf("Line: got %q", got)
+	}
+}
+
+// TestLowerEnvSet pins that only an upper-case `${NAME}` lowers to the variable store.
+func TestLowerEnvSet(t *testing.T) {
+	got := lowerEnvSet("${HOST}:${PORT} ${lower} ${Mixed} plain", map[string]string{"PORT": "3142"})
+	want := "${{ vars.HOST }}:${{ vars.PORT || '3142' }} ${lower} ${Mixed} plain"
+	if got != want {
+		t.Errorf("lowerEnvSet:\n got %q\nwant %q", got, want)
+	}
+}
+
+// testGoalJob is the goal name the contraction and verdict unit tests share.
+const testGoalJob = "shipped"
+
+// TestContractGates pins that a chain of joins collapses onto its tool jobs, a goal and an unneeded sink gate stay, and dropped joins are returned.
+func TestContractGates(t *testing.T) {
+	jobs := []JobView{
+		{Name: "a", Steps: []StepView{{Name: "a"}}},
+		{Name: "j1", IsGate: true, Needs: []string{"a"}},
+		{Name: "j2", IsGate: true, Needs: []string{"j1", "a"}},
+		{Name: "b", Steps: []StepView{{Name: "b"}}, Needs: []string{"j2"}},
+		{Name: "sink", IsGate: true, Needs: []string{"b"}},
+		{Name: testGoalJob, IsGate: true, Needs: []string{"b", "j2"}},
+	}
+	kept, dropped := contractGates(jobs, []string{testGoalJob})
+	var names []string
+	for _, j := range dropped {
+		names = append(names, j.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"j1", "j2"}) {
+		t.Errorf("dropped: got %v", names)
+	}
+	by := map[string]JobView{}
+	for _, j := range kept {
+		by[j.Name] = j
+	}
+	for name, want := range map[string][]string{"b": {"a"}, testGoalJob: {"a", "b"}, "sink": {"b"}} {
+		if got := by[name].Needs; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s needs: got %v, want %v", name, got, want)
+		}
+	}
+}
+
+// TestContractedGateKeepsTriggers pins that `on:` is the same whether a narrow join is contracted or carries a tool.
+func TestContractedGateKeepsTriggers(t *testing.T) {
+	render := func(joinTools string) Model {
+		st, err := ci.Parse([]byte(`{
+  "tools": {"lint": {"image": "D9T_GO_TOOLS_IMAGE", "run": "auto-go-lint"}, "probe": {"image": "D9T_GO_TOOLS_IMAGE", "run": "auto-probe"}},
+  "nodes": {
+    "linted":  {"needs": {"lint": true}},
+    "tagged":  {"when": {"events": ["tag", "primary"]}, "needs": {"linted": true` + joinTools + `}},
+    "checked": {"goal": true, "when": {"events": ["dispatch"]}, "dispatch": {}, "needs": {"tagged": true}}
+  }
+}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		rm, err := resolve.Resolve(st)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		return Build(rm, st, nil)
+	}
+	contracted, tooled := render(""), render(`, "probe": true`)
+	for _, j := range contracted.Jobs {
+		if j.Name == "tagged" {
+			t.Fatalf("the tool-less join must be contracted out: %+v", j)
+		}
+	}
+	if !reflect.DeepEqual(contracted.On, tooled.On) {
+		t.Errorf("on: changed by contraction\n got %+v\nwant %+v", contracted.On, tooled.On)
+	}
+}
+
+// TestGoalVerdictNeedsClosure pins that a goal needs every transitive upstream and drops its skip tolerance, since the verdict judges skips itself.
+func TestGoalVerdictNeedsClosure(t *testing.T) {
+	jobs := []JobView{
+		{Name: "a", Steps: []StepView{{Name: "a"}}},
+		{Name: "b", Steps: []StepView{{Name: "b"}}, Needs: []string{"a"}},
+		{Name: testGoalJob, IsGate: true, Needs: []string{"b"}, SkippableNeeds: map[string]string{"b": "x"}},
+		{Name: "tooled", Steps: []StepView{{Name: "t"}}, Needs: []string{"b"}},
+	}
+	out := goalVerdicts(jobs, []string{testGoalJob, "tooled"}, "")
+	goal := out[2]
+	if goal.Verdict == nil || !reflect.DeepEqual(goal.Needs, []string{"a", "b"}) || goal.SkippableNeeds != nil {
+		t.Errorf("goal: got %+v", goal)
+	}
+	if out[3].Verdict != nil {
+		t.Errorf("a goal with tools is its own verdict, got %+v", out[3].Verdict)
+	}
+	if run := goal.Verdict.Run(); strings.Contains(run, "curl") {
+		t.Errorf("no webhook var must render no POST:\n%s", run)
 	}
 }

@@ -928,6 +928,8 @@ type Build struct {
 	// non-prefix sink grammar, or a flat ci.images overlay) lowers piecewise as
 	// before — nothing to redirect.
 	ImageHeads map[string]string
+	// ImageRequires is each images entry's `requires` version range, comma-joined constraints (`>=1.4.0,<2.0.0`).
+	ImageRequires map[string]string
 	// Args is the org.projectfile.build.args list: the Dockerfile ARGs (FROM refs,
 	// versions) container-build needs, auto-forwarded as --build-args (see
 	// render.toolStep). Mirrors the make reader's --build-arg auto-emit.
@@ -1235,6 +1237,29 @@ func (r *Reader) entrySinkTemplate(scope, sink string) string {
 	return tmpl
 }
 
+// imageRequires reads every images entry's `requires` version range, keyed by var NAME.
+func (r *Reader) imageRequires() map[string]string {
+	raw, err := r.subtree(imagesNS)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	var entries map[string]struct {
+		Requires string `json:"requires"`
+	}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		genlog.Warn("image version ranges ignored — images subtree is not a map of entries", "error", err)
+		return nil
+	}
+	out := map[string]string{}
+	for name, e := range entries {
+		if e.Requires != "" {
+			genlog.DebugRow("image_requires", name+" "+e.Requires, imagesNS+"."+name+".requires", "")
+			out[name] = e.Requires
+		}
+	}
+	return out
+}
+
 // lowerRefRe matches a `${lowercase…}` reference left unresolved in a composed image
 // ref — the naming convention that tells an undeclared PART from a make variable.
 var lowerRefRe = regexp.MustCompile(`\$\{[a-z]`)
@@ -1357,13 +1382,14 @@ func LoadBuildWithOptions(pfPath, lowering string, opts projectfile.ReadOptions)
 	if err != nil {
 		return nil, err
 	}
-	if len(images) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
+	requires := r.imageRequires()
+	if len(images) == 0 && len(requires) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
 		len(buildTarget) == 0 && len(publishRefs) == 0 && len(pullRefs) == 0 && len(releaseTargets) == 0 &&
 		len(primaryBranches) == 0 && stableBranch == "" && naming == nil {
 		return nil, nil
 	}
 	return &Build{
-		Images: images, ImageHeads: heads, Args: inputs, Events: events, Secrets: secRaw,
+		Images: images, ImageHeads: heads, ImageRequires: requires, Args: inputs, Events: events, Secrets: secRaw,
 		BuildTarget: buildTarget, PublishRefs: publishRefs, PullRefs: pullRefs,
 		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches, StableBranch: stableBranch,
 		Naming: naming,

@@ -2152,3 +2152,31 @@ func TestWhenFollowsCycleFailsParse(t *testing.T) {
 		t.Fatalf("want a follows-cycle error, got %v", err)
 	}
 }
+
+func TestLoadBuildReadsImageRequires(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projectfile.yaml")
+	if err := os.WriteFile(path, []byte(`$schema: https://projectfile.org/schema/v1.json
+identity:
+  name: consumer
+org:
+  projectfile:
+    images:
+      D9T_GO_TOOLS_IMAGE:
+        org: d9t
+        name: go-tools
+        requires: ">=1.4.0,<2.0.0"
+      B19_UBUNTU_BASE_IMAGE:
+        org: b19
+        name: ubuntu
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBuild(path, "gha")
+	if err != nil {
+		t.Fatalf("LoadBuild: %v", err)
+	}
+	want := map[string]string{"D9T_GO_TOOLS_IMAGE": ">=1.4.0,<2.0.0"}
+	if b == nil || !reflect.DeepEqual(b.ImageRequires, want) {
+		t.Fatalf("requires: got %#v, want %#v", b, want)
+	}
+}
