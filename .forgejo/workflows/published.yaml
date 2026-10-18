@@ -271,16 +271,22 @@ jobs:
             GITHUB_REPOSITORY
   container-is-diagnosed:
     runs-on: docker
-    needs: ["container-ready-to-test"]
-    if: ${{ !cancelled() && needs.container-ready-to-test.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["container-is-tested"]
+    if: ${{ !cancelled() && needs.container-is-tested.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
       - run: echo container-is-diagnosed
-  container-is-ok:
+  container-is-started:
     runs-on: docker
     needs: ["images-are-ok"]
     if: ${{ !cancelled() && needs.images-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
-      - run: echo container-is-ok
+      - run: echo container-is-started
+  container-is-tested:
+    runs-on: docker
+    needs: ["container-is-started"]
+    if: ${{ !cancelled() && needs.container-is-started.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - run: echo container-is-tested
   container-is-verified:
     runs-on: docker
     needs: ["container-is-diagnosed"]
@@ -318,19 +324,19 @@ jobs:
         if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGES_ARE_OK != 'true' && vars.CI_SKIP_DC_PULL != 'true'
         run: M6E_COMPOSE_FILE=.compose/pipeline.yaml .makefile/container/scripts/compose-pull.sh
       - name: dc-up-d
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_IS_OK != 'true' && vars.CI_SKIP_DC_UP_D != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_IS_STARTED != 'true' && vars.CI_SKIP_DC_UP_D != 'true'
         run: timeout --kill-after=10s "${M6E_COMPOSE_UP_TIMEOUT:-300}s" docker compose --project-name "$M6E_COMPOSE_PROJECT_NAME" --file .compose/pipeline.yaml up --detach --renew-anon-volumes --no-build </dev/null
       - name: configuration-check
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_READY_TO_TEST != 'true' && vars.CI_SKIP_CONFIGURATION_CHECK != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_IS_TESTED != 'true' && vars.CI_SKIP_CONFIGURATION_CHECK != 'true'
         run: .makefile/container/scripts/configuration-capture.sh --check --default-lang= es uk
       - name: container-test
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_READY_TO_TEST != 'true' && vars.CI_SKIP_CONTAINER_TEST != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_IS_TESTED != 'true' && vars.CI_SKIP_CONTAINER_TEST != 'true'
         uses: projectfile/actions/container-exec@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
         with:
           container: ${{ env.M6E_CONTAINER_INSTANCE }}
           run: test.d
       - name: usage-check
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_READY_TO_TEST != 'true' && vars.CI_SKIP_USAGE_CHECK != 'true'
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_CONTAINER_IS_TESTED != 'true' && vars.CI_SKIP_USAGE_CHECK != 'true'
         run: .makefile/container/scripts/usage-capture.sh --check --image --default-lang= es uk
       - name: dc-diagnose
         if: ${{ always() }}
@@ -350,12 +356,11 @@ jobs:
         with:
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
           network: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ env.M6E_RUN_SCOPE }}-network
-  container-ready-to-test:
+  dependencies-are-fetched:
     runs-on: docker
-    needs: ["container-is-ok"]
-    if: ${{ !cancelled() && needs.container-is-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     steps:
-      - run: echo container-ready-to-test
+      - run: echo dependencies-are-fetched
   documentation-is-ok:
     runs-on: docker
     needs: ["documentation-passes-lint"]
@@ -384,11 +389,6 @@ jobs:
           image: ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: auto-textlint
-  fetched:
-    runs-on: docker
-    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
-    steps:
-      - run: echo fetched
   go-install-is-ok:
     runs-on: docker
     needs: ["release-is-published", "release-tag"]
@@ -509,8 +509,8 @@ jobs:
           path: reports
   image-is-built:
     runs-on: docker
-    needs: ["fetched", "inputs-are-ok", "release-tag"]
-    if: ${{ !cancelled() && needs.fetched.result == 'success' && needs.inputs-are-ok.result == 'success' && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["dependencies-are-fetched", "inputs-are-ok", "release-tag"]
+    if: ${{ !cancelled() && needs.dependencies-are-fetched.result == 'success' && needs.inputs-are-ok.result == 'success' && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     concurrency:
       group: build-${{ github.repository }}-${{ toJSON(matrix) }}
       cancel-in-progress: false
@@ -578,118 +578,10 @@ jobs:
           # This CELL's architecture, off the arch axis derived from the declared set.
           # One arch per call: the single-image archive is what every consumer reads.
           platform: ${{ matrix.M6E_ARCH }}
-  image-is-ready:
+  image-is-published:
     runs-on: docker
-    needs: ["container-is-verified", "image-is-secure"]
-    if: ${{ !cancelled() && needs.container-is-verified.result == 'success' && needs.image-is-secure.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo image-is-ready
-  image-is-secure:
-    runs-on: docker
-    needs: ["image-is-built"]
-    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    strategy:
-      matrix:
-        M6E_ARCH: ["amd64"]
-    env:
-      M6E_ARCH: ${{ matrix.M6E_ARCH }}
-      M6E_IMAGE_ARCHIVE: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
-      CI_IGNORE_VULNERABILITIES: ${{ vars.CI_IGNORE_VULNERABILITIES }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: true
-          persist-credentials: false
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
-        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
-        with:
-          name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
-      - name: grype-scan-tar
-        if: (!cancelled()) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
-        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
-        with:
-          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-grype image
-          env: |-
-            M6E_ARCH=${{ matrix.M6E_ARCH }}
-            M6E_IMAGE_ARCHIVE=image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
-            CI_IGNORE_VULNERABILITIES=${{ vars.CI_IGNORE_VULNERABILITIES }}
-            M6E_SHARED_CACHE=Y
-          mounts: /app/data/ci-cache/grype-db:/app/.cache/grype:rw
-      - name: trivy-scan-tar
-        if: (!cancelled()) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
-        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
-        with:
-          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-trivy image
-          env: |-
-            M6E_ARCH=${{ matrix.M6E_ARCH }}
-            M6E_IMAGE_ARCHIVE=image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
-            CI_IGNORE_VULNERABILITIES=${{ vars.CI_IGNORE_VULNERABILITIES }}
-            M6E_SHARED_CACHE=Y
-            TRIVY_CACHE_BACKEND
-          mounts: /app/data/ci-cache/trivy-db:/app/.cache/trivy:rw
-      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
-        if: ${{ always() }}
-        with:
-          name: reports-image-is-secure-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
-          path: reports/
-          if-no-files-found: warn
-  image-is-signed:
-    runs-on: docker
-    needs: ["publish-image", "release-tag"]
-    if: ${{ !cancelled() && needs.publish-image.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
-    steps:
-      - run: echo image-is-signed
-  images-are-ok:
-    runs-on: docker
-    needs: ["image-is-built", "secrets-ready"]
-    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && needs.secrets-ready.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo images-are-ok
-  inputs-are-ok:
-    runs-on: docker
-    needs: ["documentation-is-ok", "gpg-is-ready", "projectfile-is-ok", "release-tag", "signing-is-ready", "source-is-ok"]
-    if: ${{ !cancelled() && needs.documentation-is-ok.result == 'success' && (needs.gpg-is-ready.result == 'success' || (needs.gpg-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.projectfile-is-ok.result == 'success' && needs.release-tag.result == 'success' && (needs.signing-is-ready.result == 'success' || (needs.signing-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.source-is-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo inputs-are-ok
-  projectfile-is-ok:
-    runs-on: docker
-    needs: ["projectfile-is-valid"]
-    if: ${{ !cancelled() && needs.projectfile-is-valid.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: true
-          persist-credentials: false
-      - name: pf-bridge-check
-        if: vars.CI_SKIP_PROJECTFILE_IS_OK != 'true' && vars.CI_SKIP_PF_BRIDGE_CHECK != 'true'
-        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
-        with:
-          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-bridge check
-  projectfile-is-valid:
-    runs-on: docker
-    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: true
-          persist-credentials: false
-      - name: pf-validate
-        if: vars.CI_SKIP_PROJECTFILE_IS_VALID != 'true' && vars.CI_SKIP_PF_VALIDATE != 'true'
-        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
-        with:
-          image: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: pf-cli validate
-  publish-image:
-    runs-on: docker
-    needs: ["image-has-sbom", "image-is-built", "ready-to-publish", "release-tag", "signing-is-ready"]
-    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.image-is-built.result == 'success' && needs.ready-to-publish.result == 'success' && needs.release-tag.result == 'success' && needs.signing-is-ready.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
+    needs: ["image-has-sbom", "image-is-built", "release-is-ready", "release-tag", "signing-is-ready"]
+    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.image-is-built.result == 'success' && needs.release-is-ready.result == 'success' && needs.release-tag.result == 'success' && needs.signing-is-ready.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
     strategy:
       matrix:
         M6E_PUBLISH_SINK: ["kiota", "dockerhub"]
@@ -741,7 +633,7 @@ jobs:
           path: reports
       - name: oci-push
         # The cell's run-time override gate, on the STEP because a job `if:` may not read the matrix context
-        if: (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_PUBLISH_IMAGE != 'true' && vars.CI_SKIP_OCI_PUSH != 'true'
+        if: (vars.CI_ONLY_M6E_PUBLISH_SINK == '' || contains(format(',{0},', vars.CI_ONLY_M6E_PUBLISH_SINK), format(',{0},', matrix.M6E_PUBLISH_SINK))) && vars.CI_SKIP_IMAGE_IS_PUBLISHED != 'true' && vars.CI_SKIP_OCI_PUSH != 'true'
         uses: projectfile/actions/oci-push@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
         with:
           # One tar per DECLARED architecture, published together as a manifest list at
@@ -805,22 +697,130 @@ jobs:
           run: auto-cosign sign
           env: |-
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
+  image-is-ready:
+    runs-on: docker
+    needs: ["container-is-verified", "image-is-secure"]
+    if: ${{ !cancelled() && needs.container-is-verified.result == 'success' && needs.image-is-secure.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - run: echo image-is-ready
+  image-is-secure:
+    runs-on: docker
+    needs: ["image-is-built"]
+    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    strategy:
+      matrix:
+        M6E_ARCH: ["amd64"]
+    env:
+      M6E_ARCH: ${{ matrix.M6E_ARCH }}
+      M6E_IMAGE_ARCHIVE: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
+      CI_IGNORE_VULNERABILITIES: ${{ vars.CI_IGNORE_VULNERABILITIES }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        if: (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_BUILT != 'true' && vars.CI_SKIP_CONTAINER_BUILD != 'true'
+        with:
+          name: image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
+      - name: grype-scan-tar
+        if: (!cancelled()) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_GRYPE_SCAN_TAR != 'true'
+        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+        with:
+          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-grype image
+          env: |-
+            M6E_ARCH=${{ matrix.M6E_ARCH }}
+            M6E_IMAGE_ARCHIVE=image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
+            CI_IGNORE_VULNERABILITIES=${{ vars.CI_IGNORE_VULNERABILITIES }}
+            M6E_SHARED_CACHE=Y
+          mounts: /app/data/ci-cache/grype-db:/app/.cache/grype:rw
+      - name: trivy-scan-tar
+        if: (!cancelled()) && (vars.CI_ONLY_M6E_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_M6E_ARCH), format(',{0},', matrix.M6E_ARCH))) && vars.CI_SKIP_IMAGE_IS_SECURE != 'true' && vars.CI_SKIP_TRIVY_SCAN_TAR != 'true'
+        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+        with:
+          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-trivy image
+          env: |-
+            M6E_ARCH=${{ matrix.M6E_ARCH }}
+            M6E_IMAGE_ARCHIVE=image-${{ matrix.M6E_ARCH }}-${{ github.run_id }}.tar
+            CI_IGNORE_VULNERABILITIES=${{ vars.CI_IGNORE_VULNERABILITIES }}
+            M6E_SHARED_CACHE=Y
+            TRIVY_CACHE_BACKEND
+          mounts: /app/data/ci-cache/trivy-db:/app/.cache/trivy:rw
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
+        if: ${{ always() }}
+        with:
+          name: reports-image-is-secure-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+  image-is-signed:
+    runs-on: docker
+    needs: ["image-is-published", "release-tag"]
+    if: ${{ !cancelled() && needs.image-is-published.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    steps:
+      - run: echo image-is-signed
+  images-are-ok:
+    runs-on: docker
+    needs: ["image-is-built", "secrets-are-provisioned"]
+    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && needs.secrets-are-provisioned.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - run: echo images-are-ok
+  inputs-are-ok:
+    runs-on: docker
+    needs: ["documentation-is-ok", "preflight-passed", "projectfile-is-ok", "source-is-ok"]
+    if: ${{ !cancelled() && needs.documentation-is-ok.result == 'success' && needs.preflight-passed.result == 'success' && needs.projectfile-is-ok.result == 'success' && needs.source-is-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - run: echo inputs-are-ok
+  preflight-passed:
+    runs-on: docker
+    needs: ["gpg-is-ready", "release-tag", "runner-is-ready", "signing-is-ready"]
+    if: ${{ !cancelled() && (needs.gpg-is-ready.result == 'success' || (needs.gpg-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.release-tag.result == 'success' && needs.runner-is-ready.result == 'success' && (needs.signing-is-ready.result == 'success' || (needs.signing-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - run: echo preflight-passed
+  projectfile-is-ok:
+    runs-on: docker
+    needs: ["projectfile-is-valid"]
+    if: ${{ !cancelled() && needs.projectfile-is-valid.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: pf-bridge-check
+        if: vars.CI_SKIP_PROJECTFILE_IS_OK != 'true' && vars.CI_SKIP_PF_BRIDGE_CHECK != 'true'
+        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+        with:
+          image: ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: pf-bridge check
+  projectfile-is-valid:
+    runs-on: docker
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: pf-validate
+        if: vars.CI_SKIP_PROJECTFILE_IS_VALID != 'true' && vars.CI_SKIP_PF_VALIDATE != 'true'
+        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+        with:
+          image: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: pf-cli validate
   published:
     runs-on: docker
-    needs: ["binaries-torrent-is-verified", "go-install-is-ok", "image-has-sbom", "image-is-signed", "publish-image", "ready-to-publish", "release-is-published", "release-notes-are-published", "release-tag"]
-    if: ${{ !cancelled() && (needs.binaries-torrent-is-verified.result == 'success' || (needs.binaries-torrent-is-verified.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.go-install-is-ok.result == 'success' || (needs.go-install-is-ok.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-is-signed.result == 'success' || (needs.image-is-signed.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.publish-image.result == 'success' || (needs.publish-image.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.ready-to-publish.result == 'success' && (needs.release-is-published.result == 'success' || (needs.release-is-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.release-notes-are-published.result == 'success' || (needs.release-notes-are-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["binaries-torrent-is-verified", "go-install-is-ok", "image-has-sbom", "image-is-published", "image-is-signed", "release-is-published", "release-is-ready", "release-notes-are-published", "release-tag"]
+    if: ${{ !cancelled() && (needs.binaries-torrent-is-verified.result == 'success' || (needs.binaries-torrent-is-verified.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.go-install-is-ok.result == 'success' || (needs.go-install-is-ok.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-is-published.result == 'success' || (needs.image-is-published.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && (needs.image-is-signed.result == 'success' || (needs.image-is-signed.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.release-is-published.result == 'success' || (needs.release-is-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-is-ready.result == 'success' && (needs.release-notes-are-published.result == 'success' || (needs.release-notes-are-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
       - run: echo published
-  ready-to-publish:
-    runs-on: docker
-    needs: ["artifacts-are-ok"]
-    if: ${{ !cancelled() && needs.artifacts-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo ready-to-publish
   release-is-published:
     runs-on: docker
-    needs: ["binaries-are-ready", "binaries-are-torrented", "image-is-signed", "publish-image", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-ready.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.image-is-signed.result == 'success' && needs.publish-image.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    needs: ["binaries-are-ready", "binaries-are-torrented", "image-is-published", "image-is-signed", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-ready.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.image-is-published.result == 'success' && needs.image-is-signed.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       RELEASE_TARGET: main
       FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
@@ -873,6 +873,12 @@ jobs:
           # kind=binary entry). The action suffixes it per cell (→ <path>-<os>-<uname -m>)
           # to find the binary the build→consumer download edge restored to the workspace.
           release-asset-path: dist/pf-ci
+  release-is-ready:
+    runs-on: docker
+    needs: ["artifacts-are-ok"]
+    if: ${{ !cancelled() && needs.artifacts-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    steps:
+      - run: echo release-is-ready
   release-notes-are-published:
     runs-on: docker
     needs: ["release-is-published", "release-tag"]
@@ -916,12 +922,32 @@ jobs:
         id: release-tag-detect
         if: vars.CI_SKIP_RELEASE_TAG != 'true' && vars.CI_SKIP_RELEASE_TAG_DETECT != 'true'
         run: .makefile/core/scripts/release-tag.sh
-  secrets-ready:
+  runner-is-ready:
+    runs-on: docker
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    env:
+      PREFLIGHT_MIN_FREE_GIB: 10
+      PREFLIGHT_HOSTS: ${M6E_APT_CACHE_HOST}:${M6E_APT_CACHE_PORT} ${M6E_NEAR_CACHE_HOST}:${M6E_NEAR_CACHE_PORT}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: disk-preflight
+        if: vars.CI_SKIP_RUNNER_IS_READY != 'true' && vars.CI_SKIP_DISK_PREFLIGHT != 'true'
+        uses: projectfile/actions/preflight@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+      - name: hosts-preflight
+        if: vars.CI_SKIP_RUNNER_IS_READY != 'true' && vars.CI_SKIP_HOSTS_PREFLIGHT != 'true'
+        uses: projectfile/actions/preflight@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+      - name: images-preflight
+        if: vars.CI_SKIP_RUNNER_IS_READY != 'true' && vars.CI_SKIP_IMAGES_PREFLIGHT != 'true'
+        uses: projectfile/actions/preflight@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+  secrets-are-provisioned:
     runs-on: docker
     needs: ["image-is-built"]
     if: ${{ !cancelled() && needs.image-is-built.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     steps:
-      - run: echo secrets-ready
+      - run: echo secrets-are-provisioned
   signing-is-ready:
     runs-on: docker
     needs: ["release-tag"]
