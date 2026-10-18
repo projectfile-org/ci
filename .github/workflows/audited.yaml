@@ -25,10 +25,30 @@ env:
 jobs:
   audited:
     runs-on: ubuntu-26.04
-    needs: ["image-is-audited", "source-is-audited"]
-    if: ${{ !cancelled() && needs.image-is-audited.result == 'success' && needs.source-is-audited.result == 'success' && ((github.event_name == 'workflow_dispatch') || (github.event_name == 'schedule')) }}
+    needs: ["image-is-audited", "source-is-secure"]
+    if: ${{ always() && ((github.event_name == 'workflow_dispatch') || (github.event_name == 'schedule')) }}
     steps:
-      - run: echo audited
+      - name: audited verdict
+        run: |
+          passed=0 skipped=0 failed=0
+          for pair in \
+            "image-is-audited=${{ needs.image-is-audited.result }}" \
+            "source-is-secure=${{ needs.source-is-secure.result }}"; do
+            echo "verdict need=${pair%%=*} result=${pair#*=}"
+            case "${pair#*=}" in
+              success) passed=$((passed + 1)) ;;
+              skipped) skipped=$((skipped + 1)) ;;
+              *) failed=$((failed + 1)) ;;
+            esac
+          done
+          status=success; event=goal.succeeded
+          if [ "${failed}" -gt 0 ]; then
+            status=failure; event=goal.failed
+          elif [ "${passed}" -eq 0 ]; then
+            status=skipped; event=goal.skipped
+          fi
+          echo "verdict goal=audited status=${status} passed=${passed} skipped=${skipped} failed=${failed}"
+          [ "${failed}" -eq 0 ]
   image-is-audited:
     runs-on: ubuntu-26.04
     if: (github.event_name == 'workflow_dispatch') || (github.event_name == 'schedule')
@@ -110,12 +130,6 @@ jobs:
           path: reports/
           if-no-files-found: warn
           overwrite: true
-  source-is-audited:
-    runs-on: ubuntu-26.04
-    needs: ["source-is-secure"]
-    if: ${{ !cancelled() && needs.source-is-secure.result == 'success' && ((github.event_name == 'workflow_dispatch') || (github.event_name == 'schedule')) }}
-    steps:
-      - run: echo source-is-audited
   source-is-secure:
     runs-on: ubuntu-26.04
     env:

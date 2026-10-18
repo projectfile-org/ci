@@ -59,16 +59,10 @@ env:
   GOPROXY: https://kiota.ch/api/packages/projectfile/go,https://proxy.golang.org,direct
   PF_CLI_IMAGE: ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli:{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.BASE_IMAGE_DEFAULT_VERSION || 'latest') }}
 jobs:
-  artifacts-are-ok:
-    runs-on: docker
-    needs: ["binaries-are-ok", "image-is-ready", "inputs-are-ok"]
-    if: ${{ !cancelled() && needs.binaries-are-ok.result == 'success' && needs.image-is-ready.result == 'success' && needs.inputs-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo artifacts-are-ok
   binaries-are-built:
     runs-on: docker
-    needs: ["inputs-are-ok", "release-tag"]
-    if: ${{ !cancelled() && needs.inputs-are-ok.result == 'success' && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["documentation-passes-lint", "gpg-is-ready", "projectfile-is-ok", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
+    if: ${{ !cancelled() && needs.documentation-passes-lint.result == 'success' && (needs.gpg-is-ready.result == 'success' || (needs.gpg-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.projectfile-is-ok.result == 'success' && needs.release-tag.result == 'success' && needs.runner-is-ready.result == 'success' && (needs.signing-is-ready.result == 'success' || (needs.signing-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.source-is-compliant.result == 'success' && needs.source-is-secure.result == 'success' && needs.source-is-tested.result == 'success' && needs.source-passes-lint.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     strategy:
       matrix:
         TARGET_ARCH: ["amd64", "arm64", "riscv64"]
@@ -105,22 +99,10 @@ jobs:
         with:
           name: build-binaries-${{ matrix.TARGET_ARCH }}-${{ matrix.TARGET_OS }}-${{ github.run_id }}
           path: dist
-  binaries-are-ok:
-    runs-on: docker
-    needs: ["binaries-are-built", "gsa"]
-    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.gsa.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo binaries-are-ok
-  binaries-are-ready:
-    runs-on: docker
-    needs: ["binaries-are-ok", "binaries-are-signed", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-ok.result == 'success' && (needs.binaries-are-signed.result == 'success' || (needs.binaries-are-signed.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo binaries-are-ready
   binaries-are-signed:
     runs-on: docker
-    needs: ["binaries-are-ok", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-ok.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    needs: ["binaries-are-built", "gsa", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.gsa.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       M6E_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       M6E_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -173,8 +155,8 @@ jobs:
           path: dist
   binaries-are-torrented:
     runs-on: docker
-    needs: ["binaries-are-ready", "binaries-are-signed", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-ready.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    needs: ["binaries-are-built", "binaries-are-signed", "gsa", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.gsa.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       M6E_RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}
       M6E_TORRENT_OUT_DIR: dist/torrents
@@ -269,28 +251,10 @@ jobs:
           env: |-
             M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
             GITHUB_REPOSITORY
-  container-is-diagnosed:
-    runs-on: docker
-    needs: ["container-is-tested"]
-    if: ${{ !cancelled() && needs.container-is-tested.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo container-is-diagnosed
-  container-is-started:
-    runs-on: docker
-    needs: ["images-are-ok"]
-    if: ${{ !cancelled() && needs.images-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo container-is-started
-  container-is-tested:
-    runs-on: docker
-    needs: ["container-is-started"]
-    if: ${{ !cancelled() && needs.container-is-started.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo container-is-tested
   container-is-verified:
     runs-on: docker
-    needs: ["container-is-diagnosed"]
-    if: ${{ !cancelled() && needs.container-is-diagnosed.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["image-is-built"]
+    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     strategy:
       matrix:
         M6E_ARCH: ["amd64"]
@@ -356,17 +320,6 @@ jobs:
         with:
           image: projectfile/ci:${{ env.M6E_TAG }}-${{ github.run_id }}-${{ matrix.M6E_ARCH }}
           network: ci-projectfile-ci-${{ matrix.M6E_ARCH }}-${{ env.M6E_RUN_SCOPE }}-network
-  dependencies-are-fetched:
-    runs-on: docker
-    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
-    steps:
-      - run: echo dependencies-are-fetched
-  documentation-is-ok:
-    runs-on: docker
-    needs: ["documentation-passes-lint"]
-    if: ${{ !cancelled() && needs.documentation-passes-lint.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo documentation-is-ok
   documentation-passes-lint:
     runs-on: docker
     if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
@@ -509,8 +462,8 @@ jobs:
           path: reports
   image-is-built:
     runs-on: docker
-    needs: ["dependencies-are-fetched", "inputs-are-ok", "release-tag"]
-    if: ${{ !cancelled() && needs.dependencies-are-fetched.result == 'success' && needs.inputs-are-ok.result == 'success' && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["documentation-passes-lint", "gpg-is-ready", "projectfile-is-ok", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
+    if: ${{ !cancelled() && needs.documentation-passes-lint.result == 'success' && (needs.gpg-is-ready.result == 'success' || (needs.gpg-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.projectfile-is-ok.result == 'success' && needs.release-tag.result == 'success' && needs.runner-is-ready.result == 'success' && (needs.signing-is-ready.result == 'success' || (needs.signing-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.source-is-compliant.result == 'success' && needs.source-is-secure.result == 'success' && needs.source-is-tested.result == 'success' && needs.source-passes-lint.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
     concurrency:
       group: build-${{ github.repository }}-${{ toJSON(matrix) }}
       cancel-in-progress: false
@@ -580,8 +533,8 @@ jobs:
           platform: ${{ matrix.M6E_ARCH }}
   image-is-published:
     runs-on: docker
-    needs: ["image-has-sbom", "image-is-built", "release-is-ready", "release-tag", "signing-is-ready"]
-    if: ${{ !cancelled() && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.image-is-built.result == 'success' && needs.release-is-ready.result == 'success' && needs.release-tag.result == 'success' && needs.signing-is-ready.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
+    needs: ["binaries-are-built", "container-is-verified", "documentation-passes-lint", "gpg-is-ready", "gsa", "image-has-sbom", "image-is-built", "image-is-secure", "projectfile-is-ok", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.container-is-verified.result == 'success' && needs.documentation-passes-lint.result == 'success' && needs.gpg-is-ready.result == 'success' && needs.gsa.result == 'success' && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.image-is-built.result == 'success' && needs.image-is-secure.result == 'success' && needs.projectfile-is-ok.result == 'success' && needs.release-tag.result == 'success' && needs.runner-is-ready.result == 'success' && needs.signing-is-ready.result == 'success' && needs.source-is-compliant.result == 'success' && needs.source-is-secure.result == 'success' && needs.source-is-tested.result == 'success' && needs.source-passes-lint.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
     strategy:
       matrix:
         M6E_PUBLISH_SINK: ["kiota", "dockerhub"]
@@ -697,12 +650,6 @@ jobs:
           run: auto-cosign sign
           env: |-
             COSIGN_PASSWORD=${{ secrets.COSIGN_PASSWORD }}
-  image-is-ready:
-    runs-on: docker
-    needs: ["container-is-verified", "image-is-secure"]
-    if: ${{ !cancelled() && needs.container-is-verified.result == 'success' && needs.image-is-secure.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo image-is-ready
   image-is-secure:
     runs-on: docker
     needs: ["image-is-built"]
@@ -756,30 +703,6 @@ jobs:
           name: reports-image-is-secure-${{ matrix.M6E_ARCH }}-${{ github.run_id }}
           path: reports/
           if-no-files-found: warn
-  image-is-signed:
-    runs-on: docker
-    needs: ["image-is-published", "release-tag"]
-    if: ${{ !cancelled() && needs.image-is-published.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
-    steps:
-      - run: echo image-is-signed
-  images-are-ok:
-    runs-on: docker
-    needs: ["image-is-built", "secrets-are-provisioned"]
-    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && needs.secrets-are-provisioned.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo images-are-ok
-  inputs-are-ok:
-    runs-on: docker
-    needs: ["documentation-is-ok", "preflight-passed", "projectfile-is-ok", "source-is-ok"]
-    if: ${{ !cancelled() && needs.documentation-is-ok.result == 'success' && needs.preflight-passed.result == 'success' && needs.projectfile-is-ok.result == 'success' && needs.source-is-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo inputs-are-ok
-  preflight-passed:
-    runs-on: docker
-    needs: ["gpg-is-ready", "release-tag", "runner-is-ready", "signing-is-ready"]
-    if: ${{ !cancelled() && (needs.gpg-is-ready.result == 'success' || (needs.gpg-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && needs.release-tag.result == 'success' && needs.runner-is-ready.result == 'success' && (needs.signing-is-ready.result == 'success' || (needs.signing-is-ready.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo preflight-passed
   projectfile-is-ok:
     runs-on: docker
     needs: ["projectfile-is-valid"]
@@ -813,14 +736,56 @@ jobs:
           run: pf-cli validate
   published:
     runs-on: docker
-    needs: ["binaries-torrent-is-verified", "go-install-is-ok", "image-has-sbom", "image-is-published", "image-is-signed", "release-is-published", "release-is-ready", "release-notes-are-published", "release-tag"]
-    if: ${{ !cancelled() && (needs.binaries-torrent-is-verified.result == 'success' || (needs.binaries-torrent-is-verified.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.go-install-is-ok.result == 'success' || (needs.go-install-is-ok.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.image-is-published.result == 'success' || (needs.image-is-published.result == 'skipped' && !((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')))) && (needs.image-is-signed.result == 'success' || (needs.image-is-signed.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && (needs.release-is-published.result == 'success' || (needs.release-is-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-is-ready.result == 'success' && (needs.release-notes-are-published.result == 'success' || (needs.release-notes-are-published.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.release-tag.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+    needs: ["binaries-are-built", "binaries-are-signed", "binaries-are-torrented", "binaries-torrent-is-verified", "container-is-verified", "documentation-passes-lint", "go-install-is-ok", "gpg-is-ready", "gsa", "image-has-sbom", "image-is-built", "image-is-published", "image-is-secure", "projectfile-is-ok", "projectfile-is-valid", "release-is-published", "release-notes-are-published", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     steps:
-      - run: echo published
+      - name: published verdict
+        run: |
+          passed=0 skipped=0 failed=0
+          for pair in \
+            "binaries-are-built=${{ needs.binaries-are-built.result }}" \
+            "binaries-are-signed=${{ needs.binaries-are-signed.result }}" \
+            "binaries-are-torrented=${{ needs.binaries-are-torrented.result }}" \
+            "binaries-torrent-is-verified=${{ needs.binaries-torrent-is-verified.result }}" \
+            "container-is-verified=${{ needs.container-is-verified.result }}" \
+            "documentation-passes-lint=${{ needs.documentation-passes-lint.result }}" \
+            "go-install-is-ok=${{ needs.go-install-is-ok.result }}" \
+            "gpg-is-ready=${{ needs.gpg-is-ready.result }}" \
+            "gsa=${{ needs.gsa.result }}" \
+            "image-has-sbom=${{ needs.image-has-sbom.result }}" \
+            "image-is-built=${{ needs.image-is-built.result }}" \
+            "image-is-published=${{ needs.image-is-published.result }}" \
+            "image-is-secure=${{ needs.image-is-secure.result }}" \
+            "projectfile-is-ok=${{ needs.projectfile-is-ok.result }}" \
+            "projectfile-is-valid=${{ needs.projectfile-is-valid.result }}" \
+            "release-is-published=${{ needs.release-is-published.result }}" \
+            "release-notes-are-published=${{ needs.release-notes-are-published.result }}" \
+            "release-tag=${{ needs.release-tag.result }}" \
+            "runner-is-ready=${{ needs.runner-is-ready.result }}" \
+            "signing-is-ready=${{ needs.signing-is-ready.result }}" \
+            "source-is-compliant=${{ needs.source-is-compliant.result }}" \
+            "source-is-secure=${{ needs.source-is-secure.result }}" \
+            "source-is-tested=${{ needs.source-is-tested.result }}" \
+            "source-passes-lint=${{ needs.source-passes-lint.result }}"; do
+            echo "verdict need=${pair%%=*} result=${pair#*=}"
+            case "${pair#*=}" in
+              success) passed=$((passed + 1)) ;;
+              skipped) skipped=$((skipped + 1)) ;;
+              *) failed=$((failed + 1)) ;;
+            esac
+          done
+          status=success; event=goal.succeeded
+          if [ "${failed}" -gt 0 ]; then
+            status=failure; event=goal.failed
+          elif [ "${passed}" -eq 0 ]; then
+            status=skipped; event=goal.skipped
+          fi
+          echo "verdict goal=published status=${status} passed=${passed} skipped=${skipped} failed=${failed}"
+          [ "${failed}" -eq 0 ]
   release-is-published:
     runs-on: docker
-    needs: ["binaries-are-ready", "binaries-are-torrented", "image-is-published", "image-is-signed", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-ready.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.image-is-published.result == 'success' && needs.image-is-signed.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    needs: ["binaries-are-built", "binaries-are-signed", "binaries-are-torrented", "gsa", "image-is-published", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.gsa.result == 'success' && needs.image-is-published.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       RELEASE_TARGET: main
       FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
@@ -873,12 +838,6 @@ jobs:
           # kind=binary entry). The action suffixes it per cell (→ <path>-<os>-<uname -m>)
           # to find the binary the build→consumer download edge restored to the workspace.
           release-asset-path: dist/pf-ci
-  release-is-ready:
-    runs-on: docker
-    needs: ["artifacts-are-ok"]
-    if: ${{ !cancelled() && needs.artifacts-are-ok.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo release-is-ready
   release-notes-are-published:
     runs-on: docker
     needs: ["release-is-published", "release-tag"]
@@ -927,7 +886,7 @@ jobs:
     if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     env:
       PREFLIGHT_MIN_FREE_GIB: 10
-      PREFLIGHT_HOSTS: ${M6E_APT_CACHE_HOST}:${M6E_APT_CACHE_PORT} ${M6E_NEAR_CACHE_HOST}:${M6E_NEAR_CACHE_PORT}
+      PREFLIGHT_HOSTS: ${{ vars.M6E_APT_CACHE_HOST }}:${{ vars.M6E_APT_CACHE_PORT }} ${{ vars.M6E_NEAR_CACHE_HOST }}:${{ vars.M6E_NEAR_CACHE_PORT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -936,18 +895,38 @@ jobs:
       - name: disk-preflight
         if: vars.CI_SKIP_RUNNER_IS_READY != 'true' && vars.CI_SKIP_DISK_PREFLIGHT != 'true'
         uses: projectfile/actions/preflight@15c143f973ea237b9c6a761fe20d02bb091bf9fc # v1
+        with:
+          check: disk
+          env: |-
+            PREFLIGHT_MIN_FREE_GIB=10
       - name: hosts-preflight
         if: vars.CI_SKIP_RUNNER_IS_READY != 'true' && vars.CI_SKIP_HOSTS_PREFLIGHT != 'true'
         uses: projectfile/actions/preflight@15c143f973ea237b9c6a761fe20d02bb091bf9fc # v1
+        with:
+          check: hosts
+          env: |-
+            PREFLIGHT_HOSTS=${{ vars.M6E_APT_CACHE_HOST }}:${{ vars.M6E_APT_CACHE_PORT }} ${{ vars.M6E_NEAR_CACHE_HOST }}:${{ vars.M6E_NEAR_CACHE_PORT }}
       - name: images-preflight
         if: vars.CI_SKIP_RUNNER_IS_READY != 'true' && vars.CI_SKIP_IMAGES_PREFLIGHT != 'true'
         uses: projectfile/actions/preflight@15c143f973ea237b9c6a761fe20d02bb091bf9fc # v1
-  secrets-are-provisioned:
-    runs-on: docker
-    needs: ["image-is-built"]
-    if: ${{ !cancelled() && needs.image-is-built.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo secrets-are-provisioned
+        with:
+          check: images
+          images: |-
+            ${{ vars.B19_GO_BASE_IMAGE || format('{0}/b19/go:{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', env.M6E_TAG) }} - - -
+            ${{ vars.B19_UBUNTU_BASE_IMAGE || format('{0}/b19/ubuntu:{1}{2}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.M6E_BASE_IMAGE_VARIANT_PREFIX, vars.B19_UBUNTU_SERIES || 'resolute') }} - - -
+            ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-cosign,auto-go-test,auto-golangci-lint,auto-gosec,auto-grype,auto-osv-scanner,auto-syft,auto-trivy -
+            ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-jsonlint,auto-markdownlint,auto-textlint -
+            ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-i18n,auto-shellcheck -
+            ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-yamllint,reuse -
+            ${{ vars.D9T_RUST_TOOLS_IMAGE || format('{0}/d9t/rust-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-zizmor -
+            ${{ vars.D9T_R_TOOLS_IMAGE || format('{0}/d9t/r-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-cffr-validate -
+            ${{ vars.DOCKER_CLI_IMAGE || 'docker' }} 29.8.1-cli sh -
+            ${{ vars.GO_TOOL_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} go -
+            ${{ vars.HADOLINT_IMAGE || 'hadolint/hadolint' }} v2.15.1 hadolint -
+            ${{ vars.IGNORELINT_IMAGE || format('{0}/damian-buho/ignorelint', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} ignorelint -
+            ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} pf-bridge -
+            ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} pf-cli -
+            ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} - -
   signing-is-ready:
     runs-on: docker
     needs: ["release-tag"]
@@ -994,12 +973,6 @@ jobs:
           image: ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
           run: reuse lint
-  source-is-ok:
-    runs-on: docker
-    needs: ["source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
-    if: ${{ !cancelled() && needs.source-is-compliant.result == 'success' && needs.source-is-secure.result == 'success' && needs.source-is-tested.result == 'success' && needs.source-passes-lint.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    steps:
-      - run: echo source-is-ok
   source-is-secure:
     runs-on: docker
     if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
