@@ -118,7 +118,7 @@ func TestBuildInputsDecode(t *testing.T) {
 		{Name: "B19_NODE_FLOAT", Default: "3.14"},
 		{Name: "B19_UBUNTU_HASH", File: ".container/{B19_UBUNTU_SERIES}/hash"},
 		{Name: "B19_UBUNTU_SERIES", Default: "24"},
-		{Name: "B19_UBUNTU_VERSION", Default: "resolute"},
+		{Name: "B19_UBUNTU_VERSION", Default: testSeriesResolute},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("inputs: want %d entries, got %d (%+v)", len(want), len(got), got)
@@ -207,7 +207,7 @@ func TestPerNodeMatrixAxes(t *testing.T) {
 	for _, a := range bins.Axes {
 		gotKeys = append(gotKeys, a.Key)
 	}
-	if len(gotKeys) != 2 || gotKeys[0] != "GOARCH" || gotKeys[1] != "GOOS" {
+	if len(gotKeys) != 2 || gotKeys[0] != testGoarchAxis || gotKeys[1] != "GOOS" {
 		t.Errorf("bins-built own axes: want [GOARCH GOOS], got %v", gotKeys)
 	}
 	// The per-node axes are isolated from the global set (the global stays SERIES).
@@ -1241,7 +1241,7 @@ func TestForTargetNarrowsToolArchAxis(t *testing.T) {
 			released: {Name: released, Matrix: true, Axes: fan},
 			crossed:  {Name: crossed, Matrix: true, Axes: []Axis{{Key: "CROSS_ARCH", Values: []string{archAMD64, archARM64}}}},
 		},
-		Tools:       map[string]Manifest{"build": {ArchAxis: axis}},
+		Tools:       map[string]Manifest{testBuildTool: {ArchAxis: axis}},
 		RouteArches: map[string][]string{LoweringForgejo: {archAMD64}},
 	}
 	got := st.ForTarget(LoweringForgejo)
@@ -1415,6 +1415,13 @@ const (
 	archARM64              = "arm64"
 	testSeriesAxis         = "SERIES"
 	testSeriesNoble        = "noble"
+	testSeriesResolute     = "resolute"
+	testGoarchAxis         = "GOARCH"
+	testBuildTool          = "build"
+	testLintTool           = "test"
+	testLLVMExtraVar       = "LLVM"
+	testNightlyCron        = "0 3 * * *"
+	testMountFrom          = "/app/cache"
 	// refGHCR is what publishDoc's ghcr template composes to: a NESTED path with the
 	// axis left verbatim for the cell to fill. Both route planes expect this one value,
 	// which is the point — push and pull compose a sink identically.
