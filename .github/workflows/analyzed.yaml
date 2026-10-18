@@ -45,7 +45,7 @@ jobs:
             ci-cache-go-
       - name: gremlins
         if: vars.CI_SKIP_ANALYZED != 'true' && vars.CI_SKIP_GREMLINS != 'true'
-        uses: projectfile-org/actions/run-tool@15c143f973ea237b9c6a761fe20d02bb091bf9fc # v1
+        uses: projectfile-org/actions/run-tool@04367d8345ed5de4952ce81572d6b154f2848482 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
@@ -71,7 +71,7 @@ jobs:
           persist-credentials: false
       - name: dive-scan-registry
         if: vars.CI_SKIP_IMAGE_IS_ANALYZED != 'true' && vars.CI_SKIP_DIVE_SCAN_REGISTRY != 'true'
-        uses: projectfile-org/actions/run-tool@15c143f973ea237b9c6a761fe20d02bb091bf9fc # v1
+        uses: projectfile-org/actions/run-tool@04367d8345ed5de4952ce81572d6b154f2848482 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'ghcr.io/damian-buho') }}
           version: ${{ env.M6E_TAG }}
