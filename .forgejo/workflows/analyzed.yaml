@@ -24,7 +24,20 @@ jobs:
     needs: ["image-is-analyzed"]
     if: ${{ !cancelled() && needs.image-is-analyzed.result == 'success' && (github.event_name == 'workflow_dispatch') }}
     steps:
-      - run: echo analyzed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: gremlins
+        if: vars.CI_SKIP_ANALYZED != 'true' && vars.CI_SKIP_GREMLINS != 'true'
+        uses: projectfile/actions/run-tool@c8edccbe27c66f1ecff02f32d1ca904870c99ed4 # v1
+        with:
+          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
+          version: ${{ env.M6E_TAG }}
+          run: auto-gremlins
+          env: |-
+            GOPROXY
+          mounts: /app/data/ci-cache/go:/app/.cache/go:rw
   image-is-analyzed:
     runs-on: docker
     if: github.event_name == 'workflow_dispatch'
