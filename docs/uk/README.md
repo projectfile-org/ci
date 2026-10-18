@@ -122,6 +122,10 @@ make container-build
 - `make check-outdated` — Звітує про кожну закріплену залежність, що відстає від upstream
 - `make ready-to-publish` — Запускає псевдо-CI локально — збирає, тестує й сканує без публікації
 
+## Документація
+
+- [pf-ci Command Reference](../how-to/CLI.md)
+
 ## Політики
 
 - [Як зробити внесок](CONTRIBUTING.md)
