@@ -675,11 +675,11 @@ Format Go source with gofmt
 
 ### `go-test`
 
-Run the Go test suite with coverage
+Run the Go test suite and enforce the minimum coverage
 
-`go test -coverprofile=coverage.out ./...`
+`auto-go-test`
 
-> Image: GO_TOOL_IMAGE
+> Image: D9T_GO_TOOLS_IMAGE
 
 ### `go-tidy`
 
@@ -710,6 +710,14 @@ Report Go functions ranked by cyclomatic complexity
 Format Go code via golangci-lint
 
 `auto-golangci-lint-fmt`
+
+> Image: D9T_GO_TOOLS_IMAGE
+
+### `gremlins`
+
+Run Go mutation testing and enforce the minimum efficacy and mutant coverage
+
+`auto-gremlins`
 
 > Image: D9T_GO_TOOLS_IMAGE
 
