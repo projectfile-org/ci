@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
       - name: check-outdated-deps-go
         if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_DEPS_GO != 'true'
-        uses: projectfile/actions/run-tool@04367d8345ed5de4952ce81572d6b154f2848482 # v1
+        uses: projectfile/actions/run-tool@cabb2957bccacf9b0c8f4b7c98c88f5bb7f83939 # v1
         with:
           image: ${{ vars.B19_GO_BASE_IMAGE || format('{0}/b19/go', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
@@ -43,7 +43,7 @@ jobs:
             M6E_CHECK_OUTDATED_STRICT
       - name: check-outdated-go
         if: vars.CI_SKIP_CHECK_OUTDATED != 'true' && vars.CI_SKIP_CHECK_OUTDATED_GO != 'true'
-        uses: projectfile/actions/run-tool@04367d8345ed5de4952ce81572d6b154f2848482 # v1
+        uses: projectfile/actions/run-tool@cabb2957bccacf9b0c8f4b7c98c88f5bb7f83939 # v1
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
