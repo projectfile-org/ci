@@ -1067,9 +1067,9 @@ func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 			"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "CHECKOUT",
 			"actions/checkout@v7", "CHECKOUT",
 			"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", "DOWNLOAD",
-			"https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", "DOWNLOAD",
+			"forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", "DOWNLOAD",
 			"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7", "UPLOAD",
-			"https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4", "UPLOAD",
+			"forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4", "UPLOAD",
 			"projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1", "LIBREF",
 			"projectfile/actions/run-tool@v1", "LIBREF",
 			"--target gha", "--target T",
@@ -1092,7 +1092,7 @@ func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 func TestArtifactProtocolPerTarget(t *testing.T) {
 	for _, c := range []struct{ key, download, upload string }{
 		{TargetGHA, "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7"},
-		{TargetForgejo, "https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", "https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4"},
+		{TargetForgejo, "forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", "forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4"},
 	} {
 		tg := Targets[c.key]
 		if tg.Download != c.download {
@@ -1927,7 +1927,7 @@ func TestBuildArtifactHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(fout), "      - uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4\n") || !strings.Contains(string(fout), "          overwrite: true") {
+	if !strings.Contains(string(fout), "      - uses: forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4\n") || !strings.Contains(string(fout), "          overwrite: true") {
 		t.Errorf("forgejo upload must be the v4 fork with overwrite:\n%s", fout)
 	}
 	// The download answers to the PRODUCER's mutes: a muted build-binaries uploads nothing,
@@ -6403,7 +6403,7 @@ func TestForgeGateNarrowsEveryAxisOnTheStep(t *testing.T) {
 	for _, want := range []string{
 		"      - name: container-build\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n",
 		"      - name: grype-scan-tar\n        if: " + arch + " && " + skipGate("image-scanned") + " && " + skipGate("grype-scan-tar") + "\n",
-		"      - uses: https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n        with:\n          name: image-${{ matrix." + ci.ArchAxis + " }}",
+		"      - uses: forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n        with:\n          name: image-${{ matrix." + ci.ArchAxis + " }}",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing gated step %q\n---\n%s", want, s)

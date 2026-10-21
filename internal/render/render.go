@@ -1603,7 +1603,7 @@ var Targets = map[string]Target{
 	},
 	TargetForgejo: {
 		Key: TargetForgejo, RunsOn: "docker", Checkout: "actions/checkout@v7",
-		Download: "https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", Upload: "https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4",
+		Download: "forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", Upload: "forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4",
 		UploadOverwrite: true,
 		OutDir:          ".forgejo/workflows", Ext: workflowExt(), Template: "workflow.yaml.tmpl",
 		// buildah, NOT buildx: our forgejo runner (r8e/forgejo-runner) is host-mode
