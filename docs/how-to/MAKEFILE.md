@@ -575,6 +575,10 @@ Verify repository object integrity
 
 > Image: host runner
 
+### `git-worktree-check`
+
+Verify git resolves the work tree to this project directory
+
 ### `pf-bridge-gitattributes-check`
 
 Verify .gitattributes still matches the projectfile
