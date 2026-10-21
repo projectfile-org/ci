@@ -47,10 +47,7 @@ type Target struct {
 	Checkout string // checkout action reference
 	Download string // download-artifact action reference (build→scan tar hand-off)
 	Upload   string // upload-artifact action reference (build-artifact producer → consumer)
-	// UploadOverwrite emits `overwrite: true` on the upload. A re-run shares the run_id,
-	// so the run_id-scoped name (artifactScopeSuffix) re-uploads UNDER THE SAME name; the
-	// v4+ backend (gha) hard-refuses a duplicate without this. Forgejo's v1 store is
-	// last-write-wins and has no such input, so it stays false.
+	// UploadOverwrite emits `overwrite: true`: a re-run re-uploads the run_id-scoped name, which v4+ refuses.
 	UploadOverwrite bool
 	// OutDir is the vendor-fixed workflows directory (`.github/workflows`, `.forgejo/
 	// workflows`); each goal renders to `<OutDir>/<goal><Ext>`. The forge only reads its
@@ -1595,18 +1592,7 @@ func workflowExt() string { return workflowExtVar }
 // the same template by design — implementing both "at once" is one shared
 // workflow plus two adapter rows.
 var Targets = map[string]Target{
-	// Action majors DIVERGE by target because the ARTIFACT protocol does. checkout is
-	// Node-24-native on both (checkout@v7 — the runner ships b19/node-24, so the old
-	// Node-20 floor is gone). But upload/download-artifact@v4+ ride `@actions/artifact`
-	// v2, which treats any non-github.com server as GHES and HARD-REFUSES
-	// ("@actions/artifact v2.0.0+ … not currently supported on GHES") — and Forgejo IS
-	// such a server. Forgejo's backend implements the v1 artifact protocol, i.e. the
-	// `@v3` actions. So gha gets the current majors (upload@v7 / download@v8, v2
-	// protocol) and forgejo is pinned to @v3 (v1 protocol). This is a Forgejo PLATFORM
-	// constraint, not project policy, hence a lowering default (Law 3). NOTE: the upload
-	// major MUST match the action-library container-build composite that uploads the build
-	// tar — gha→buildx (upload@v7), forgejo→buildah (upload@v3); the backend split is
-	// also the forge split, so each composite carries its own paired version.
+	// Artifact pins MUST pair with the container-build composite's upload: gha→buildx, forgejo→buildah (Forgejo's v4 fork).
 	TargetGHA: {
 		Key: TargetGHA, RunsOn: "ubuntu-latest", Checkout: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
 		Download: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", Upload: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7",
@@ -1617,8 +1603,9 @@ var Targets = map[string]Target{
 	},
 	TargetForgejo: {
 		Key: TargetForgejo, RunsOn: "docker", Checkout: "actions/checkout@v7",
-		Download: "actions/download-artifact@v3", Upload: "actions/upload-artifact@v3",
-		OutDir: ".forgejo/workflows", Ext: workflowExt(), Template: "workflow.yaml.tmpl",
+		Download: "https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", Upload: "https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4",
+		UploadOverwrite: true,
+		OutDir:          ".forgejo/workflows", Ext: workflowExt(), Template: "workflow.yaml.tmpl",
 		// buildah, NOT buildx: our forgejo runner (r8e/forgejo-runner) is host-mode
 		// podman, where `podman-docker` shims the top-level `docker` command but has
 		// no `buildx` subcommand. buildah is the daemonless, podman-native analogue

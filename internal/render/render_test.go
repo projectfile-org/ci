@@ -1067,9 +1067,9 @@ func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 			"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "CHECKOUT",
 			"actions/checkout@v7", "CHECKOUT",
 			"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", "DOWNLOAD",
-			"actions/download-artifact@v3", "DOWNLOAD",
+			"https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", "DOWNLOAD",
 			"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7", "UPLOAD",
-			"actions/upload-artifact@v3", "UPLOAD",
+			"https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4", "UPLOAD",
 			"projectfile/actions/run-tool@afa4711d0aa234f2a57295baf3aa3aad3ad99ba3 # v1", "LIBREF",
 			"projectfile/actions/run-tool@v1", "LIBREF",
 			"--target gha", "--target T",
@@ -1088,15 +1088,11 @@ func TestTargetsDifferOnlyByAdapter(t *testing.T) {
 	}
 }
 
-// TestArtifactProtocolPerTarget pins the Forgejo platform constraint: upload/
-// download-artifact@v4+ ride `@actions/artifact` v2, which refuses any non-github.com
-// server as GHES, so Forgejo (v1 artifact protocol) MUST stay on @v3 while GitHub keeps
-// the current majors. This is the regression guard for the "GHESNotSupportedError" the
-// runner hit — keep it a per-target default, never a forced downgrade of GitHub.
+// TestArtifactProtocolPerTarget pins Forgejo to its own v4 fork, which upstream @v4+ refuses as GHES.
 func TestArtifactProtocolPerTarget(t *testing.T) {
 	for _, c := range []struct{ key, download, upload string }{
 		{TargetGHA, "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8", "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7"},
-		{TargetForgejo, "actions/download-artifact@v3", "actions/upload-artifact@v3"},
+		{TargetForgejo, "https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4", "https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4"},
 	} {
 		tg := Targets[c.key]
 		if tg.Download != c.download {
@@ -1921,19 +1917,18 @@ func TestBuildArtifactHandoff(t *testing.T) {
 		"        with:\n" +
 		"          name: " + name + "\n" +
 		"          path: dist\n" +
-		// overwrite: the run_id-scoped name re-uploads under the same name on a re-run,
-		// which upload-artifact@v4+ (gha) refuses without this.
+		// A re-run re-uploads the run_id-scoped name, which v4+ refuses without overwrite.
 		"          overwrite: true"
 	if !strings.Contains(string(out), wantUp) {
 		t.Errorf("producer missing the ordered run→upload body:\n%s", out)
 	}
-	// Forgejo's v1 store is last-write-wins and has no overwrite input, so it must NOT emit it.
+	// Forgejo's v4 fork refuses a duplicate too, so it carries overwrite as well.
 	fout, err := Workflow(m, Targets[TargetForgejo], ci.Platform{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(fout), "overwrite:") {
-		t.Errorf("forgejo upload must not carry overwrite (unsupported by @v3):\n%s", fout)
+	if !strings.Contains(string(fout), "      - uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4\n") || !strings.Contains(string(fout), "          overwrite: true") {
+		t.Errorf("forgejo upload must be the v4 fork with overwrite:\n%s", fout)
 	}
 	// The download answers to the PRODUCER's mutes: a muted build-binaries uploads nothing,
 	// so a download gated on the consumer alone dies on "Artifact not found".
@@ -6408,7 +6403,7 @@ func TestForgeGateNarrowsEveryAxisOnTheStep(t *testing.T) {
 	for _, want := range []string{
 		"      - name: container-build\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n",
 		"      - name: grype-scan-tar\n        if: " + arch + " && " + skipGate("image-scanned") + " && " + skipGate("grype-scan-tar") + "\n",
-		"      - uses: actions/download-artifact@v3\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n        with:\n          name: image-${{ matrix." + ci.ArchAxis + " }}",
+		"      - uses: https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4\n        if: " + arch + " && " + skipGate("image-built") + " && " + skipGate("container-build") + "\n        with:\n          name: image-${{ matrix." + ci.ArchAxis + " }}",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing gated step %q\n---\n%s", want, s)
