@@ -146,9 +146,10 @@ jobs:
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: .makefile/core/scripts/gpg-sign.sh --all dist/pf-ci
+          run: auto-gpg-sign
           env: |-
             M6E_GPG_PASSPHRASE=${{ secrets.GPG_PASSPHRASE }}
+          mounts: /app/data/ci-cache/pf:/app/.cache/pf:rw
       - uses: forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: vars.CI_SKIP_BINARIES_ARE_SIGNED != 'true' && vars.CI_SKIP_GPG_SIGN != 'true'
         with:
@@ -204,13 +205,14 @@ jobs:
         with:
           image: ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: .makefile/core/scripts/torrent.sh create --bundle dist/pf-ci
+          run: auto-torrent create binaries
           env: |-
             M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
             M6E_TORRENT_OUT_DIR=dist/torrents
             M6E_TORRENT_TRACKERS=https://tracker.kiota.ch/announce udp://tracker.kiota.ch:6969 wss://tracker.kiota.ch
             GITHUB_REPOSITORY
             GITHUB_SERVER_URL
+          mounts: /app/data/ci-cache/pf:/app/.cache/pf:rw
       - uses: forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: vars.CI_SKIP_BINARIES_ARE_TORRENTED != 'true' && vars.CI_SKIP_BINARIES_TORRENT_CREATE != 'true'
         with:
@@ -223,11 +225,11 @@ jobs:
         with:
           image: ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: .makefile/core/scripts/torrent.sh seed --bundle dist/pf-ci
+          run: auto-torrent seed binaries
           env: |-
             M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
             GITHUB_REPOSITORY
-          mounts: /app/data/ci-cache/rqbit-seed:/seed:rw
+          mounts: /app/data/ci-cache/pf:/app/.cache/pf:rw /app/data/ci-cache/rqbit-seed:/seed:rw
   binaries-torrent-is-verified:
     runs-on: docker
     needs: ["binaries-are-torrented", "release-tag"]
@@ -250,10 +252,11 @@ jobs:
         with:
           image: ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: .makefile/core/scripts/torrent.sh verify --bundle dist/pf-ci
+          run: auto-torrent verify binaries
           env: |-
             M6E_RELEASE_TAG=${{ needs.release-tag.outputs.tag }}
             GITHUB_REPOSITORY
+          mounts: /app/data/ci-cache/pf:/app/.cache/pf:rw
   container-is-verified:
     runs-on: docker
     needs: ["image-is-built"]
@@ -390,7 +393,7 @@ jobs:
         with:
           image: ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: .makefile/core/scripts/gpg-sign.sh --preflight
+          run: auto-gpg-sign --preflight
           env: |-
             M6E_GPG_PASSPHRASE=${{ secrets.GPG_PASSPHRASE }}
   gsa:
@@ -423,12 +426,13 @@ jobs:
         with:
           image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
           version: ${{ env.M6E_TAG }}
-          run: .makefile/library/scripts/gsa-cell.sh dist/pf-ci
+          run: auto-gsa
           env: |-
             TARGET_ARCH=${{ matrix.TARGET_ARCH }}
             TARGET_OS=${{ matrix.TARGET_OS }}
             GOARCH
             GOOS
+          mounts: /app/data/ci-cache/pf:/app/.cache/pf:rw
   image-has-sbom:
     runs-on: docker
     needs: ["image-is-built", "release-tag"]
@@ -919,9 +923,9 @@ jobs:
           images: |-
             ${{ vars.B19_GO_BASE_IMAGE || format('{0}/b19/go:{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', env.M6E_TAG) }} - - -
             ${{ vars.B19_UBUNTU_BASE_IMAGE || format('{0}/b19/ubuntu:{1}{2}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.M6E_BASE_IMAGE_VARIANT_PREFIX, vars.B19_UBUNTU_SERIES || 'resolute') }} - - -
-            ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-cosign,auto-go-test,auto-golangci-lint,auto-gosec,auto-grype,auto-osv-scanner,auto-syft,auto-trivy -
+            ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-cosign,auto-go-test,auto-golangci-lint,auto-gosec,auto-grype,auto-gsa,auto-osv-scanner,auto-syft,auto-trivy -
             ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-jsonlint,auto-markdownlint,auto-textlint -
-            ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-i18n,auto-shellcheck -
+            ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-gpg-sign,auto-i18n,auto-shellcheck -
             ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-yamllint,reuse -
             ${{ vars.D9T_RUST_TOOLS_IMAGE || format('{0}/d9t/rust-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-zizmor -
             ${{ vars.D9T_R_TOOLS_IMAGE || format('{0}/d9t/r-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-cffr-validate -
@@ -931,7 +935,7 @@ jobs:
             ${{ vars.IGNORELINT_IMAGE || format('{0}/damian-buho/ignorelint', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} ignorelint -
             ${{ vars.PF_BRIDGE_IMAGE || format('{0}/projectfile/bridge', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} pf-bridge -
             ${{ vars.PF_CLI_IMAGE || format('{0}/projectfile/cli', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} pf-cli -
-            ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} - -
+            ${{ vars.R8E_RQBIT_IMAGE || format('{0}/r8e/rqbit', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-torrent -
   signing-is-ready:
     runs-on: docker
     needs: ["release-tag"]
