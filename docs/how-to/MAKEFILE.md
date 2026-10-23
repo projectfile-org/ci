@@ -641,7 +641,7 @@ Scan Go code for security issues
 
 Analyze Go binary size (go-size-analyzer)
 
-`.makefile/library/scripts/gsa-cell.sh ${org.projectfile.artifacts.go-binary.path}`
+`auto-gsa`
 
 > Image: D9T_GO_TOOLS_IMAGE
 
