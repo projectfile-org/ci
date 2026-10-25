@@ -102,8 +102,8 @@ jobs:
           overwrite: true
   binaries-are-signed:
     runs-on: docker
-    needs: ["binaries-are-built", "gsa", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.gsa.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    needs: ["binaries-are-built", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       M6E_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       M6E_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -158,8 +158,8 @@ jobs:
           overwrite: true
   binaries-are-torrented:
     runs-on: docker
-    needs: ["binaries-are-built", "binaries-are-signed", "gsa", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.gsa.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    needs: ["binaries-are-built", "binaries-are-signed", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       M6E_RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}
       M6E_TORRENT_OUT_DIR: dist/torrents
@@ -396,43 +396,6 @@ jobs:
           run: auto-gpg-sign --preflight
           env: |-
             M6E_GPG_PASSPHRASE=${{ secrets.GPG_PASSPHRASE }}
-  gsa:
-    runs-on: docker
-    needs: ["binaries-are-built"]
-    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-    strategy:
-      matrix:
-        TARGET_ARCH: ["amd64", "arm64", "riscv64"]
-        TARGET_OS: ["linux", "darwin"]
-        exclude:
-          - TARGET_ARCH: "riscv64"
-            TARGET_OS: "darwin"
-    env:
-      TARGET_ARCH: ${{ matrix.TARGET_ARCH }}
-      TARGET_OS: ${{ matrix.TARGET_OS }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: true
-          persist-credentials: false
-      - uses: forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4
-        if: (vars.CI_ONLY_TARGET_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_TARGET_ARCH), format(',{0},', matrix.TARGET_ARCH))) && (vars.CI_ONLY_TARGET_OS == '' || contains(format(',{0},', vars.CI_ONLY_TARGET_OS), format(',{0},', matrix.TARGET_OS))) && vars.CI_SKIP_BINARIES_ARE_BUILT != 'true' && vars.CI_SKIP_BUILD_BINARIES != 'true'
-        with:
-          name: build-binaries-${{ matrix.TARGET_ARCH }}-${{ matrix.TARGET_OS }}-${{ github.run_id }}
-          path: dist
-      - name: auto-gsa
-        if: (vars.CI_ONLY_TARGET_ARCH == '' || contains(format(',{0},', vars.CI_ONLY_TARGET_ARCH), format(',{0},', matrix.TARGET_ARCH))) && (vars.CI_ONLY_TARGET_OS == '' || contains(format(',{0},', vars.CI_ONLY_TARGET_OS), format(',{0},', matrix.TARGET_OS))) && vars.CI_SKIP_GSA != 'true' && vars.CI_SKIP_AUTO_GSA != 'true'
-        uses: projectfile/actions/run-tool@7585a2fefdfeb15c12d1cdcc2944aaf3dea6f6e9 # v1
-        with:
-          image: ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }}
-          version: ${{ env.M6E_TAG }}
-          run: auto-gsa
-          env: |-
-            TARGET_ARCH=${{ matrix.TARGET_ARCH }}
-            TARGET_OS=${{ matrix.TARGET_OS }}
-            GOARCH
-            GOOS
-          mounts: /app/data/ci-cache/pf:/app/.cache/pf:rw
   image-has-sbom:
     runs-on: docker
     needs: ["image-is-built", "release-tag"]
@@ -541,8 +504,8 @@ jobs:
           platform: ${{ matrix.M6E_ARCH }}
   image-is-published:
     runs-on: docker
-    needs: ["binaries-are-built", "container-is-verified", "documentation-passes-lint", "gpg-is-ready", "gsa", "image-has-sbom", "image-is-built", "image-is-secure", "projectfile-is-ok", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
-    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.container-is-verified.result == 'success' && needs.documentation-passes-lint.result == 'success' && needs.gpg-is-ready.result == 'success' && needs.gsa.result == 'success' && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.image-is-built.result == 'success' && needs.image-is-secure.result == 'success' && needs.projectfile-is-ok.result == 'success' && needs.release-tag.result == 'success' && needs.runner-is-ready.result == 'success' && needs.signing-is-ready.result == 'success' && needs.source-is-compliant.result == 'success' && needs.source-is-secure.result == 'success' && needs.source-is-tested.result == 'success' && needs.source-passes-lint.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
+    needs: ["binaries-are-built", "container-is-verified", "documentation-passes-lint", "gpg-is-ready", "image-has-sbom", "image-is-built", "image-is-secure", "projectfile-is-ok", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.container-is-verified.result == 'success' && needs.documentation-passes-lint.result == 'success' && needs.gpg-is-ready.result == 'success' && (needs.image-has-sbom.result == 'success' || (needs.image-has-sbom.result == 'skipped' && !(needs.release-tag.outputs.tag != ''))) && needs.image-is-built.result == 'success' && needs.image-is-secure.result == 'success' && needs.projectfile-is-ok.result == 'success' && needs.release-tag.result == 'success' && needs.runner-is-ready.result == 'success' && needs.signing-is-ready.result == 'success' && needs.source-is-compliant.result == 'success' && needs.source-is-secure.result == 'success' && needs.source-is-tested.result == 'success' && needs.source-passes-lint.result == 'success' && ((startsWith(github.ref, 'refs/heads/')) || (needs.release-tag.outputs.tag != '')) }}
     strategy:
       matrix:
         M6E_PUBLISH_SINK: ["kiota", "dockerhub"]
@@ -745,7 +708,7 @@ jobs:
           run: pf-cli validate
   published:
     runs-on: docker
-    needs: ["binaries-are-built", "binaries-are-signed", "binaries-are-torrented", "binaries-torrent-is-verified", "container-is-verified", "documentation-passes-lint", "go-install-is-ok", "gpg-is-ready", "gsa", "image-has-sbom", "image-is-built", "image-is-published", "image-is-secure", "projectfile-is-ok", "projectfile-is-valid", "release-is-published", "release-notes-are-published", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
+    needs: ["binaries-are-built", "binaries-are-signed", "binaries-are-torrented", "binaries-torrent-is-verified", "container-is-verified", "documentation-passes-lint", "go-install-is-ok", "gpg-is-ready", "image-has-sbom", "image-is-built", "image-is-published", "image-is-secure", "projectfile-is-ok", "projectfile-is-valid", "release-is-published", "release-notes-are-published", "release-tag", "runner-is-ready", "signing-is-ready", "source-is-compliant", "source-is-secure", "source-is-tested", "source-passes-lint"]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     steps:
       - name: published verdict
@@ -760,7 +723,6 @@ jobs:
             "documentation-passes-lint=${{ needs.documentation-passes-lint.result }}" \
             "go-install-is-ok=${{ needs.go-install-is-ok.result }}" \
             "gpg-is-ready=${{ needs.gpg-is-ready.result }}" \
-            "gsa=${{ needs.gsa.result }}" \
             "image-has-sbom=${{ needs.image-has-sbom.result }}" \
             "image-is-built=${{ needs.image-is-built.result }}" \
             "image-is-published=${{ needs.image-is-published.result }}" \
@@ -793,8 +755,8 @@ jobs:
           [ "${failed}" -eq 0 ]
   release-is-published:
     runs-on: docker
-    needs: ["binaries-are-built", "binaries-are-signed", "binaries-are-torrented", "gsa", "image-is-published", "release-tag"]
-    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.gsa.result == 'success' && needs.image-is-published.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
+    needs: ["binaries-are-built", "binaries-are-signed", "binaries-are-torrented", "image-is-published", "release-tag"]
+    if: ${{ !cancelled() && needs.binaries-are-built.result == 'success' && needs.binaries-are-signed.result == 'success' && needs.binaries-are-torrented.result == 'success' && needs.image-is-published.result == 'success' && needs.release-tag.result == 'success' && (needs.release-tag.outputs.tag != '') }}
     env:
       RELEASE_TARGET: main
       FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
@@ -923,7 +885,7 @@ jobs:
           images: |-
             ${{ vars.B19_GO_BASE_IMAGE || format('{0}/b19/go:{1}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', env.M6E_TAG) }} - - -
             ${{ vars.B19_UBUNTU_BASE_IMAGE || format('{0}/b19/ubuntu:{1}{2}', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch', vars.M6E_BASE_IMAGE_VARIANT_PREFIX, vars.B19_UBUNTU_SERIES || 'resolute') }} - - -
-            ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-cosign,auto-go-test,auto-golangci-lint,auto-gosec,auto-grype,auto-gsa,auto-osv-scanner,auto-syft,auto-trivy -
+            ${{ vars.D9T_GO_TOOLS_IMAGE || format('{0}/d9t/go-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-cosign,auto-go-test,auto-golangci-lint,auto-gosec,auto-grype,auto-osv-scanner,auto-syft,auto-trivy -
             ${{ vars.D9T_JS_TOOLS_IMAGE || format('{0}/d9t/js-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-jsonlint,auto-markdownlint,auto-textlint -
             ${{ vars.D9T_MISC_TOOLS_IMAGE || format('{0}/d9t/misc-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-gpg-sign,auto-i18n,auto-shellcheck -
             ${{ vars.D9T_PYTHON_TOOLS_IMAGE || format('{0}/d9t/python-tools', vars.SOURCE_DOCKER_REGISTRY || 'kiota.ch') }} ${{ env.M6E_TAG }} auto-yamllint,reuse -
