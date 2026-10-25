@@ -3624,6 +3624,44 @@ func TestStableBranchReleasesFromItsOwnRun(t *testing.T) {
 	}
 }
 
+// TestStableBranchSkipsGoalsScopedOffPush pins that a goal no push fires renders without the release tag, and one a push fires still refuses to miss it.
+func TestStableBranchSkipsGoalsScopedOffPush(t *testing.T) {
+	const doc = `{
+  "tools": {"detect": {"run": "detect.sh"}, "probe": {"run": "probe.sh"}, "scan": {"run": "scan.sh"}},
+  "nodes": {
+    "release-tag": {"needs": {"detect": true}},
+    "probed": {"when": {"events": ["primary", "tag"]}, "needs": {"probe": true}},
+    "scanned": {"needs": {"scan": true, "probed": true}},
+    "audited": {"goal": true, "schedule": [{"cron": "0 6 * * *"}], "dispatch": {}, "when": {"events": [%s]}, "needs": {"scanned": true}}
+  }
+}`
+	for _, tc := range []struct {
+		when    string
+		wantErr bool
+	}{
+		{`"schedule", "dispatch"`, false},
+		{`"dispatch"`, false},
+		{`"schedule", "primary"`, true},
+		{`"push:main"`, true},
+	} {
+		st, err := ci.Parse([]byte(strings.Replace(doc, "%s", tc.when, 1)))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", tc.when, err)
+		}
+		rm, err := resolve.Resolve(st)
+		if err != nil {
+			t.Fatalf("%s: resolve: %v", tc.when, err)
+		}
+		out, err := Workflow(Build(rm, st, &ci.Build{StableBranch: testStable}), Targets[TargetGHA], ci.Platform{})
+		if (err != nil) != tc.wantErr {
+			t.Errorf("when [%s]: err=%v, want error %t", tc.when, err, tc.wantErr)
+		}
+		if err == nil && strings.Contains(string(out), ReleaseTagNode) {
+			t.Errorf("when [%s]: a goal no push fires must not read the release tag:\n%s", tc.when, out)
+		}
+	}
+}
+
 // TestWhenNarrowsOnWhenAllGated pins the narrowing path: when EVERY reachable job
 // is gated (no un-gated build/lint), the `on:` surface shrinks to exactly the union
 // of the declared events — a tag-only + main workflow does not spawn a run per PR.

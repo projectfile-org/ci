@@ -18,6 +18,7 @@ const (
 	axisArchKey    = "M6E_ARCH"
 	testTagRefType = "github.ref_type == 'tag'"
 	testEventRef   = "github.ref == 'refs/heads/dev'"
+	testStable     = "main"
 )
 
 // TestTargetKeysAreSorted pins the listing every error and the -target help read:

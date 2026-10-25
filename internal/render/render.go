@@ -3492,6 +3492,13 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		rb.ReleaseTag, b = true, &rb
 	}
 	stable := b != nil && b.ReleaseTag
+	if stable && st.GoalsExplicit && len(st.Goals) == 1 {
+		// A goal scoped off every push renders no release, so nothing in its file reads the release tag.
+		if w := st.Nodes[st.Goals[0]].When; len(w) > 0 && !slices.ContainsFunc(w, firesOnPush) {
+			stable = false
+			genlog.Decision("release_from_run", "false", "org.projectfile.ci.nodes."+st.Goals[0]+".when", strings.Join(w, ","))
+		}
+	}
 	if b != nil && b.StableBranch != "" {
 		genlog.Decision("release_from_run", fmt.Sprint(stable), "org.projectfile.ci.nodes."+ReleaseTagNode, "stable="+b.StableBranch)
 	}
@@ -4506,6 +4513,11 @@ func releaseTokens(events []string) []string {
 		out[i] = e
 	}
 	return out
+}
+
+// firesOnPush reports whether an event token matches a push, the only event a stable branch releases on.
+func firesOnPush(e string) bool {
+	return e == ci.EventTag || e == ci.EventPrimary || e == ci.EventPreview || strings.HasPrefix(e, ci.EventPushPrefix)
 }
 
 // wireReleaseTag gives ReleaseTagNode its `tag` output and makes every job reading it need it; false when a reader has no node to need.
