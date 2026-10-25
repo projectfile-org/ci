@@ -1870,6 +1870,8 @@ type StepView struct {
 	// axes when this node consumes an axis it does not fan over. Empty on a project that
 	// declares no architecture, where oci-push takes its single-image path unchanged.
 	Archives []ArchiveView `json:"archives,omitempty"`
+	// WithholdArches is oci-push's `withhold-arches:` input, the cell's matrix.exclude arches; empty when no cell withholds one.
+	WithholdArches string `json:"withhold-arches,omitempty"`
 	// ReleaseAssetPath is the forgejo-release `release-asset-path:` input — the
 	// UNSUFFIXED binary path resolved from org.projectfile.artifacts (the single
 	// kind=binary entry's .path, e.g. dist/pf-cli). The action suffixes it with
@@ -1962,6 +1964,9 @@ type DownloadView struct {
 	Path string
 	// Arch is the declared value a per-arch tar download names when the job dropped the arch axis; empty otherwise.
 	Arch string `json:"Arch,omitempty"`
+	// HeldVar and HeldToken name the cell's withheld list and this download's entry in it; empty when every cell built it.
+	HeldVar   string `json:"-"`
+	HeldToken string `json:"-"`
 	// Node and Tool name the PRODUCER whose upload this pulls; its mutes ride the download's gate.
 	Node string `json:"-"`
 	Tool string `json:"-"`
@@ -2589,7 +2594,7 @@ func archArtifactStem(base string, producer []ci.Axis, arch string) string {
 // so a producer/consumer pair that fans identically renders byte-for-byte as before.
 // Cells is the one definition of which cells exist, so an `exclude`d row is asked for
 // by nobody.
-func artifactStems(base string, producer []ci.Axis, excludes []ci.Exclusion, consumer []ci.Axis) []string {
+func artifactStems(base string, producer []ci.Axis, excludes []ci.Exclusion, consumer []ci.Axis) ([]string, []string) {
 	kept := make(map[string]bool, len(consumer))
 	for _, a := range consumer {
 		kept[a.Key] = true
@@ -2605,18 +2610,20 @@ func artifactStems(base string, producer []ci.Axis, excludes []ci.Exclusion, con
 	// NARROWER than its consumer (the single release torrent five release cells
 	// each attach) — one name either way, built from the producer's axes.
 	if !dropped {
-		return []string{artifactStem(base, AxisMap(producer))}
+		return []string{artifactStem(base, AxisMap(producer))}, []string{""}
 	}
-	var out []string
+	var out, tokens []string
 	seen := make(map[string]bool)
 	for _, cell := range ci.Cells(producer, excludes) {
 		s := base
+		var token []string
 		for _, a := range producer {
 			if kept[a.Key] {
 				s += "-${{ matrix." + a.Key + " }}"
 				continue
 			}
 			s += "-" + cell[a.Key]
+			token = append(token, cell[a.Key])
 		}
 		s += artifactScopeSuffix
 		// Cells differing ONLY in an axis the consumer kept collapse to one name —
@@ -2624,9 +2631,10 @@ func artifactStems(base string, producer []ci.Axis, excludes []ci.Exclusion, con
 		if !seen[s] {
 			seen[s] = true
 			out = append(out, s)
+			tokens = append(tokens, strings.Join(token, "/"))
 		}
 	}
-	return out
+	return out, tokens
 }
 
 // stepCtx is the data a JOB partial (steps/node or steps/gate) renders against: the
@@ -3610,6 +3618,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		// The daemon-side arch this job's loaded image is named under, resolved where the
 		// build hand-off is (empty until then, and on a job that consumes no build).
 		jobLoadArch := ""
+		held := withheldSet{}
 		hasReports := false
 		var axes []ci.Axis
 		var excludes []ci.Exclusion
@@ -3683,13 +3692,27 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					loadArch := archVarExpr(j.Axes)
 					if archAxis(byName[need].Axes) && !archAxis(j.Axes) {
 						stems = nil
+						cj := newCellJoin(j.Axes, j.Excludes, byName[need].Axes, byName[need].Excludes)
 						for _, arch := range declaredArches(st) {
 							name := archArtifactStem("image", byName[need].Axes, arch)
-							stems = append(stems, DownloadView{Name: name, Arch: arch, Node: toolNode[need], Tool: need})
+							dl := DownloadView{Name: name, Arch: arch, Node: toolNode[need], Tool: need}
+							if lacking := cj.Lacking(arch); len(lacking) > 0 {
+								if !cj.Fanned() {
+									genlog.Decision("cell_withheld", nv.Name+" drops "+name, "matrix.exclude", cj.Var)
+									continue
+								}
+								dl.HeldVar, dl.HeldToken = cj.Var, arch
+								held.add(cj, arch, lacking)
+								step.WithholdArches = matrixVarExpr(cj.Var, nil, nil)
+							}
+							stems = append(stems, dl)
 							step.Archives = append(step.Archives, ArchiveView{Arch: arch, Name: name})
 						}
-						if arches := declaredArches(st); len(arches) > 0 {
-							loadArch = arches[0]
+						if len(stems) > 0 {
+							loadArch = stems[0].Arch
+						}
+						if man.Fuse == liveFuse && len(stems) > 0 && stems[0].HeldVar != "" && buildErr == nil {
+							buildErr = fmt.Errorf("org.projectfile.ci: node %q loads %s=%s, which matrix.exclude withholds from a cell", nv.Name, ci.ArchAxis, loadArch)
 						}
 					}
 					for _, dl := range stems {
@@ -3745,11 +3768,19 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 					// attaching that one torrent). Both ends are named off the PRODUCER,
 					// so neither shape needs the other to agree about a matrix it does
 					// not have; several names restore into the SAME path and merge there.
-					for _, name := range artifactStems(need, byName[need].Axes, byName[need].Excludes, j.Axes) {
-						if !dlSeen[name] {
-							dlSeen[name] = true
-							job.Downloads = append(job.Downloads, DownloadView{Name: name, Path: path, Node: toolNode[need], Tool: need})
+					names, tokens := artifactStems(need, byName[need].Axes, byName[need].Excludes, j.Axes)
+					cj := newCellJoin(j.Axes, j.Excludes, byName[need].Axes, byName[need].Excludes)
+					for i, name := range names {
+						if dlSeen[name] {
+							continue
 						}
+						dlSeen[name] = true
+						dl := DownloadView{Name: name, Path: path, Node: toolNode[need], Tool: need}
+						if lacking := cj.Lacking(tokens[i]); len(lacking) > 0 {
+							dl.HeldVar, dl.HeldToken = cj.Var, tokens[i]
+							held.add(cj, tokens[i], lacking)
+						}
+						job.Downloads = append(job.Downloads, dl)
 					}
 				}
 			}
@@ -3820,6 +3851,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 			if job.Load {
 				job.Include = append(job.Include, slugRows(slugAxes(axes))...)
 			}
+			job.Include = append(job.Include, held.rows(axes, excludes)...)
 			job.Pins = pinViews(nv.Name, st.Nodes[nv.Name].Pin, job.Matrix)
 		} else {
 			job.Class = string(byName[memberTools[0]].Class)
@@ -4625,6 +4657,10 @@ func forgeGates(j JobView) JobView {
 		if d.Arch != "" {
 			gate = append(gate, onlyGate(ci.ArchAxis, literalValue(d.Arch)))
 		}
+		// a cell whose matrix.exclude withholds this artifact never uploaded it
+		if d.HeldVar != "" {
+			gate = append(gate, "!contains("+cellValue(d.HeldVar)+", "+literalValue(d.HeldToken)+")")
+		}
 		// a muted producer uploaded nothing, so its download answers to the same mutes
 		d.If = withEvent(d.EventIf, strings.Join(append(gate, muteGates(d.Node, d.Tool)...), " && "))
 	}
@@ -4842,6 +4878,116 @@ func axisValues(m AxisMap, key string) []string {
 // runnerVar carries one cell's chosen runner label, bound beside the arch axis on a
 // matrix include row.
 const runnerVar = "M6E_RUNNER"
+
+// cellJoin is what a job that DROPPED some producer axes knows about the producer cells it joins.
+type cellJoin struct {
+	// Var is the matrix include field carrying a job cell's withheld tokens, named after the dropped axes.
+	Var     string
+	dropped []ci.Axis
+	job     []ci.Axis
+	cells   []map[string]string
+	built   map[string]bool
+}
+
+// newCellJoin indexes the producer's realised cells by job cell and dropped-axes token; nil when the job drops no producer axis.
+func newCellJoin(job []ci.Axis, jobExcludes []ci.Exclusion, producer []ci.Axis, producerExcludes []ci.Exclusion) *cellJoin {
+	kept := make(map[string]bool, len(job))
+	for _, a := range job {
+		kept[a.Key] = true
+	}
+	cj := &cellJoin{job: job, built: map[string]bool{}}
+	keys := make([]string, 0, len(producer))
+	for _, a := range producer {
+		if !kept[a.Key] {
+			cj.dropped = append(cj.dropped, a)
+			keys = append(keys, a.Key)
+		}
+	}
+	if len(cj.dropped) == 0 {
+		return nil
+	}
+	cj.Var = strings.Join(keys, "_") + "_WITHHELD"
+	for _, c := range ci.Cells(producer, producerExcludes) {
+		cj.built[cellOn(c, job)+"|"+cj.Token(c)] = true
+	}
+	cj.cells = ci.Cells(job, jobExcludes)
+	if len(job) == 0 {
+		cj.cells = []map[string]string{{}}
+	}
+	return cj
+}
+
+// Token spells a cell's dropped-axes values, the identity of one joined artifact.
+func (cj *cellJoin) Token(c map[string]string) string {
+	parts := make([]string, 0, len(cj.dropped))
+	for _, a := range cj.dropped {
+		parts = append(parts, c[a.Key])
+	}
+	return strings.Join(parts, "/")
+}
+
+// Lacking lists the job cells whose producer grid never built the token; none on a nil join.
+func (cj *cellJoin) Lacking(token string) []map[string]string {
+	if cj == nil {
+		return nil
+	}
+	var out []map[string]string
+	for _, c := range cj.cells {
+		if !cj.built[cellOn(c, cj.job)+"|"+token] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Fanned reports whether the job fans over any axis, so a lacking token is gated per cell instead of dropped outright.
+func (cj *cellJoin) Fanned() bool { return len(cj.job) > 0 }
+
+// withheldSet collects, per job cell, the tokens each join withholds there, rendered as full-cell include rows.
+type withheldSet map[string]map[string][]string
+
+// add records one token a join withholds from each lacking cell.
+func (w withheldSet) add(cj *cellJoin, token string, lacking []map[string]string) {
+	for _, c := range lacking {
+		k := cellOn(c, cj.job)
+		if w[k] == nil {
+			w[k] = map[string][]string{}
+		}
+		if !slices.Contains(w[k][cj.Var], token) {
+			w[k][cj.Var] = append(w[k][cj.Var], token)
+		}
+		genlog.Decision("cell_withheld", k+" "+cj.Var+" += "+token, "matrix.exclude", cj.Var)
+	}
+}
+
+// rows renders one include row per withholding cell, in the job's cell order, so each binds exactly one existing cell.
+func (w withheldSet) rows(axes []ci.Axis, excludes []ci.Exclusion) []MatrixRowView {
+	var out []MatrixRowView
+	for _, c := range ci.Cells(axes, excludes) {
+		vars := w[cellOn(c, axes)]
+		if len(vars) == 0 {
+			continue
+		}
+		fields := make([]KVView, 0, len(axes)+len(vars))
+		for _, a := range axes {
+			fields = append(fields, KVView{Key: a.Key, Value: c[a.Key]})
+		}
+		for _, v := range sortedKeysOf(vars) {
+			fields = append(fields, KVView{Key: v, Value: strings.Join(vars[v], ",")})
+		}
+		out = append(out, MatrixRowView{Fields: fields})
+	}
+	return out
+}
+
+// cellOn spells a cell's values on the given axes as one comparable string.
+func cellOn(c map[string]string, axes []ci.Axis) string {
+	parts := make([]string, 0, len(axes))
+	for _, a := range axes {
+		parts = append(parts, a.Key+"="+c[a.Key])
+	}
+	return strings.Join(parts, ",")
+}
 
 // releaseURLVar / releaseRepoVar are the per-cell release coordinates, carried as
 // matrix include fields beside the destination axis.

@@ -52,7 +52,7 @@ const (
 // series and goAxes are the matrix axes the fixtures fan over, keyed as the override gate names them.
 var (
 	series = AxisMap{{Key: testUbuntuSeries, Values: []string{testResolute, testNoble}}}
-	goAxes = AxisMap{{Key: "GOARCH", Values: []string{testAmd64}}, {Key: "GOOS", Values: []string{testLinux}}}
+	goAxes = AxisMap{{Key: "GOARCH", Values: []string{testAmd64}}, {Key: testGOOS, Values: []string{testLinux}}}
 )
 
 // matrixSubtree is the canonical exercise from the build order: a single axis,
@@ -6184,7 +6184,7 @@ func TestArtifactHandoffAcrossDroppedAxes(t *testing.T) {
 // DROPPED axis is bound to a literal. Cells differing solely in a kept axis collapse
 // to one name rather than one download per producer cell.
 func TestArtifactStemsBindOnlyDroppedAxes(t *testing.T) {
-	both := []ci.Axis{{Key: "GOARCH", Values: []string{testAmd64, testArm64}}, {Key: "GOOS", Values: []string{testLinux, "darwin"}}}
+	both := []ci.Axis{{Key: "GOARCH", Values: []string{testAmd64, testArm64}}, {Key: testGOOS, Values: []string{testLinux, "darwin"}}}
 	for _, tc := range []struct {
 		name               string
 		producer, consumer []ci.Axis
@@ -6209,7 +6209,7 @@ func TestArtifactStemsBindOnlyDroppedAxes(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := artifactStems("b", tc.producer, nil, tc.consumer)
+			got, _ := artifactStems("b", tc.producer, nil, tc.consumer)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %d stems %v, want %d %v", len(got), got, len(tc.want), tc.want)
 			}

@@ -312,6 +312,9 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
 {{- end }}
           # The arches this scope may publish, the same list the per-arch downloads above honour
           only-arches: {{ onlyArchesExpr }}
+{{- with .Step.WithholdArches }}
+          withhold-arches: {{ . }}
+{{- end }}
 {{- else }}
           artifact-name: {{ .Step.Stem }}
 {{- end }}
