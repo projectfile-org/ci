@@ -631,6 +631,8 @@ type Subtree struct {
 	MountCache bool
 	// RouteArches is the architecture set each lowering builds (org.projectfile.publish.<forge>.architecture); absent => every declared one.
 	RouteArches map[string][]string
+	// pendingExcludes holds every raw global matrix.exclude row while one names an axis Load has yet to derive; Load rebuilds Excludes from it.
+	pendingExcludes []map[string]json.RawMessage
 }
 
 // Dispatch is the manual-run trigger: the button plus its optional typed inputs (the
@@ -1888,6 +1890,13 @@ func LoadWithOptions(pfPath string, opts projectfile.ReadOptions) (*Subtree, err
 			"axis", ArchAxis, "arches", arches, "image", st.Image)
 		st.addAxis(Axis{Key: ArchAxis, Values: arches})
 	}
+	if st.pendingExcludes != nil {
+		genlog.Debug("matrix.exclude: validating deferred rows against the derived axes", "rows", len(st.pendingExcludes), "axes", axisKeyNames(st.Axes))
+		if st.Excludes, err = buildExcludes(st.pendingExcludes, st.Axes); err != nil {
+			return nil, fmt.Errorf("org.projectfile.ci: %w (derived axes: %s from org.projectfile.architecture on a container build)", err, ArchAxis)
+		}
+		st.pendingExcludes = nil
+	}
 	if st.RouteArches, err = r.routeArchitectures(); err != nil {
 		return nil, err
 	}
@@ -2075,7 +2084,12 @@ func Parse(data []byte) (*Subtree, error) {
 		// overrides because it changes WHICH cells exist — an override is then
 		// validated against the cells that SURVIVE, so a row decorating only excluded
 		// cells is the same loud no-match error as a typo'd axis value.
-		ex, err := buildExcludes(m.Exclude, axes)
+		rows := slices.DeleteFunc(slices.Clone(m.Exclude), func(r map[string]json.RawMessage) bool { return namesDerivedAxis(r, axes) })
+		if len(rows) < len(m.Exclude) {
+			genlog.Debug("matrix.exclude: deferring rows naming a derived axis until Load mints it", "deferred", len(m.Exclude)-len(rows), "axes", axisKeyNames(axes))
+			st.pendingExcludes = m.Exclude
+		}
+		ex, err := buildExcludes(rows, axes)
 		if err != nil {
 			return nil, err
 		}
@@ -2878,6 +2892,19 @@ func buildExcludes(raws []map[string]json.RawMessage, axes []Axis) ([]Exclusion,
 			"a matrix with no cell runs nothing", len(full))
 	}
 	return rows, nil
+}
+
+// derivedAxes are the axis keys Load mints from outside matrix.axes, which a matrix.exclude row may name before they exist.
+var derivedAxes = []string{ArchAxis}
+
+// namesDerivedAxis reports whether a raw matrix.exclude row carries a derived axis key the authored axes do not declare.
+func namesDerivedAxis(row map[string]json.RawMessage, axes []Axis) bool {
+	for _, k := range derivedAxes {
+		if _, ok := row[k]; ok && !slices.ContainsFunc(axes, func(a Axis) bool { return a.Key == k }) {
+			return true
+		}
+	}
+	return false
 }
 
 // axisKeyNames lists the declared axis KEYS, for an error message that names what
