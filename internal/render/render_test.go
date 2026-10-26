@@ -3574,6 +3574,41 @@ func TestStableBranchReleases(t *testing.T) {
 	}
 }
 
+// TestBorrowedGateLeavesGoalSurface pins that a follower whose target sits outside the goal’s file adds no trigger.
+func TestBorrowedGateLeavesGoalSurface(t *testing.T) {
+	const src = `{
+  "tools": {"publish": {"run": "publish"}, "key": {"run": "key"}, "audit": {"run": "audit"}},
+  "nodes": {
+    "published":       {"goal": true, "needs": {"image-published": true}},
+    "image-published": {"when": {"events": ["tag", "preview"]}, "needs": {"publish": true, "signing-ready": true}},
+    "signing-ready":   {"when": {"follows": "image-published"}, "needs": {"key": true}},
+    "audited":         {"goal": true, "when": {"events": ["schedule", "dispatch"]}, "schedule": [{"cron": "0 6 * * *"}], "dispatch": {}, "needs": {"audit": true, "signing-ready": true}}
+  }
+}`
+	st, err := ci.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	gst := st.ForGoal("audited")
+	rm, err := resolve.Resolve(gst)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	out, err := Workflow(Build(rm, gst, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Contains(s, "  push:") || strings.Contains(s, "pull_request") {
+		t.Errorf("audited must fire on schedule and dispatch only:\n%s", s)
+	}
+	for _, want := range []string{"  workflow_dispatch:\n", "  schedule:\n", "signing-ready:"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("audited.yaml missing %q\n---\n%s", want, s)
+		}
+	}
+}
+
 // TestStableBranchReleasesFromItsOwnRun pins that a stable-branch project gates and names its release by the detected tag.
 func TestStableBranchReleasesFromItsOwnRun(t *testing.T) {
 	const doc = `{

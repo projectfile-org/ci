@@ -734,6 +734,26 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnVi
 	return ov
 }
 
+// surfaceJobs drops, in a goal-scoped file, each follower whose `follows` target the file never runs.
+func surfaceJobs(jobs []JobView, nodes map[string]ci.Node, goalScope []string) []JobView {
+	out := slices.Clone(jobs)
+	if len(goalScope) == 0 {
+		return out
+	}
+	present := make(map[string]bool, len(jobs))
+	for _, j := range jobs {
+		present[j.Name] = true
+	}
+	return slices.DeleteFunc(out, func(j JobView) bool {
+		target := nodes[j.Name].Follows
+		if target == "" || present[target] {
+			return false
+		}
+		genlog.Debug("borrowed gate left off the trigger surface", "job", j.Name, "follows", target, "events", j.Events)
+		return true
+	})
+}
+
 // stableReleases swaps tag pushes for the stable branch push, the run that releases the tag its commit carries.
 func stableReleases(ov OnView, stable string, fromRun bool) OnView {
 	if stable == "" || (!fromRun && ov.Dispatch == nil) || (!ov.PushAny && !ov.PushTags) {
@@ -3941,7 +3961,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 	// force the broad push/PR surface back on and re-break a schedule-only goal (the
 	// exact bug goalScope fixes). It instead rides whatever events the file already
 	// fires for, gated by its own always()+var `if:`.
-	on := buildOn(append(slices.Clone(jobs), contracted...), triggers, goalScope, primaryBranches(b))
+	on := buildOn(append(surfaceJobs(jobs, st.Nodes, goalScope), contracted...), triggers, goalScope, primaryBranches(b))
 	if b != nil {
 		on = stableReleases(on, b.StableBranch, b.ReleaseTag)
 	}
