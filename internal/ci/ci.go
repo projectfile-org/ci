@@ -89,7 +89,7 @@ type Node struct {
 	// STATICALLY, server-side, into independent job rows, then dispatches each to any
 	// runner with a free slot — there is no scheduler stage between expansion and
 	// dispatch for a strategy cap to live in, so `strategy.max-parallel` renders and is
-	// then ignored (go-gitea/gitea#35561). `needs` is the ONE ordering primitive both
+	// then ignored (Forgejo v16; Gitea added it in go-gitea/gitea#36357). `needs` is the ONE ordering primitive both
 	// forges honour, because it is stored on the job row the dispatcher reads. So the
 	// portable spelling of "these cells must not run together" is an EDGE, not a cap.
 	//

@@ -5341,7 +5341,7 @@ var jobIDUnsafe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 // Why an edge and not a cap: `strategy.max-parallel` is a GitHub guarantee only. Forgejo
 // expands a matrix statically into independent job rows and dispatches each to any runner
 // with a free slot, with no scheduler stage in between for a cap to act in — so the cap
-// renders and is ignored (go-gitea/gitea#35561), while `needs` is stored on the job row
+// renders and is ignored (Forgejo v16; Gitea added it in go-gitea/gitea#36357), while `needs` is stored on the job row
 // the dispatcher actually reads.
 //
 // Only the named axis is walked; every other axis keeps fanning inside each link, so a
