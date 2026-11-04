@@ -6743,3 +6743,50 @@ func TestGoalVerdictNeedsClosure(t *testing.T) {
 		t.Errorf("no webhook var must render no POST:\n%s", run)
 	}
 }
+
+const lefthookFormatSubtree = `{
+  "tools": {"shellcheck": {"run": "make shellcheck"}},
+  "nodes": {
+    "pre-commit-format": {"needs": {"shellcheck": true}},
+    "pre-commit":        {"needs": {"shellcheck": true}},
+    "pre-push":          {"needs": {"pre-commit": true}}
+  }
+}`
+
+const lefthookGoldenBody = "\npre-commit:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-commit\n"
+
+func renderLefthook(t *testing.T, subtree string) string {
+	t.Helper()
+	st, err := ci.Parse([]byte(subtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out, err := Lefthook(st, Targets[TargetLefthook])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// TestLefthookWithoutFormatNodeIsByteIdentical pins the dispatcher form every project without the node already ships.
+func TestLefthookWithoutFormatNodeIsByteIdentical(t *testing.T) {
+	s := renderLefthook(t, `{"tools": {"a": {"run": "make a"}}, "nodes": {"pre-commit": {"needs": {"a": true}}}}`)
+	if !strings.HasSuffix(s, "---"+lefthookGoldenBody) {
+		t.Errorf("output without the format node moved:\n%s", s)
+	}
+}
+
+// TestLefthookFormatNodeRendersJobs pins the ordered jobs form with the formatter first.
+func TestLefthookFormatNodeRendersJobs(t *testing.T) {
+	s := renderLefthook(t, lefthookFormatSubtree)
+	want := "---\npre-commit:\n  follow: true # stream each tool’s progress instead of a spinner\n  jobs:\n" +
+		"    - name: format\n      stage_fixed: true\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-commit-format\n" +
+		"    - name: dag\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-commit\n" +
+		"pre-push:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-push\n"
+	if !strings.HasSuffix(s, want) {
+		t.Errorf("format form moved:\n%s", s)
+	}
+	if strings.Index(s, "name: format") > strings.Index(s, "name: dag") {
+		t.Errorf("format job must precede dag:\n%s", s)
+	}
+}

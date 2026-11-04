@@ -12,9 +12,22 @@
 {{- range .Hooks }}
 {{ .Stage }}:
   follow: true # stream each tool’s progress instead of a spinner
+{{- if .Format }}
+  jobs:
+    - name: format
+      stage_fixed: true
+      env:
+        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal
+      run: make pre-commit-format
+    - name: dag
+      env:
+        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal
+      run: make {{ .Stage }}
+{{- else }}
   commands:
     dag:
       env:
         TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal
       run: make {{ .Stage }}
+{{- end }}
 {{- end }}

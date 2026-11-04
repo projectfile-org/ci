@@ -1671,6 +1671,9 @@ func TargetKeys() []string {
 // lefthook config is byte-stable regardless of map iteration order.
 var HookStages = []string{"pre-commit", "pre-push"}
 
+// FormatNode is the optional DAG node that makes the pre-commit hook run a re-staging formatter first.
+const FormatNode = "pre-commit-format"
+
 // HookNodes returns the HookStages that EXIST as nodes in the DAG, in HookStages
 // order — the hooks render.Lefthook will emit. The single source for both the
 // render and main's "(N hooks)" summary.
@@ -1700,6 +1703,8 @@ type LefthookView struct {
 // select.mk derives one launcher per node), so the dispatch needs nothing more.
 type HookView struct {
 	Stage string
+	// Format is true when the pre-commit hook leads with the `pre-commit-format` job.
+	Format bool
 }
 
 // Lefthook renders the dispatcher-form lefthook config (lefthook.yaml by default):
@@ -1712,7 +1717,8 @@ type HookView struct {
 func Lefthook(st *ci.Subtree, target Target) ([]byte, error) {
 	view := LefthookView{Target: target}
 	for _, stage := range HookNodes(st) {
-		view.Hooks = append(view.Hooks, HookView{Stage: stage})
+		_, format := st.Nodes[FormatNode]
+		view.Hooks = append(view.Hooks, HookView{Stage: stage, Format: stage == "pre-commit" && format})
 	}
 	// Parse ONLY the lefthook template: the job templates (workflow/steps) declare
 	// funcs (stepbody) bound at render time in Workflow, so pulling them in here
