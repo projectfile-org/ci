@@ -22,12 +22,12 @@
     - name: dag
       env:
         TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal
-      run: make {{ .Stage }}
+      run: {{ if eq .Stage "pre-commit" }}M6E_SCOPE="${M6E_SCOPE:-staged}" {{ end }}make {{ .Stage }}
 {{- else }}
   commands:
     dag:
       env:
         TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal
-      run: make {{ .Stage }}
+      run: {{ if eq .Stage "pre-commit" }}M6E_SCOPE="${M6E_SCOPE:-staged}" {{ end }}make {{ .Stage }}
 {{- end }}
 {{- end }}

@@ -4410,7 +4410,7 @@ func TestLefthookRendersHookNodesAsDispatchers(t *testing.T) {
 	for _, want := range []string{
 		"pre-commit:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb",
 		"pre-push:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb",
-		"run: make pre-commit",
+		`run: M6E_SCOPE="${M6E_SCOPE:-staged}" make pre-commit`,
 		"run: make pre-push",
 	} {
 		if !strings.Contains(s, want) {
@@ -6753,7 +6753,7 @@ const lefthookFormatSubtree = `{
   }
 }`
 
-const lefthookGoldenBody = "\npre-commit:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-commit\n"
+const lefthookGoldenBody = "\npre-commit:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: M6E_SCOPE=\"${M6E_SCOPE:-staged}\" make pre-commit\n"
 
 func renderLefthook(t *testing.T, subtree string) string {
 	t.Helper()
@@ -6781,7 +6781,7 @@ func TestLefthookFormatNodeRendersJobs(t *testing.T) {
 	s := renderLefthook(t, lefthookFormatSubtree)
 	want := "---\npre-commit:\n  follow: true # stream each tool’s progress instead of a spinner\n  jobs:\n" +
 		"    - name: format\n      stage_fixed: true\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-commit-format\n" +
-		"    - name: dag\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-commit\n" +
+		"    - name: dag\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: M6E_SCOPE=\"${M6E_SCOPE:-staged}\" make pre-commit\n" +
 		"pre-push:\n  follow: true # stream each tool’s progress instead of a spinner\n  commands:\n    dag:\n      env:\n        TERM: dumb # dumb keeps Charm tools from OSC-probing the terminal\n      run: make pre-push\n"
 	if !strings.HasSuffix(s, want) {
 		t.Errorf("format form moved:\n%s", s)
