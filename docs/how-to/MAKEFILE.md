@@ -677,6 +677,14 @@ Format Go source with gofmt
 
 > Image: GO_TOOL_IMAGE
 
+### `go-fmt-staged`
+
+Format the staged Go source with gofmt
+
+`gofmt -w`
+
+> Image: GO_TOOL_IMAGE
+
 ### `go-test`
 
 Run the Go test suite and enforce the minimum coverage
