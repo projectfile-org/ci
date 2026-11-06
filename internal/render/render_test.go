@@ -3609,6 +3609,61 @@ func TestBorrowedGateLeavesGoalSurface(t *testing.T) {
 	}
 }
 
+// TestInteriorGateStaysOffGoalSurface pins that only a goal a push fires takes push events from its interior gates.
+func TestInteriorGateStaysOffGoalSurface(t *testing.T) {
+	const offPush, pushMain = `"schedule", "dispatch"`, `"push:main"`
+	const doc = `{
+  "tools": {"probe": {"run": "probe"}, "audit": {"run": "audit"}},
+  "nodes": {
+    "probed":  {"when": {"events": [%interior]}, "needs": {"probe": true}},
+    "audited": {"goal": true, "when": {"events": [%goal]}, "schedule": [{"cron": "0 6 * * *"}], "dispatch": {}, "needs": {"audit": true, "probed": true}}
+  }
+}`
+	for _, tc := range []struct {
+		name, goal, interior string
+		stable               string
+		wantPush             string
+	}{
+		{name: "schedule and dispatch", goal: offPush, interior: `"tag", "preview", "primary"`},
+		{name: "named branch interior", goal: offPush, interior: pushMain},
+		{name: "stable off push", goal: offPush, interior: `"primary"`, stable: testStable},
+		{name: "primary goal widens", goal: `"schedule", "dispatch", "primary"`, interior: `"preview"`, wantPush: `branches: ["**"]`},
+		{name: "tag goal keeps branch", goal: `"dispatch", "tag"`, interior: pushMain, wantPush: `branches: ["main"]`},
+		{name: "stable tag goal keeps branch", goal: `"dispatch", "tag"`, interior: `"push:next"`, stable: testStable, wantPush: `"next"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.NewReplacer("%goal", tc.goal, "%interior", tc.interior).Replace(doc)
+			st, err := ci.Parse([]byte(src))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			gst := st.ForGoal("audited")
+			rm, err := resolve.Resolve(gst)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			var b *ci.Build
+			if tc.stable != "" {
+				b = &ci.Build{StableBranch: tc.stable}
+			}
+			out, err := Workflow(Build(rm, gst, b), Targets[TargetGHA], ci.Platform{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := string(out)
+			if tc.wantPush == "" && strings.Contains(s, "  push:") {
+				t.Errorf("a goal no push fires must not gain push:\n%s", s)
+			}
+			if tc.wantPush != "" && !strings.Contains(s, tc.wantPush) {
+				t.Errorf("push surface missing %q\n---\n%s", tc.wantPush, s)
+			}
+			if !strings.Contains(s, "  probed:\n") {
+				t.Errorf("the interior job must stay in the file:\n%s", s)
+			}
+		})
+	}
+}
+
 // TestStableBranchReleasesFromItsOwnRun pins that a stable-branch project gates and names its release by the detected tag.
 func TestStableBranchReleasesFromItsOwnRun(t *testing.T) {
 	const doc = `{

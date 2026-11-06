@@ -639,8 +639,8 @@ type OnView struct {
 // interior un-gated jobs must NOT widen the surface to push/PR (the bug this fixes — an
 // `audited` goal gated `when:[schedule]` was still emitting push:{}/pull_request:{}
 // because its interior scan jobs carry no `when`). When goalScope is set the surface is
-// the union of the goal's events AND any GATED interior job's events (so a tag-scoped
-// goal that also hosts a push:main-gated node still triggers on both); un-gated interior
+// the union of the goal's events AND, when a push fires the goal, any GATED interior job's events
+// (so a tag-scoped goal that also hosts a push:main-gated node still triggers on both); un-gated interior
 // jobs contribute nothing and never widen it to push/PR (jobIf drives their `if:`).
 //
 // Without a goalScope the historic rule holds: if ANY reachable job is UN-gated (empty
@@ -691,12 +691,16 @@ func buildOn(jobs []JobView, tr *TriggersView, goalScope, primary []string) OnVi
 		// interior job (empty Events — often un-gated only because ANOTHER goal claims the
 		// shared node unconditionally, e.g. source-is-secure under `published`) does NOT
 		// widen this file to push/PR; it just runs whenever the goal's file fires. Gated
-		// interior jobs still contribute their own events so they can fire (a tag-scoped
+		// interior jobs contribute their own events only to a goal a push fires (a tag-scoped
 		// goal that also hosts a push:main-gated node must trigger on both). fold(nil) is
 		// a no-op, so un-gated jobs add nothing.
 		fold(goalScope)
-		for _, j := range jobs {
-			fold(j.Events)
+		pushed := slices.ContainsFunc(goalScope, firesOnPush)
+		genlog.Debug("goal scopes the trigger surface", "scope", goalScope, "interior_gates_widen", pushed)
+		if pushed {
+			for _, j := range jobs {
+				fold(j.Events)
+			}
 		}
 	} else {
 		for _, j := range jobs {
@@ -4578,7 +4582,7 @@ func releaseTokens(events []string) []string {
 
 // firesOnPush reports whether an event token matches a push, the only event a stable branch releases on.
 func firesOnPush(e string) bool {
-	return e == ci.EventTag || e == ci.EventPrimary || e == ci.EventPreview || strings.HasPrefix(e, ci.EventPushPrefix)
+	return e == ci.EventTag || e == eventReleaseTag || e == ci.EventPrimary || e == ci.EventPreview || strings.HasPrefix(e, ci.EventPushPrefix)
 }
 
 // wireReleaseTag gives ReleaseTagNode its `tag` output and makes every job reading it need it; false when a reader has no node to need.
