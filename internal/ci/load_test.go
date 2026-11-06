@@ -242,6 +242,10 @@ func TestLoadBuildRejectsMalformedSubtrees(t *testing.T) {
 			body: "org:\n  projectfile:\n    ci:\n      build-target: [a]\n",
 			want: "org.projectfile.ci.build-target: parse",
 		},
+		"build-memory": {
+			body: "org:\n  projectfile:\n    ci:\n      build-memory: [a]\n",
+			want: "org.projectfile.ci.build-memory: parse",
+		},
 		"build-args": {
 			body: "org:\n  projectfile:\n    build:\n      args:\n        X: {\"default\": [a]}\n",
 			want: "org.projectfile.build:",

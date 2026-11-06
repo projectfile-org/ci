@@ -942,6 +942,8 @@ type Build struct {
 	// make plane reads "m6e" itself. Absent => the action omits --target => the
 	// Dockerfile's last stage (legacy single-stage behaviour).
 	BuildTarget map[string]string
+	// BuildMemory is the org.projectfile.ci.build-memory map: lowering key → build memory cap.
+	BuildMemory map[string]string
 	// Events is the org.projectfile.events subtree (the events model, phase 1). Non-nil
 	// => the project OPTED IN to lifecycle emission, so the resolver appends a webhook
 	// `notify` job to each goal workflow (gated at RUNTIME on the webhook var being set —
@@ -1322,6 +1324,16 @@ func LoadBuildWithOptions(pfPath, lowering string, opts projectfile.ReadOptions)
 			return nil, fmt.Errorf("org.projectfile.ci.build-target: parse: %w", err)
 		}
 	}
+	bmRaw, err := r.subtree("org.projectfile.ci.build-memory")
+	if err != nil {
+		return nil, err
+	}
+	var buildMemory map[string]string
+	if len(bmRaw) > 0 {
+		if err := json.Unmarshal(bmRaw, &buildMemory); err != nil {
+			return nil, fmt.Errorf("org.projectfile.ci.build-memory: parse: %w", err)
+		}
+	}
 	buildRaw, err := r.subtree("org.projectfile.build")
 	if err != nil {
 		return nil, err
@@ -1392,7 +1404,7 @@ func LoadBuildWithOptions(pfPath, lowering string, opts projectfile.ReadOptions)
 	}
 	return &Build{
 		Images: images, ImageHeads: heads, ImageRequires: requires, Args: inputs, Events: events, Secrets: secRaw,
-		BuildTarget: buildTarget, PublishRefs: publishRefs, PullRefs: pullRefs,
+		BuildTarget: buildTarget, BuildMemory: buildMemory, PublishRefs: publishRefs, PullRefs: pullRefs,
 		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches, StableBranch: stableBranch,
 		Naming: naming,
 	}, nil

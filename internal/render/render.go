@@ -1922,6 +1922,8 @@ type StepView struct {
 	// forgejo each pick their own `--target` (the make plane reads the m6e key itself).
 	// Template-only (never serialised); empty/absent => the action omits target => last stage.
 	BuildTarget map[string]string `json:"-"`
+	// BuildMemory is the org.projectfile.ci.build-memory map (lowering key → build memory cap).
+	BuildMemory map[string]string `json:"-"`
 	// SecretsJSON / SecretsDefaultImage / SecretsImage are the secrets-provision action
 	// `with:` inputs (the SYNTHETIC pre-dc-up-d step — see ActionSecretsProvision). They
 	// are the cloud half of org.projectfile.ci.secrets, set ONLY on the synthetic step
@@ -3116,6 +3118,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 		// Per-lowering Dockerfile stage: the fragment picks build-target[Target.Key].
 		if b != nil {
 			step.BuildTarget = b.BuildTarget
+			step.BuildMemory = b.BuildMemory
 		}
 	}
 	// Both publish actions get the git tag (ci:version) so each can lower it into the

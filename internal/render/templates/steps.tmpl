@@ -283,6 +283,11 @@ trailing newline; the call site is `    steps:{{ stepbody … }}`.
           target: {{ . }}
 {{- end }}
 {{- end }}
+{{- if and .Step.BuildMemory (eq .Target.Builder "buildah") }}
+{{- with (index .Step.BuildMemory .Target.Key) }}
+          memory: {{ . }}
+{{- end }}
+{{- end }}
 {{- with .Step.Arch }}
           # This CELL's architecture, off the arch axis derived from the declared set.
           # One arch per call: the single-image archive is what every consumer reads.
