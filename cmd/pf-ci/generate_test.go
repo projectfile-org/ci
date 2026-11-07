@@ -63,6 +63,66 @@ func TestGenerateWritesOneFilePerGoal(t *testing.T) {
 	}
 }
 
+// TestGenerateCarriesDeclaredLicense is the generated-files-inherit-license issue end to end: a project declaring AGPL-3.0-only renders a workflow and a lefthook file whose headers say AGPL-3.0-only, -check stays green, and a licence-less project keeps the pre-existing MIT header.
+func TestGenerateCarriesDeclaredLicense(t *testing.T) {
+	const agplDoc = `identity:
+  name: demo
+  version: 1.2.3
+license:
+  spdx: AGPL-3.0-only
+org:
+  projectfile:
+    ci:
+      image: demo/app
+      targets: [gha]
+      tools:
+        container-build:
+          run: make container-build
+      nodes:
+        source-is-valid:
+          needs: {shellcheck: true}
+        image-built:
+          matrix: true
+          needs: {source-is-valid: true, container-build: true}
+        ready:
+          goal: true
+          needs: {image-built: true}
+`
+	out := t.TempDir()
+	pf := demoDoc(t, agplDoc)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{subGenerate, flagTarget, targetGHA, flagPf, pf, "-o", out}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("generate gha: exit %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(out, "ready.yaml")) // #nosec G304 — a temp path the test itself built
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	for name, body := range map[string]string{"workflow": string(data)} {
+		if !strings.Contains(body, "SPDX-License-Identifier: AGPL-3.0-only") {
+			t.Errorf("%s: declared AGPL-3.0-only did not reach the emitted header:\n%s", name, body)
+		}
+		if strings.Contains(body, "SPDX-License-Identifier: MIT") {
+			t.Errorf("%s: a fixed MIT identifier slipped into the emitted header:\n%s", name, body)
+		}
+	}
+	lh := filepath.Join(t.TempDir(), "lefthook.yaml")
+	if code := run([]string{subGenerate, flagTarget, render.TargetLefthook, flagPf, pf, "-o", lh}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("generate lefthook: exit %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	body, err := os.ReadFile(lh) // #nosec G304 — a temp path the test itself built
+	if err != nil {
+		t.Fatalf("read lefthook: %v", err)
+	}
+	if !strings.Contains(string(body), "SPDX-License-Identifier: AGPL-3.0-only") {
+		t.Errorf("lefthook: declared AGPL-3.0-only did not reach the emitted header:\n%s", body)
+	}
+	// Freshness: what generate just wrote passes its own -check, header included.
+	if code := run([]string{subGenerate, flagTarget, targetGHA, flagPf, pf, "-o", out, flagCheck}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("check after generate: exit %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+}
+
 // TestGenerateCheckAcceptsWhatItJustWrote pins the -check contract: a fresh
 // rendering passes its own gate, so `ci-check` is green immediately after a
 // generate and only ever fails on real drift.

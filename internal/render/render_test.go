@@ -4504,6 +4504,52 @@ func TestLefthookNoHookNodesRendersHeaderOnly(t *testing.T) {
 	// REUSE-IgnoreEnd
 }
 
+// TestGeneratedFilesCarryDeclaredLicense pins the header contract of the generated-files-inherit-license issue: the emitted identifier is the project's license.spdx, never a fixed MIT — spiderlint declares AGPL-3.0-only, so its workflow, its inlined steps and its lefthook.yaml must all say AGPL-3.0-only.
+func TestGeneratedFilesCarryDeclaredLicense(t *testing.T) {
+	st, err := ci.Parse([]byte(matrixSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	st.License = "AGPL-3.0-only"
+	rm, err := resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	m := Build(rm, st, nil)
+	wf, err := Workflow(m, Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lh, err := Lefthook(st, Targets[TargetLefthook])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string][]byte{"workflow": wf, "lefthook": lh} {
+		if !strings.Contains(string(out), "SPDX-License-Identifier: AGPL-3.0-only") {
+			t.Errorf("%s: declared AGPL-3.0-only did not reach the emitted header:\n%s", name, out)
+		}
+		if strings.Contains(string(out), "SPDX-License-Identifier: MIT") {
+			t.Errorf("%s: a fixed MIT identifier slipped into the emitted header:\n%s", name, out)
+		}
+	}
+	// A project declaring no license.spdx keeps the pre-existing identifier: every unchanged subscriber renders byte-identically.
+	st, err = ci.Parse([]byte(matrixSubtree))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rm, err = resolve.Resolve(st)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	wf, err = Workflow(Build(rm, st, nil), Targets[TargetGHA], ci.Platform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wf), "SPDX-License-Identifier: MIT") {
+		t.Errorf("workflow: a licence-less document must keep the MIT header:\n%s", wf)
+	}
+}
+
 // resolveWorkflowExt is the single knob behind the committed-workflow extension:
 // PF_CI_WORKFLOW_EXT. The default is the workspace standard ".yaml"; a
 // ".yml" lover overrides it. A garbage value must FAIL FAST (a config typo

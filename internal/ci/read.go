@@ -118,6 +118,15 @@ func (r *Reader) architectures() ([]string, error) {
 	return arches, nil
 }
 
+// licenseSpdx returns the project's declared license identifier (license.spdx),
+// "" when the document declares none.
+func (r *Reader) licenseSpdx() string {
+	if r.doc.License == nil {
+		return ""
+	}
+	return r.doc.License.Spdx
+}
+
 // imageBasename returns the container-image basename the project DECLARES, as
 // `org.projectfile.image.path` composed under its own scope ("" on a miss — the
 // caller treats empty as "no naming step").

@@ -1694,12 +1694,25 @@ func HookNodes(st *ci.Subtree) []string {
 	return out
 }
 
+// defaultLicense is the identifier a document declaring no license.spdx keeps, what generated files carried before the field existed.
+const defaultLicense = "MIT"
+
+// licenseID stamps generated files with the DECLARED identifier, defaultLicense when none is declared.
+func licenseID(declared string) string {
+	if declared == "" {
+		return defaultLicense
+	}
+	return declared
+}
+
 // LefthookView is the lefthook template input: the hooks to emit plus the target
 // (for the regenerate hint). No jobs, runners, or matrix — a git-hook config is a
 // flat map of stage -> dispatch command.
 type LefthookView struct {
 	Target Target
 	Hooks  []HookView
+	// SPDX is the license identifier the emitted header carries (licenseID of the declared license.spdx).
+	SPDX string
 }
 
 // HookView is one rendered lefthook hook. Stage is simultaneously the git-hook
@@ -1719,7 +1732,11 @@ type HookView struct {
 // config. This is a NODE-level projection: it reads st.Nodes directly and never touches
 // the job pipeline (resolve/Build/Workflow), because the hook nodes are non-goals.
 func Lefthook(st *ci.Subtree, target Target) ([]byte, error) {
-	view := LefthookView{Target: target}
+	declared := "" // an absent org.projectfile.ci (nil subtree) declares nothing
+	if st != nil {
+		declared = st.License
+	}
+	view := LefthookView{Target: target, SPDX: licenseID(declared)}
 	for _, stage := range HookNodes(st) {
 		_, format := st.Nodes[FormatNode]
 		view.Hooks = append(view.Hooks, HookView{Stage: stage, Format: stage == "pre-commit" && format})
@@ -2714,6 +2731,8 @@ type Model struct {
 	// empty: primaryBranches applies ci.DefaultPrimaryBranches when the document records
 	// no default branch, which is every project in the fleet today.
 	PrimaryBranches []string `json:"primary-branches,omitempty"`
+	// License is the project's DECLARED license identifier (license.spdx); "" => none, the fallback (defaultLicense) applies at view time only.
+	License string `json:"license,omitempty"`
 	// Err is a fail-fast Build defect that has no place in the rendered output: a node
 	// that mixes incompatible matrix axes, or a tool multi-homed across unrelated nodes
 	// (constraints #1/#3 of node=job). Build cannot return an error without churning
@@ -4008,6 +4027,7 @@ func Build(rm *resolve.Model, st *ci.Subtree, b *ci.Build) Model {
 		Triggers:        triggers,
 		Env:             env,
 		PrimaryBranches: primaryBranches(b),
+		License:         st.License,
 		Err:             buildErr,
 	}
 }
@@ -4417,8 +4437,9 @@ func Workflow(m Model, target Target, plat ci.Platform) ([]byte, error) {
 		On          OnView
 		ResolverEnv []KV
 		Env         []KV
+		SPDX        string
 		Jobs        []JobView
-	}{Name: m.Name, Target: target, Platform: buildPlatform(target, plat), On: m.On, ResolverEnv: resolverEnv(), Env: m.Env, Jobs: jobs}
+	}{Name: m.Name, Target: target, Platform: buildPlatform(target, plat), On: m.On, ResolverEnv: resolverEnv(), Env: m.Env, SPDX: licenseID(m.License), Jobs: jobs}
 	if err := root.ExecuteTemplate(&buf, target.Template, data); err != nil {
 		return nil, fmt.Errorf("render %s: %w", target.Key, err)
 	}

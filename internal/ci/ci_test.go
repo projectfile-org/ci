@@ -996,6 +996,48 @@ org:
 	}
 }
 
+// TestLoadReadsDeclaredLicense pins that Load stamps the subtree with the document's
+// license.spdx — the project's licence, which pf-ci's generated files must carry.
+func TestLoadReadsDeclaredLicense(t *testing.T) {
+	write := func(t *testing.T, license string) string {
+		t.Helper()
+		dir := t.TempDir()
+		p := filepath.Join(dir, "projectfile.yaml")
+		doc := `$schema: https://projectfile.org/schema/v1.json
+identity:
+  namespace: org.example
+  name: demo
+` + license + `org:
+  projectfile:
+    ci:
+      tools:
+        gsa:
+          run: gsa
+      nodes:
+        analyzed:
+          goal: true
+`
+		if err := os.WriteFile(p, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	st, err := Load(write(t, "license:\n  spdx: AGPL-3.0-only\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := st.License; got != "AGPL-3.0-only" {
+		t.Errorf("st.License = %q, want AGPL-3.0-only", got)
+	}
+	st, err = Load(write(t, ""))
+	if err != nil {
+		t.Fatalf("Load (no license block): %v", err)
+	}
+	if got := st.License; got != "" {
+		t.Errorf("st.License (no license block) = %q, want empty", got)
+	}
+}
+
 // TestLoadResolvesReleaseAssetPath pins the forgejo-release action's binary-path
 // resolution: during Load, a forgejo-release tool's ReleaseAssetPath is populated
 // from the single org.projectfile.artifacts entry with kind=binary. ZERO leaves it

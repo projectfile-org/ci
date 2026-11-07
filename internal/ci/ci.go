@@ -631,6 +631,8 @@ type Subtree struct {
 	MountCache bool
 	// RouteArches is the architecture set each lowering builds (org.projectfile.publish.<forge>.architecture); absent => every declared one.
 	RouteArches map[string][]string
+	// License is the project's declared license identifier (license.spdx) read from the merged document; "" when none is declared.
+	License string
 	// pendingExcludes holds every raw global matrix.exclude row while one names an axis Load has yet to derive; Load rebuilds Excludes from it.
 	pendingExcludes []map[string]json.RawMessage
 }
@@ -1856,6 +1858,7 @@ func LoadWithOptions(pfPath string, opts projectfile.ReadOptions) (*Subtree, err
 	if err != nil || st == nil {
 		return st, err
 	}
+	st.License = r.licenseSpdx()
 	// Convention over configuration: an explicit `image:` wins (read verbatim by
 	// Parse); otherwise the built-image basename comes from core's SINGLE home of
 	// the rule (`image.basename` = org.projectfile.ci.image else
