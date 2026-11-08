@@ -2226,41 +2226,13 @@ type VerdictView struct {
 	WebhookVar string
 }
 
-// Run tallies each need's result, emits goal.succeeded|failed|skipped when events are declared, and fails on any failure.
-func (v VerdictView) Run() string {
-	var b strings.Builder
-	b.WriteString("passed=0 skipped=0 failed=0\n")
-	b.WriteString("for pair in")
-	for _, n := range v.Needs {
-		b.WriteString(" \\\n  \"" + n + "=${{ needs." + n + ".result }}\"")
+// NeedResults is one `job=result` line per judged need, filled in at run time.
+func (v VerdictView) NeedResults() []string {
+	out := make([]string, len(v.Needs))
+	for i, n := range v.Needs {
+		out[i] = n + "=${{ needs." + n + ".result }}"
 	}
-	b.WriteString("; do\n" +
-		"  echo \"verdict need=${pair%%=*} result=${pair#*=}\"\n" +
-		"  case \"${pair#*=}\" in\n" +
-		"    success) passed=$((passed + 1)) ;;\n" +
-		"    skipped) skipped=$((skipped + 1)) ;;\n" +
-		"    *) failed=$((failed + 1)) ;;\n" +
-		"  esac\n" +
-		"done\n" +
-		"status=success; event=goal.succeeded\n" +
-		"if [ \"${failed}\" -gt 0 ]; then\n" +
-		"  status=failure; event=goal.failed\n" +
-		"elif [ \"${passed}\" -eq 0 ]; then\n" +
-		"  status=skipped; event=goal.skipped\n" +
-		"fi\n" +
-		"echo \"verdict goal=" + v.Goal + " status=${status} passed=${passed} skipped=${skipped} failed=${failed}\"\n")
-	if v.WebhookVar != "" {
-		b.WriteString("if [ -n \"${{ vars." + v.WebhookVar + " }}\" ]; then (\n" +
-			emitGuard("$event") +
-			"payload=$(printf '{\"event\":\"%s\",\"project\":\"%s\",\"goal\":\"%s\",\"status\":\"%s\",\"url\":\"%s\",\"ts\":\"%s\",\"payload\":{}}' \\\n" +
-			"  \"$event\" \"${{ github.repository }}\" \"" + v.Goal + "\" \"$status\" \\\n" +
-			"  \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\" \\\n" +
-			"  \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\")\n" +
-			emitCurl(v.WebhookVar) + "\n" +
-			")\nfi\n")
-	}
-	b.WriteString("[ \"${failed}\" -eq 0 ]")
-	return b.String()
+	return out
 }
 
 // StepEmitView is the TOOL-level emission (ci.Manifest.Emit): the FACT that a publish
@@ -2301,56 +2273,8 @@ func (e StepEmitView) If(gate string) string {
 	return "${{ success() && vars." + e.WebhookVar + " != ''" + gate + " }}"
 }
 
-// Cell is the matrix context as JSON — WHICH cell published. A matrixed publish runs this
-// step once per cell, so a consumer that builds several series learns which of its bases
-// moved. Off a matrix the context is null, already the JSON the payload wants. It rides
-// step env rather than being inlined: an axis value carrying a quote would otherwise
-// break the printf that builds the envelope.
+// Cell is the matrix context as JSON, null off a matrix.
 func (e StepEmitView) Cell() string { return "${{ toJSON(matrix) }}" }
-
-// CellEnv is the env NAME Cell binds to, and the name Run reads back.
-const CellEnv = "M6E_EVENT_CELL"
-
-// Run is the emit step's shell: read back what the publish wrote, wrap it in the neutral
-// envelope, POST it. The image and the digest come from ONE file — oci-push writes the
-// full `repo@sha256:…` ref it verified, so splitting that beats recomposing a ref the
-// resolver can only guess at. The tag cascade comes from its own file for the same
-// reason: the semver fan-out is the action's logic and must not be reimplemented here.
-func (e StepEmitView) Run() string {
-	return "" +
-		emitGuard(e.Event) +
-		"ref=$(cat \"${M6E_DIGEST_FILE:-image.digest}\")\n" +
-		"payload=$(printf '{\"event\":\"%s\",\"project\":\"%s\",\"goal\":\"%s\",\"status\":\"success\",\"url\":\"%s\",\"ts\":\"%s\",\"payload\":{\"image\":\"%s\",\"tags\":%s,\"digest\":\"%s\",\"cell\":%s}}' \\\n" +
-		"  \"" + e.Event + "\" \"${{ github.repository }}\" \"" + e.Goal + "\" \\\n" +
-		"  \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\" \\\n" +
-		"  \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \\\n" +
-		"  \"${ref%@*}\" \"$(cat \"${M6E_TAGS_FILE:-image.tags}\")\" \"${ref#*@}\" \"${" + CellEnv + ":-null}\")\n" +
-		"echo \"events emitting event=" + e.Event + " ref=${ref}\"\n" +
-		emitCurl(e.WebhookVar)
-}
-
-// emitGuard is the fail-soft preamble BOTH emitters share. The POST ends in `|| true`,
-// which cannot tell a missing curl (exit 127) from a network failure, so without this an
-// image without curl would go silent under a green check. Name the degradation instead,
-// the wording m6e-emit already uses for its own sinks.
-func emitGuard(event string) string {
-	return "" +
-		"if ! command -v curl > /dev/null 2>&1; then\n" +
-		"  echo \"webhook degraded — curl absent (event=" + event + ")\"\n" +
-		"  exit 0\n" +
-		"fi\n"
-}
-
-// emitCurl is the POST both emitters end on: timeout, three retries with backoff, and
-// fail-soft. A broken sink never reds a workflow. The URL is never logged.
-func emitCurl(webhookVar string) string {
-	return "" +
-		"curl --silent --show-error --location \\\n" +
-		"  --max-time 10 --retry 3 --retry-delay 2 --fail-with-body \\\n" +
-		"  --header 'content-type: application/json' \\\n" +
-		"  --request POST --data \"$payload\" \\\n" +
-		"  \"${{ vars." + webhookVar + " }}\" || true"
-}
 
 // verdictIf runs a goal job whatever its needs did, on the goal's own events only.
 func verdictIf(events []string, primary []string) string {
@@ -5257,16 +5181,8 @@ var funcs = template.FuncMap{
 	"onlyVar": OnlyVar,
 	// quote spells a scalar as a double-quoted YAML string, so a separator like `-` or `.` stays a string
 	"quote": strconv.Quote,
-	// cellEnv names the step-env key the emit fragment binds the matrix JSON to, so the
-	// template and the shell that reads it back share ONE literal.
-	"cellEnv": func() string { return CellEnv },
-	// indent left-pads every line of s by n spaces — used to place a multi-line shell
-	// script (the notify job's emit run) under a `run: |` YAML block scalar. The first
-	// line is padded too, so the caller writes `run: |` then `{{ indent 10 … }}`.
-	"indent": func(n int, s string) string {
-		pad := strings.Repeat(" ", n)
-		return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
-	},
+	// webhook spells the forge var holding the events sink URL
+	"webhook": func(name string) string { return "${{ vars." + name + " }}" },
 	// yamlList renders a string slice as a YAML flow sequence with each item
 	// double-quoted: ["a", "b"]. Quoting keeps version-like values ("8.5") and
 	// label strings unambiguous.

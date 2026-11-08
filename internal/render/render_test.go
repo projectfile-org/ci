@@ -3458,10 +3458,10 @@ func TestNodesMaterialiseAsGates(t *testing.T) {
 	}
 	s := string(gha)
 	// The pure-join goal renders as one verdict step that always runs, no checkout.
-	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}\n    steps:\n      - name: ready-to-publish verdict\n        run: |\n") {
+	if !strings.Contains(s, "  ready-to-publish:\n    runs-on: ubuntu-latest\n    needs: [\"image-built\", \"linted\"]\n    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}\n    steps:\n      - name: ready-to-publish verdict\n        uses: ") {
 		t.Errorf("pure-join goal must render as a verdict over its needs:\n%s", s)
 	}
-	for _, want := range []string{"image-built=${{ needs.image-built.result }}", "linted=${{ needs.linted.result }}", `[ "${failed}" -eq 0 ]`} {
+	for _, want := range []string{"image-built=${{ needs.image-built.result }}", "linted=${{ needs.linted.result }}"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("verdict step missing %q:\n%s", want, s)
 		}
@@ -4611,7 +4611,7 @@ func TestEmitJobRenders(t *testing.T) {
 		t.Fatal(err)
 	}
 	off := string(outOff)
-	if strings.Contains(off, "notify:") || strings.Contains(off, "curl") {
+	if strings.Contains(off, "notify:") || strings.Contains(off, "webhook:") {
 		t.Errorf("no events declared must render NO webhook:\n%s", off)
 	}
 	if !strings.Contains(off, "- name: source-is-valid verdict") {
@@ -4627,25 +4627,16 @@ func TestEmitJobRenders(t *testing.T) {
 		"\n  source-is-valid:\n",
 		"if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}",
 		"needs: [\"source-is-linted\"]",
-		"- name: source-is-valid verdict",
-		`"source-is-linted=${{ needs.source-is-linted.result }}"`,
-		"status=failure; event=goal.failed",
-		"status=skipped; event=goal.skipped",
-		"event=goal.succeeded",
-		`if [ -n "${{ vars.EVENTS_WEBHOOK_URL }}" ]; then (`,
-		`|| true`,
-		`[ "${failed}" -eq 0 ]`,
+		"- name: source-is-valid verdict\n        uses: projectfile/actions/event@",
+		"          goal: source-is-valid\n          needs: |-\n            source-is-linted=${{ needs.source-is-linted.result }}\n",
+		"          webhook: ${{ vars.EVENTS_WEBHOOK_URL }}\n",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("verdict job missing %q\ngot:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "notify:") {
-		t.Errorf("the verdict replaces the notify job:\n%s", s)
-	}
-	env := `printf '{"event":"%s","project":"%s","goal":"%s","status":"%s","url":"%s","ts":"%s","payload":{}}'`
-	if !strings.Contains(s, env) {
-		t.Errorf("envelope shape/order must match the m6e contract\nwant substring: %s\ngot:\n%s", env, s)
+	if strings.Contains(s, "notify:") || strings.Contains(s, "run: |") {
+		t.Errorf("the verdict is one action step, no notify job and no inline shell:\n%s", s)
 	}
 }
 
@@ -4698,33 +4689,14 @@ func TestToolEmitStepRenders(t *testing.T) {
 
 	for _, want := range []string{
 		"- name: emit ci.image.published",
-		// Gated on the sink being configured, the push having succeeded, AND the ref
-		// being a tag: a downstream router turns this fact into a rebuild dispatch for
-		// every consumer, and a preview base is what they must NOT be rebuilt against.
+		// Gated on the sink being configured, the push having succeeded, AND the ref being a tag.
 		"if: ${{ success() && vars.EVENTS_WEBHOOK_URL != '' && (" + forgeGate(series, "published", "oci-push") + ") && github.ref_type == 'tag' }}",
-		// The cell rides step env; toJSON is multi-line, so it must not be inlined.
-		"M6E_EVENT_CELL: ${{ toJSON(matrix) }}",
-		// Image and digest are read back from what the action verified, never recomposed.
-		`ref=$(cat "${M6E_DIGEST_FILE:-image.digest}")`,
-		`"$(cat "${M6E_TAGS_FILE:-image.tags}")"`,
-		`"${ref%@*}"`,
-		`"${ref#*@}"`,
-		// The goal the workflow is named for, stamped like the notify job stamps it.
-		`"published"`,
-		// Fail-soft, and loud about a missing curl rather than silent under || true.
-		"webhook degraded — curl absent",
-		"|| true",
+		"        uses: projectfile/actions/event@",
+		"          goal: published\n          event: ci.image.published\n          cell: ${{ toJSON(matrix) }}\n          webhook: ${{ vars.EVENTS_WEBHOOK_URL }}\n",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("emit step missing %q\ngot:\n%s", want, s)
 		}
-	}
-
-	// The envelope keeps the frozen field order and fills the reserved payload.
-	env := `printf '{"event":"%s","project":"%s","goal":"%s","status":"success","url":"%s","ts":"%s",` +
-		`"payload":{"image":"%s","tags":%s,"digest":"%s","cell":%s}}'`
-	if !strings.Contains(s, env) {
-		t.Errorf("payload shape/order must extend the frozen envelope\nwant substring: %s\ngot:\n%s", env, s)
 	}
 
 	// ONE step per publish job, and the matrix gives one job per series — so a matrixed
@@ -4757,7 +4729,7 @@ func TestToolEmitFollowsItsTool(t *testing.T) {
 	}
 }
 
-// TestEmitJobIsTargetAgnostic proves GHA and Forgejo render the SAME verdict step.
+// TestEmitJobIsTargetAgnostic proves GHA and Forgejo render the SAME verdict inputs.
 func TestEmitJobIsTargetAgnostic(t *testing.T) {
 	st, _ := ci.Parse([]byte(eventsSubtree))
 	rm, _ := resolve.Resolve(st)
@@ -4777,7 +4749,7 @@ func TestEmitJobIsTargetAgnostic(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("no verdict step:\n%s", s)
 		}
-		return s[i:]
+		return s[i+strings.Index(s[i:], "\n        with:"):]
 	}
 	if emitBlock(gha) != emitBlock(forgejo) {
 		t.Errorf("emit step must be target-agnostic\nGHA:\n%s\nForgejo:\n%s", emitBlock(gha), emitBlock(forgejo))
@@ -6842,8 +6814,8 @@ func TestGoalVerdictNeedsClosure(t *testing.T) {
 	if out[3].Verdict != nil {
 		t.Errorf("a goal with tools is its own verdict, got %+v", out[3].Verdict)
 	}
-	if run := goal.Verdict.Run(); strings.Contains(run, "curl") {
-		t.Errorf("no webhook var must render no POST:\n%s", run)
+	if got := goal.Verdict.NeedResults(); !reflect.DeepEqual(got, []string{"a=${{ needs.a.result }}", "b=${{ needs.b.result }}"}) {
+		t.Errorf("need results: got %q", got)
 	}
 }
 

@@ -8,7 +8,7 @@ whose member tools are sequential steps; a pure join is contracted away, a goal 
 trailing newline; the call site is `    steps:{{ stepbody … }}`.
 
   steps/gate                 a tool-less sink nothing needs: `echo <node>`.
-  steps/verdict              a goal: one step judging every job of the run (VerdictView.Run).
+  steps/verdict              a goal: one event action step judging every job of the run.
   steps/node                 a node WITH tools: ONE `actions/checkout` (WITH submodules —
                              a project pins its m6e library there, and the projectfile
                              `includes:` reach INTO it, so a submodule-less checkout
@@ -431,26 +431,28 @@ byte-identical, so the drift gate stays quiet for projects that do declare a bin
 
 {{- define "steps/verdict" }}
       - name: {{ .Job.Name }} verdict
-        run: |
-{{ indent 10 .Job.Verdict.Run }}
+        uses: {{ actionRef .Target "event" }}
+        with:
+          goal: {{ .Job.Verdict.Goal }}
+          needs: |-
+{{- range .Job.Verdict.NeedResults }}
+            {{ . }}
+{{- end }}
+{{- with .Job.Verdict.WebhookVar }}
+          webhook: {{ webhook . }}
+{{- end }}
 {{- end }}
 
-{{- /*
-frag/emit — the TOOL-level fact emission (events model, phase 2). One shell step appended
-to the step of a tool that declares `emit:`, reporting WHAT that tool published: the
-image, its tag cascade, the digest and the matrix cell. It is the per-image companion of
-steps/emit (which reports only whether the goal passed), and it runs in the SAME job as
-the publish, so the files that action wrote are still in the workspace. The cell rides
-step env because toJSON renders multi-line JSON; the run text is built in Go
-(StepEmitView.Run) because every `${{ }}` would collide with `{{ }}`.
-*/ -}}
+{{- /* frag/emit — the event action reporting what a tool declaring `emit:` published. */ -}}
 {{- define "frag/emit" }}
       - name: emit {{ .Step.Emit.Event }}
         if: {{ .Step.Emit.If .Step.RunIf }}
-        env:
-          {{ cellEnv }}: {{ .Step.Emit.Cell }}
-        run: |
-{{ indent 10 .Step.Emit.Run }}
+        uses: {{ actionRef .Target "event" }}
+        with:
+          goal: {{ .Step.Emit.Goal }}
+          event: {{ .Step.Emit.Event }}
+          cell: {{ .Step.Emit.Cell }}
+          webhook: {{ webhook .Step.Emit.WebhookVar }}
 {{- end }}
 
 {{- /*
