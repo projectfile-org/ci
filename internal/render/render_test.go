@@ -4524,6 +4524,7 @@ func TestGeneratedFilesCarryDeclaredLicense(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// REUSE-IgnoreStart
 	for name, out := range map[string][]byte{"workflow": wf, "lefthook": lh} {
 		if !strings.Contains(string(out), "SPDX-License-Identifier: AGPL-3.0-only") {
 			t.Errorf("%s: declared AGPL-3.0-only did not reach the emitted header:\n%s", name, out)
@@ -4548,6 +4549,7 @@ func TestGeneratedFilesCarryDeclaredLicense(t *testing.T) {
 	if !strings.Contains(string(wf), "SPDX-License-Identifier: MIT") {
 		t.Errorf("workflow: a licence-less document must keep the MIT header:\n%s", wf)
 	}
+	// REUSE-IgnoreEnd
 }
 
 // resolveWorkflowExt is the single knob behind the committed-workflow extension:

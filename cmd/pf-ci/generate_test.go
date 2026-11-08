@@ -98,6 +98,7 @@ org:
 	if err != nil {
 		t.Fatalf("read workflow: %v", err)
 	}
+	// REUSE-IgnoreStart
 	for name, body := range map[string]string{"workflow": string(data)} {
 		if !strings.Contains(body, "SPDX-License-Identifier: AGPL-3.0-only") {
 			t.Errorf("%s: declared AGPL-3.0-only did not reach the emitted header:\n%s", name, body)
@@ -117,6 +118,7 @@ org:
 	if !strings.Contains(string(body), "SPDX-License-Identifier: AGPL-3.0-only") {
 		t.Errorf("lefthook: declared AGPL-3.0-only did not reach the emitted header:\n%s", body)
 	}
+	// REUSE-IgnoreEnd
 	// Freshness: what generate just wrote passes its own -check, header included.
 	if code := run([]string{subGenerate, flagTarget, targetGHA, flagPf, pf, "-o", out, flagCheck}, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("check after generate: exit %d, want 0 (stderr=%q)", code, stderr.String())
