@@ -1309,15 +1309,7 @@ const ImageArchiveEnv = "M6E_IMAGE_ARCHIVE"
 // Manifest.EnvSet); a non-compose fuse simply never reads it.
 const ImageFullnameEnv = "M6E_IMAGE_FULLNAME"
 
-// ImagePublishedEnv is the PUBLISHED-image contract variable, the audit-re-scan analogue of
-// ImageArchiveEnv: a scheduled `audited` run has NO build in scope, so the image scanners
-// cannot read a freshly built tar (M6E_IMAGE_ARCHIVE) or a live daemon ref — they must PULL
-// the already-published image by ref. A scanner tool that requests this var (via `env:`)
-// gets `M6E_IMAGE_PUBLISHED=<OUTPUT_REGISTRY>/<per-cell basename>:latest` — the SAME registry
-// oci-push prefixes the push ref with and the mutable `latest` tag oci-push always publishes,
-// so the audit scans EXACTLY what was pushed. Unlike a forwarded credential name this value is
-// resolver-COMPUTED (publishedImageRef), the forge-plane sibling of the make plane's
-// M6E_IMAGE_PUBLISHED (container.mk).
+// ImagePublishedEnv is the published ref the `audited` scanners pull: the audit branch's tag, composed by the resolver.
 const ImagePublishedEnv = "M6E_IMAGE_PUBLISHED"
 
 // ReleaseTagEnv (M6E_RELEASE_TAG) is the resolver-computed release tag of the run, empty when it releases nothing.
@@ -3109,7 +3101,7 @@ func toolStep(j resolve.Job, st *ci.Subtree, b *ci.Build, dispatchArgs map[strin
 	// known — a StepView is shared across targets, so the per-lowering value cannot be
 	// decided here.
 	if wantsPublishedImage {
-		step.Env = append(step.Env, EnvVar{Key: ImagePublishedEnv, Value: publishedImageRef(st.Image, subst)})
+		step.Env = append(step.Env, EnvVar{Key: ImagePublishedEnv, Value: publishedImageRef(st.Image, auditTagOf(b), subst)})
 		if b != nil && len(b.PullRefs) > 0 {
 			step.PullRefs = map[string]string{}
 			for lowering, sr := range b.PullRefs {
@@ -5120,20 +5112,20 @@ func variantCell(b *ci.Build, axes []ci.Axis) string {
 	return cell
 }
 
-// publishedImageRef renders the FALLBACK published ref of a project's per-cell image at the
-// mutable `:latest` tag — the ImagePublishedEnv value for a project whose route declares no
-// `pull` sink. Registry is the OUTPUT_REGISTRY oci-push prefixes the push ref with; basename
-// is the per-cell built-image basename (substAxes over the subtree image, the SAME transform
-// container-build/oci-push apply); `latest` is fixed (not imageTagExpr's dev/latest flip) — the
-// audit deliberately scans the published rolling tag.
-//
-// It is a PREFIX composition and therefore knows one path grammar: `<registry>/<nested
-// path>:latest`. A destination refusing a nested path (Docker Hub holds exactly
-// `namespace/name`) cannot be named this way, which is why a declared route audits through
-// auditTarget instead. This path survives for the ~130 projects that declare no route.
-// NOTE: an empty OUTPUT_REGISTRY yields a leading-slash ref; the fleet always sets it.
-func publishedImageRef(image string, subst []ci.Axis) string {
-	return outputRegistryExpr() + "/" + substAxes(image, subst) + ":latest"
+// publishedImageRef is the no-route fallback audit ref: OUTPUT_REGISTRY, the per-cell basename and the audit tag, else `latest`.
+func publishedImageRef(image, tag string, subst []ci.Axis) string {
+	if tag == "" {
+		tag = "latest"
+	}
+	return outputRegistryExpr() + "/" + substAxes(image, subst) + ":" + substAxes(tag, subst)
+}
+
+// auditTagOf is the build's audit tag, empty when no build subtree is in scope.
+func auditTagOf(b *ci.Build) string {
+	if b == nil {
+		return ""
+	}
+	return b.AuditTag
 }
 
 // auditTarget binds the `audited` re-scan target for THIS lowering: the composed

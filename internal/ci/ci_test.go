@@ -1207,8 +1207,8 @@ func TestRouteArchitecturesPerLowering(t *testing.T) {
 // TestPrimaryBranchPrefersDeclaredTrunk pins that release.trunk beats the forge's recorded default branch.
 func TestPrimaryBranchPrefersDeclaredTrunk(t *testing.T) {
 	for _, tc := range []struct{ name, trunk, want string }{
-		{"trunk declared", "\n    release:\n      trunk: dev", "dev"},
-		{"forge default only", "", "main"},
+		{"trunk declared", "\n    release:\n      trunk: dev", branchDev},
+		{"forge default only", "", branchMain},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "projectfile.yaml")
@@ -1327,7 +1327,7 @@ func TestPublishRefsAbsentWithoutRoutes(t *testing.T) {
 //   - `{AXIS}` survives for the cell to fill, exactly as on the push side.
 func TestPullRefsComposePerLowering(t *testing.T) {
 	r := &Reader{doc: publishDoc(t)}
-	got, err := r.pullRefs()
+	got, err := r.pullRefs("")
 	if err != nil {
 		t.Fatalf("pullRefs: %v", err)
 	}
@@ -1397,7 +1397,7 @@ func TestLibraryComposesNoSinkSilently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publishRefs: %v", err)
 	}
-	pull, err := r.pullRefs()
+	pull, err := r.pullRefs("")
 	if err != nil {
 		t.Fatalf("pullRefs: %v", err)
 	}
@@ -1431,7 +1431,7 @@ func TestBrokenSinkAmongWorkingOnesStillWarns(t *testing.T) {
 // read destination, so the audit keeps the OUTPUT_REGISTRY prefix every project has.
 func TestPullRefsAbsentWithoutRoutes(t *testing.T) {
 	r := &Reader{doc: declaredImageDoc(t)}
-	got, err := r.pullRefs()
+	got, err := r.pullRefs("")
 	if err != nil {
 		t.Fatalf("pullRefs: %v", err)
 	}

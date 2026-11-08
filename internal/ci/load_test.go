@@ -327,7 +327,7 @@ func TestStableBranchNeedsStableDispatch(t *testing.T) {
       stable-branch: main
       stable-dispatch: true
 `
-	if b := loadBuild(t, on); b == nil || b.StableBranch != "main" {
+	if b := loadBuild(t, on); b == nil || b.StableBranch != branchMain {
 		t.Fatalf("with the opt-in: stableBranch = %q, want main", b.StableBranch)
 	}
 	// An opt-in naming anything but true leaves it off.
@@ -354,7 +354,7 @@ func TestPrimaryBranchesPrefersDeclaredTrunk(t *testing.T) {
       trunk: dev
       branches: [{pattern: dev}]
 `)
-	if declared == nil || !reflect.DeepEqual(declared.PrimaryBranches, []string{"dev"}) {
+	if declared == nil || !reflect.DeepEqual(declared.PrimaryBranches, []string{branchDev}) {
 		t.Fatalf("declared trunk: primaries = %v, want [dev]", declared.PrimaryBranches)
 	}
 	undocumented := loadBuild(t, `org:

@@ -996,6 +996,8 @@ type Build struct {
 	ReleaseTag bool
 	// Naming is the tag rules org.projectfile.image declares (heads, variant); nil => the publish action's own cascade.
 	Naming *ImageNaming
+	// AuditTag is the tag the `audited` re-scan reads, `{AXIS}` left for render; empty => the image's own tag.
+	AuditTag string
 }
 
 // SinkRef is one composed publish destination: the sink NAME the credentials key on,
@@ -1384,7 +1386,13 @@ func LoadBuildWithOptions(pfPath, lowering string, opts projectfile.ReadOptions)
 	if err != nil {
 		return nil, err
 	}
-	pullRefs, err := r.pullRefs()
+	primaryBranches := r.primaryBranches()
+	naming, err := r.imageNaming(inputs)
+	if err != nil {
+		return nil, err
+	}
+	auditTag := r.auditTag(naming, primaryBranches)
+	pullRefs, err := r.pullRefs(auditTag)
 	if err != nil {
 		return nil, err
 	}
@@ -1392,12 +1400,7 @@ func LoadBuildWithOptions(pfPath, lowering string, opts projectfile.ReadOptions)
 	if err != nil {
 		return nil, err
 	}
-	primaryBranches := r.primaryBranches()
 	stableBranch := r.stableBranch()
-	naming, err := r.imageNaming(inputs)
-	if err != nil {
-		return nil, err
-	}
 	requires := r.imageRequires()
 	if len(images) == 0 && len(requires) == 0 && len(inputs) == 0 && events == nil && len(secRaw) == 0 &&
 		len(buildTarget) == 0 && len(publishRefs) == 0 && len(pullRefs) == 0 && len(releaseTargets) == 0 &&
@@ -1408,7 +1411,7 @@ func LoadBuildWithOptions(pfPath, lowering string, opts projectfile.ReadOptions)
 		Images: images, ImageHeads: heads, ImageRequires: requires, Args: inputs, Events: events, Secrets: secRaw,
 		BuildTarget: buildTarget, BuildMemory: buildMemory, PublishRefs: publishRefs, PullRefs: pullRefs,
 		ReleaseTargets: releaseTargets, PrimaryBranches: primaryBranches, StableBranch: stableBranch,
-		Naming: naming,
+		Naming: naming, AuditTag: auditTag,
 	}, nil
 }
 
@@ -1597,7 +1600,7 @@ func (r *Reader) publishRefs() (map[string][]SinkRef, error) {
 // flat path (Docker Hub) is audited at its flat path, with no code aware of either
 // shape. No route, or a route with no `pull` => empty, and render keeps the single
 // OUTPUT_REGISTRY destination every project has today.
-func (r *Reader) pullRefs() (map[string]SinkRef, error) {
+func (r *Reader) pullRefs(auditTag string) (map[string]SinkRef, error) {
 	routes, err := r.publishRoutes()
 	if err != nil || len(routes) == 0 {
 		return nil, err
@@ -1605,6 +1608,13 @@ func (r *Reader) pullRefs() (map[string]SinkRef, error) {
 	_, sinks, err := r.sinkTemplates()
 	if err != nil {
 		return nil, err
+	}
+	for name, tmpl := range sinks {
+		// Reads the audit branch's tag where the sink spells its own
+		if auditTag != "" && strings.Contains(tmpl, tagPlaceholder) {
+			genlog.DebugRow("audit_sink_tag", auditTag, "org.projectfile.sinks."+name+".ref", tmpl)
+			sinks[name] = strings.ReplaceAll(tmpl, tagPlaceholder, auditTag)
+		}
 	}
 	if !r.composesAnySink(sinks) {
 		genlog.Decision("audit_target", "(none)", imageScope, "project declares no image part")

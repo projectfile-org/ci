@@ -6893,3 +6893,14 @@ func TestLefthookFormatNodeRendersJobs(t *testing.T) {
 		t.Errorf("format job must precede dag:\n%s", s)
 	}
 }
+
+// TestPublishedImageRefAuditTag pins the no-route fallback: the audit tag per cell, `latest` when none.
+func TestPublishedImageRefAuditTag(t *testing.T) {
+	subst := []ci.Axis{{Key: "S", Values: []string{"16", "17"}}}
+	reg := outputRegistryExpr() + "/o9s/pg-${{ matrix.S }}"
+	for tag, want := range map[string]string{"": reg + ":latest", "dev-pg{S}": reg + ":dev-pg${{ matrix.S }}"} {
+		if got := publishedImageRef("o9s/pg-{S}", tag, subst); got != want {
+			t.Fatalf("publishedImageRef(%q): got %q, want %q", tag, got, want)
+		}
+	}
+}
