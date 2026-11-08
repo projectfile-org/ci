@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-26.04
     if: github.event_name == 'workflow_dispatch'
     env:
-      M6E_IMAGE_PUBLISHED: ghcr.io/projectfile-org/ci:latest
+      M6E_IMAGE_PUBLISHED: ghcr.io/projectfile-org/ci:dev
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -81,4 +81,4 @@ jobs:
           advisory: "true"
           run: auto-dive
           env: |-
-            M6E_IMAGE_PUBLISHED=ghcr.io/projectfile-org/ci:latest
+            M6E_IMAGE_PUBLISHED=ghcr.io/projectfile-org/ci:dev
