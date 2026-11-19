@@ -51,7 +51,7 @@ Before you ask a question, please check [SUPPORT.md](SUPPORT.md) — it covers w
 A good bug report shouldn’t leave others needing to chase you up for more information. Therefore, we ask you to investigate carefully, collect information and describe the issue in detail in your report. Please complete the following steps in advance to help us fix any potential bug as fast as possible.
 
 - Make sure you are on a [supported version](SUPPORT.md).
-- Determine if your bug is really a bug and not an error on your side e.g. using incompatible environment components/versions (Make sure that you have read the [documentation](/docs). If you are looking for support, check [SUPPORT.md](SUPPORT.md)).
+- Determine if your bug is really a bug and not an error on your side e.g. using incompatible environment components/versions (Make sure that you have read the [documentation](docs). If you are looking for support, check [SUPPORT.md](SUPPORT.md)).
 - To see if other users have experienced (and potentially already solved) the same issue you are having, check if there is not already a bug report existing for your bug or error in the [bug tracker](https://github.com/projectfile-org/ci/issues?q=label%3Abug).
 - If you can, the following details would be useful:
     - Stack trace, if there is one
@@ -80,7 +80,7 @@ This section guides you through submitting an enhancement suggestion for Project
 ### Before Submitting an Enhancement
 
 - Make sure you are on a [supported version](SUPPORT.md).
-- Check whether the functionality is already covered, perhaps via an existing configuration — the [documentation](/docs) is one place to look.
+- Check whether the functionality is already covered, perhaps via an existing configuration — the [documentation](docs) is one place to look.
 - Perform a [search](https://github.com/projectfile-org/ci/issues) to see if the enhancement has already been suggested. If it has, add a comment to the existing issue instead of opening a new one.
 - Find out whether your idea fits with the scope and aims of the project.
 
@@ -103,7 +103,7 @@ Enhancement suggestions are tracked as [GitHub Issues](https://github.com/projec
 
 ## Improving The Documentation
 
-Documentation lives at [/docs](/docs).
+Documentation lives at [docs/](docs).
 Fixes, improvements, and new sections are all welcome — open a pull request against the documentation source.
 
 ## See also
