@@ -25,7 +25,6 @@ includes:
   - .makefile/b19/traits/image/attested.yaml
   - .makefile/b19/traits/image/signed.yaml
   - .makefile/library/languages/go.yaml
-  - .makefile/library/traits/binary/signed.yaml
   - .makefile/library/traits/binary/torrent.yaml
   - .makefile/library/traits/go/binary.yaml
   - https://kiota.ch/damian-buho/metadata/raw/branch/main/forge/codeberg.yaml
